@@ -1,0 +1,50 @@
+name: Deploy Transformlit Webapp
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/api/**"
+      - "apps/web/**"
+      - "packages/**"
+      - "package.json"
+      - "package-lock.json"
+      - "turbo.json"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start ssh agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.AZURE_VM_SSH_KEY }}
+
+      - name: Add host key
+        env:
+          VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+          VM_PORT: ${{ secrets.AZURE_VM_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H -p "${VM_PORT:-22}" "${VM_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          DEPLOY_ROOT: ${{ secrets.DEPLOY_ROOT }}
+          VM_USER: ${{ secrets.AZURE_VM_USER }}
+          VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+          VM_PORT: ${{ secrets.AZURE_VM_PORT }}
+        run: |
+          ssh -p "${VM_PORT:-22}" "${VM_USER}@${VM_HOST}" <<'EOF'
+          set -euo pipefail
+          cd "${DEPLOY_ROOT}/new-transformlit-webapp"
+          git pull --ff-only
+          cd "${DEPLOY_ROOT}/blink-social-media"
+          docker compose -f deploy/azure-vm/docker-compose.yml up -d --build transformlit-api transformlit-web nginx
+          EOF

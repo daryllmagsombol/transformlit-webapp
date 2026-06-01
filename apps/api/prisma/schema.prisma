@@ -1,0 +1,348 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  active
+  suspended
+  invited
+}
+
+enum UserRole {
+  tenant_admin
+  member
+}
+
+enum GroupVisibility {
+  public
+  private
+}
+
+enum GroupMemberRole {
+  owner
+  admin
+  member
+}
+
+enum GroupMemberStatus {
+  active
+  pending
+  banned
+}
+
+enum FriendshipStatus {
+  pending
+  accepted
+  rejected
+  blocked
+}
+
+enum ConversationType {
+  direct
+  group
+}
+
+enum AnnouncementStatus {
+  draft
+  published
+  archived
+}
+
+enum DocumentAccessType {
+  read
+  download
+}
+
+model Tenant {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  slug         String   @unique
+  status       String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+  createdBy    String?  @db.Uuid
+  updatedBy    String?  @db.Uuid
+  deletedBy    String?  @db.Uuid
+
+  users               User[]
+  profiles            Profile[]
+  friendships         Friendship[]
+  groups              Group[]
+  groupMembers        GroupMember[]
+  conversations       Conversation[]
+  conversationMembers ConversationMember[]
+  messages            Message[]
+  documents           Document[]
+  documentAccesses    DocumentAccess[]
+  announcements       Announcement[]
+
+  @@index([slug])
+}
+
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  tenantId        String     @db.Uuid
+  email           String
+  emailNormalized String
+  passwordHash    String
+  status          UserStatus
+  role            UserRole
+  lastLoginAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+  createdBy       String?    @db.Uuid
+  updatedBy       String?    @db.Uuid
+  deletedBy       String?    @db.Uuid
+
+  tenant                 Tenant               @relation(fields: [tenantId], references: [id])
+  profile                Profile?
+  friendshipsSent        Friendship[]         @relation("FriendRequester")
+  friendshipsReceived    Friendship[]         @relation("FriendAddressee")
+  groupMembers           GroupMember[]
+  conversationMembers    ConversationMember[]
+  messages               Message[]
+  documentAccesses       DocumentAccess[]
+  announcementsPublished Announcement[]       @relation("AnnouncementPublisher")
+
+  @@unique([tenantId, emailNormalized])
+  @@index([tenantId, emailNormalized])
+  @@index([tenantId, status])
+}
+
+model Profile {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  userId      String   @unique @db.Uuid
+  displayName String
+  avatarUrl   String?
+  bio         String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+  createdBy   String?  @db.Uuid
+  updatedBy   String?  @db.Uuid
+  deletedBy   String?  @db.Uuid
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId])
+}
+
+model Friendship {
+  id          String           @id @default(uuid()) @db.Uuid
+  tenantId    String           @db.Uuid
+  requesterId String           @db.Uuid
+  addresseeId String           @db.Uuid
+  status      FriendshipStatus
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  deletedAt   DateTime?
+  createdBy   String?          @db.Uuid
+  updatedBy   String?          @db.Uuid
+  deletedBy   String?          @db.Uuid
+
+  tenant     Tenant @relation(fields: [tenantId], references: [id])
+  requester  User   @relation("FriendRequester", fields: [requesterId], references: [id])
+  addressee  User   @relation("FriendAddressee", fields: [addresseeId], references: [id])
+
+  @@unique([tenantId, requesterId, addresseeId])
+  @@index([tenantId, requesterId])
+  @@index([tenantId, addresseeId])
+  @@index([tenantId, status])
+}
+
+model Group {
+  id          String          @id @default(uuid()) @db.Uuid
+  tenantId    String          @db.Uuid
+  name        String
+  description String?
+  visibility  GroupVisibility
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String?         @db.Uuid
+  updatedBy   String?         @db.Uuid
+  deletedBy   String?         @db.Uuid
+
+  tenant       Tenant         @relation(fields: [tenantId], references: [id])
+  members      GroupMember[]
+  conversations Conversation[]
+  documents    DocumentAccess[]
+
+  @@index([tenantId, name])
+  @@index([tenantId, visibility])
+}
+
+model GroupMember {
+  id        String            @id @default(uuid()) @db.Uuid
+  tenantId  String            @db.Uuid
+  groupId   String            @db.Uuid
+  userId    String            @db.Uuid
+  role      GroupMemberRole
+  status    GroupMemberStatus
+  joinedAt  DateTime          @default(now())
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  deletedAt DateTime?
+  createdBy String?           @db.Uuid
+  updatedBy String?           @db.Uuid
+  deletedBy String?           @db.Uuid
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  group  Group  @relation(fields: [groupId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([groupId, userId])
+  @@index([tenantId, userId])
+  @@index([tenantId, groupId])
+  @@index([tenantId, status])
+}
+
+model Conversation {
+  id        String           @id @default(uuid()) @db.Uuid
+  tenantId  String           @db.Uuid
+  type      ConversationType
+  groupId   String?          @db.Uuid
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  deletedAt DateTime?
+  createdBy String?          @db.Uuid
+  updatedBy String?          @db.Uuid
+  deletedBy String?          @db.Uuid
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+  group     Group? @relation(fields: [groupId], references: [id])
+  members   ConversationMember[]
+  messages  Message[]
+
+  @@index([tenantId, type])
+  @@index([tenantId, groupId])
+}
+
+model ConversationMember {
+  id                String    @id @default(uuid()) @db.Uuid
+  tenantId          String    @db.Uuid
+  conversationId    String    @db.Uuid
+  userId            String    @db.Uuid
+  lastReadMessageId String?   @db.Uuid
+  lastReadAt        DateTime?
+  joinedAt          DateTime  @default(now())
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+  createdBy         String?   @db.Uuid
+  updatedBy         String?   @db.Uuid
+  deletedBy         String?   @db.Uuid
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  conversation    Conversation @relation(fields: [conversationId], references: [id])
+  user            User     @relation(fields: [userId], references: [id])
+  lastReadMessage Message? @relation("LastReadMessage", fields: [lastReadMessageId], references: [id])
+
+  @@unique([conversationId, userId])
+  @@index([tenantId, userId])
+  @@index([tenantId, conversationId])
+}
+
+model Message {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @db.Uuid
+  conversationId String   @db.Uuid
+  senderId       String   @db.Uuid
+  body           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  createdBy      String?  @db.Uuid
+  updatedBy      String?  @db.Uuid
+  deletedBy      String?  @db.Uuid
+
+  tenant          Tenant                 @relation(fields: [tenantId], references: [id])
+  conversation    Conversation           @relation(fields: [conversationId], references: [id])
+  sender          User                   @relation(fields: [senderId], references: [id])
+  lastReadBy      ConversationMember[]   @relation("LastReadMessage")
+
+  @@index([tenantId, conversationId, createdAt(sort: Desc)])
+  @@index([tenantId, senderId])
+}
+
+model Document {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  title       String
+  description String?
+  blobPath    String
+  mimeType    String
+  fileSize    BigInt
+  accessLevel String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+  createdBy   String?  @db.Uuid
+  updatedBy   String?  @db.Uuid
+  deletedBy   String?  @db.Uuid
+
+  tenant    Tenant           @relation(fields: [tenantId], references: [id])
+  accesses  DocumentAccess[]
+
+  @@index([tenantId, title])
+}
+
+model DocumentAccess {
+  id         String            @id @default(uuid()) @db.Uuid
+  tenantId   String            @db.Uuid
+  documentId String            @db.Uuid
+  userId     String?           @db.Uuid
+  groupId    String?           @db.Uuid
+  accessType DocumentAccessType
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  deletedAt  DateTime?
+  createdBy  String?           @db.Uuid
+  updatedBy  String?           @db.Uuid
+  deletedBy  String?           @db.Uuid
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  document Document @relation(fields: [documentId], references: [id])
+  user     User?    @relation(fields: [userId], references: [id])
+  group    Group?   @relation(fields: [groupId], references: [id])
+
+  @@unique([documentId, userId])
+  @@unique([documentId, groupId])
+  @@index([tenantId, documentId])
+  @@index([tenantId, userId])
+  @@index([tenantId, groupId])
+}
+
+model Announcement {
+  id          String             @id @default(uuid()) @db.Uuid
+  tenantId    String             @db.Uuid
+  title       String
+  body        String
+  status      AnnouncementStatus
+  publishAt   DateTime?
+  expiresAt   DateTime?
+  publishedAt DateTime?
+  publishedById String?          @db.Uuid
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  deletedAt   DateTime?
+  createdBy   String?            @db.Uuid
+  updatedBy   String?            @db.Uuid
+  deletedBy   String?            @db.Uuid
+
+  tenant      Tenant  @relation(fields: [tenantId], references: [id])
+  publishedBy User?   @relation("AnnouncementPublisher", fields: [publishedById], references: [id])
+
+  @@index([tenantId, status, publishAt(sort: Desc)])
+  @@index([tenantId, expiresAt])
+}
