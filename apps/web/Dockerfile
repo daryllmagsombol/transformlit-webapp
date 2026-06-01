@@ -9,10 +9,11 @@ COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
 
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+    npm ci && \
+    npm install lightningcss-linux-x64-gnu --no-save
 
 COPY . .
-RUN npm run build
+RUN npm run build -- --filter=web...
 
 ENV NODE_ENV=production
 
