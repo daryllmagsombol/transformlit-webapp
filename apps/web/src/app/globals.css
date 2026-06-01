@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+:root {
+  --brand: #f4a11c;
+  --brand-dark: #d88710;
+  --ink: #111111;
+  --ink-soft: #2a2a2a;
+  --paper: #fff6e8;
+  --paper-warm: #ffe8c7;
+  --accent: #1f7a6d;
+  --accent-dark: #165e55;
+}
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-brand-dark: var(--brand-dark);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-paper: var(--paper);
+  --color-paper-warm: var(--paper-warm);
+  --color-accent: var(--accent);
+  --color-accent-dark: var(--accent-dark);
+  --font-sans: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
+  --font-serif: "Newsreader", "Literata", "Georgia", serif;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
+}
