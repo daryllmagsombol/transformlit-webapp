@@ -5,8 +5,7 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
 COPY packages/shared/package.json packages/shared/
 
-RUN --mount=type=cache,target=/root/.npm \
-    npm install
+RUN npm install
 
 COPY . .
 RUN npm run db:generate --workspace=apps/api

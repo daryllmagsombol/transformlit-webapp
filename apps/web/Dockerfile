@@ -8,8 +8,7 @@ COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
 
-RUN --mount=type=cache,target=/root/.npm \
-    npm install
+RUN npm install
 
 COPY . .
 RUN npx turbo run build --filter=web...
