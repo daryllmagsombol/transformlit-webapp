@@ -8,7 +8,7 @@ COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
 
-RUN npm install
+RUN npm install && npm install lightningcss-linux-x64-gnu @tailwindcss/oxide-linux-x64-gnu --no-save
 
 COPY . .
 RUN npx turbo run build --filter=web...
