@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim
+FROM node:22-bullseye-slim
 WORKDIR /workspace
 
 COPY package.json package-lock.json ./
@@ -9,8 +9,6 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci
 
 COPY . .
-RUN apt-get update -y && apt-get install -y openssl --no-install-recommends && rm -rf /var/lib/apt/lists/*
-ENV PRISMA_QUERY_ENGINE_LIBRARY=openssl-1.1.x
 RUN npm run db:generate --workspace=apps/api
 RUN npx turbo run build --filter=api...
 
