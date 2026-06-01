@@ -9,7 +9,7 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci
 
 COPY . .
-RUN npm run build -- --filter=api...
+RUN npx turbo run build --filter=api...
 
 ENV NODE_ENV=production
 

@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/root/.npm \
     npm install lightningcss-linux-x64-gnu --no-save
 
 COPY . .
-RUN npm run build -- --filter=web...
+RUN npx turbo run build --filter=web...
 
 ENV NODE_ENV=production
 
