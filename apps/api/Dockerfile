@@ -9,6 +9,7 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci
 
 COPY . .
+RUN npx prisma generate
 RUN npx turbo run build --filter=api...
 
 ENV NODE_ENV=production
