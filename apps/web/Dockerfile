@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim
+FROM node:22-bullseye-slim
 WORKDIR /workspace
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:3005/api
