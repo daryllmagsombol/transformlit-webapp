@@ -11,7 +11,7 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY . .
 RUN apt-get update -y && apt-get install -y openssl --no-install-recommends && rm -rf /var/lib/apt/lists/*
 ENV PRISMA_QUERY_ENGINE_LIBRARY=openssl-1.1.x
-RUN npx prisma generate --schema=apps/api/prisma/schema.prisma
+RUN npm run db:generate --workspace=apps/api
 RUN npx turbo run build --filter=api...
 
 ENV NODE_ENV=production
