@@ -1,0 +1,1 @@
+/Users/daryllmagsombol/Projects/new-transformlit-webapp/.github/.opencode/commands/wds-0-alignment-signoff.md

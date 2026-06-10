@@ -1,0 +1,1 @@
+/Users/daryllmagsombol/Projects/new-transformlit-webapp/.github/.opencode/commands/wds-8-product-evolution.md

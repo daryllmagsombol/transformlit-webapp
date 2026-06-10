@@ -1,0 +1,301 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "team-leader",
+  "skills": {
+    "paths": [
+      ".agents/skills",
+      ".github/.agents/skills",
+      "packages/.agents/skills"
+    ]
+  },
+  "command": {
+    "bmad-help": {
+      "description": "Get help with BMAD — what to do next, status, or general questions",
+      "template": ".opencode/commands/bmad-help.md"
+    },
+    "bmad-generate-project-context": {
+      "description": "Scan existing codebase to generate project-context.md for LLM context",
+      "template": ".opencode/commands/bmad-generate-project-context.md"
+    },
+    "bmad-product-brief": {
+      "description": "Create a product brief — gentle, guided approach to define your product idea",
+      "template": ".opencode/commands/bmad-product-brief.md"
+    },
+    "bmad-prfaq": {
+      "description": "Working Backwards PRFAQ — stress-test your product concept",
+      "template": ".opencode/commands/bmad-prfaq.md"
+    },
+    "bmad-prd": {
+      "description": "Create, edit, or validate a PRD with coached discovery",
+      "template": ".opencode/commands/bmad-prd.md"
+    },
+    "bmad-ux": {
+      "description": "Create UX design artifacts for your project",
+      "template": ".opencode/commands/bmad-ux.md"
+    },
+    "bmad-create-architecture": {
+      "description": "Document technical architecture decisions",
+      "template": ".opencode/commands/bmad-create-architecture.md"
+    },
+    "bmad-create-epics-and-stories": {
+      "description": "Break down work into epics and stories",
+      "template": ".opencode/commands/bmad-create-epics-and-stories.md"
+    },
+    "bmad-check-implementation-readiness": {
+      "description": "Verify PRD, UX, architecture, and stories are aligned before building",
+      "template": ".opencode/commands/bmad-check-implementation-readiness.md"
+    },
+    "bmad-sprint-planning": {
+      "description": "Plan a sprint with sequenced implementation tasks",
+      "template": ".opencode/commands/bmad-sprint-planning.md"
+    },
+    "bmad-sprint-status": {
+      "description": "Check sprint status and get routing to next workflow",
+      "template": ".opencode/commands/bmad-sprint-status.md"
+    },
+    "bmad-create-story": {
+      "description": "Prepare a story for implementation",
+      "template": ".opencode/commands/bmad-create-story.md"
+    },
+    "bmad-dev-story": {
+      "description": "Execute story implementation tasks with tests",
+      "template": ".opencode/commands/bmad-dev-story.md"
+    },
+    "bmad-code-review": {
+      "description": "Review code as part of the story cycle",
+      "template": ".opencode/commands/bmad-code-review.md"
+    },
+    "bmad-qa-generate-e2e-tests": {
+      "description": "Generate API and E2E tests for implemented code",
+      "template": ".opencode/commands/bmad-qa-generate-e2e-tests.md"
+    },
+    "bmad-checkpoint-preview": {
+      "description": "Guided walkthrough of changes for human review",
+      "template": ".opencode/commands/bmad-checkpoint-preview.md"
+    },
+    "bmad-retrospective": {
+      "description": "Review completed work and lessons learned at epic end",
+      "template": ".opencode/commands/bmad-retrospective.md"
+    },
+    "bmad-investigate": {
+      "description": "Forensic investigation with evidence-graded analysis",
+      "template": ".opencode/commands/bmad-investigate.md"
+    },
+    "bmad-brainstorming": {
+      "description": "Facilitated brainstorming session using multiple techniques",
+      "template": ".opencode/commands/bmad-brainstorming.md"
+    },
+    "bmad-technical-research": {
+      "description": "Research technical feasibility, architecture options, and implementation approaches",
+      "template": ".opencode/commands/bmad-technical-research.md"
+    },
+    "bmad-market-research": {
+      "description": "Market analysis, competitive landscape, customer needs",
+      "template": ".opencode/commands/bmad-market-research.md"
+    },
+    "bmad-domain-research": {
+      "description": "Industry domain deep dive, subject matter expertise",
+      "template": ".opencode/commands/bmad-domain-research.md"
+    },
+    "bmad-quick-dev": {
+      "description": "Unified intent-in → code-out workflow: clarify, plan, implement, review",
+      "template": ".opencode/commands/bmad-quick-dev.md"
+    },
+    "bmad-document-project": {
+      "description": "Analyze existing project to produce useful documentation",
+      "template": ".opencode/commands/bmad-document-project.md"
+    },
+    "bmad-correct-course": {
+      "description": "Navigate significant changes — may restart, update PRD, redo architecture",
+      "template": ".opencode/commands/bmad-correct-course.md"
+    },
+    "bmad-spec": {
+      "description": "Distill any intent into a no-fluff SPEC.md contract",
+      "template": ".opencode/commands/bmad-spec.md"
+    },
+    "bmad-customize": {
+      "description": "Customize agent/workflow behavior without hand-authoring TOML",
+      "template": ".opencode/commands/bmad-customize.md"
+    },
+    "bmad-party-mode": {
+      "description": "Multi-agent discussions for multiple perspectives",
+      "template": ".opencode/commands/bmad-party-mode.md"
+    },
+    "bmad-index-docs": {
+      "description": "Index available docs for LLM context without loading everything",
+      "template": ".opencode/commands/bmad-index-docs.md"
+    },
+    "bmad-shard-doc": {
+      "description": "Split large docs (>500 lines) into manageable pieces",
+      "template": ".opencode/commands/bmad-shard-doc.md"
+    },
+    "bmad-editorial-review-prose": {
+      "description": "Polish written content with editorial suggestions",
+      "template": ".opencode/commands/bmad-editorial-review-prose.md"
+    },
+    "bmad-editorial-review-structure": {
+      "description": "Improve document structure and organization",
+      "template": ".opencode/commands/bmad-editorial-review-structure.md"
+    },
+    "bmad-review-adversarial-general": {
+      "description": "Adversarial quality assurance review for deliverables",
+      "template": ".opencode/commands/bmad-review-adversarial-general.md"
+    },
+    "bmad-review-edge-case-hunter": {
+      "description": "Method-driven edge case analysis alongside adversarial review",
+      "template": ".opencode/commands/bmad-review-edge-case-hunter.md"
+    },
+    "bmad-agent-architect": {
+      "description": "Talk to Winston — System Architect for technical design decisions",
+      "template": ".opencode/commands/bmad-agent-architect.md"
+    },
+    "bmad-agent-dev": {
+      "description": "Talk to Amelia — Senior Software Engineer for implementation",
+      "template": ".opencode/commands/bmad-agent-dev.md"
+    },
+    "bmad-agent-pm": {
+      "description": "Talk to John — Product Manager for product direction",
+      "template": ".opencode/commands/bmad-agent-pm.md"
+    },
+    "bmad-agent-ux-designer": {
+      "description": "Talk to Sally — UX Designer for user experience design",
+      "template": ".opencode/commands/bmad-agent-ux-designer.md"
+    },
+    "bmad-agent-tech-writer": {
+      "description": "Talk to Paige — Technical Writer for documentation",
+      "template": ".opencode/commands/bmad-agent-tech-writer.md"
+    },
+    "bmad-agent-analyst": {
+      "description": "Talk to Mary — Business Analyst for analysis and research",
+      "template": ".opencode/commands/bmad-agent-analyst.md"
+    },
+    "bmad-tea": {
+      "description": "Talk to Murat — Master Test Architect for testing and quality",
+      "template": ".opencode/commands/bmad-tea.md"
+    },
+    "bmad-teach-me-testing": {
+      "description": "Learn testing fundamentals through 7 TEA Academy sessions",
+      "template": ".opencode/commands/bmad-teach-me-testing.md"
+    },
+    "bmad-testarch-test-design": {
+      "description": "Risk-based test planning and design",
+      "template": ".opencode/commands/bmad-testarch-test-design.md"
+    },
+    "bmad-testarch-framework": {
+      "description": "Initialize production-ready test framework scaffold",
+      "template": ".opencode/commands/bmad-testarch-framework.md"
+    },
+    "bmad-testarch-ci": {
+      "description": "Configure CI/CD quality pipeline",
+      "template": ".opencode/commands/bmad-testarch-ci.md"
+    },
+    "bmad-testarch-atdd": {
+      "description": "Generate red-phase acceptance test scaffolds before implementation",
+      "template": ".opencode/commands/bmad-testarch-atdd.md"
+    },
+    "bmad-testarch-automate": {
+      "description": "Expand test coverage with automation",
+      "template": ".opencode/commands/bmad-testarch-automate.md"
+    },
+    "bmad-testarch-test-review": {
+      "description": "Quality audit with 0-100 scoring",
+      "template": ".opencode/commands/bmad-testarch-test-review.md"
+    },
+    "bmad-testarch-nfr": {
+      "description": "Audit non-functional requirement evidence",
+      "template": ".opencode/commands/bmad-testarch-nfr.md"
+    },
+    "bmad-testarch-trace": {
+      "description": "Coverage traceability and gate decision",
+      "template": ".opencode/commands/bmad-testarch-trace.md"
+    },
+    "bmad-validate-prd": {
+      "description": "Validate a finished PRD against a checklist",
+      "template": ".opencode/commands/bmad-validate-prd.md"
+    },
+    "bmad-edit-prd": {
+      "description": "Update an existing PRD against change signals",
+      "template": ".opencode/commands/bmad-edit-prd.md"
+    },
+    "bmad-create-prd": {
+      "description": "Create a new PRD via coached discovery",
+      "template": ".opencode/commands/bmad-create-prd.md"
+    },
+    "bmad-agent-builder": {
+      "description": "Build, analyze, or edit agent skills through conversational discovery",
+      "template": ".opencode/commands/bmad-agent-builder.md"
+    },
+    "bmad-workflow-builder": {
+      "description": "Create, edit, analyze, or convert workflow skills",
+      "template": ".opencode/commands/bmad-workflow-builder.md"
+    },
+    "bmad-module-builder": {
+      "description": "Ideate, create, or validate BMad modules",
+      "template": ".opencode/commands/bmad-module-builder.md"
+    },
+    "bmad-bmb-setup": {
+      "description": "Install or update BMad Builder module configuration",
+      "template": ".opencode/commands/bmad-bmb-setup.md"
+    },
+    "bmad-eval-runner": {
+      "description": "Run evaluations on BMad outcomes",
+      "template": ".opencode/commands/bmad-eval-runner.md"
+    },
+    "bmad-advanced-elicitation": {
+      "description": "Advanced requirement elicitation techniques",
+      "template": ".opencode/commands/bmad-advanced-elicitation.md"
+    },
+    "wds-0-alignment-signoff": {
+      "description": "Stakeholder buy-in pitch and service agreement",
+      "template": ".opencode/commands/wds-0-alignment-signoff.md"
+    },
+    "wds-0-project-setup": {
+      "description": "Set up WDS project infrastructure and agent space",
+      "template": ".opencode/commands/wds-0-project-setup.md"
+    },
+    "wds-1-project-brief": {
+      "description": "Define product vision, positioning, and success criteria",
+      "template": ".opencode/commands/wds-1-project-brief.md"
+    },
+    "wds-2-trigger-mapping": {
+      "description": "Map business goals to user psychology and create personas",
+      "template": ".opencode/commands/wds-2-trigger-mapping.md"
+    },
+    "wds-3-scenarios": {
+      "description": "Define user journeys as persona + goal + outcome",
+      "template": ".opencode/commands/wds-3-scenarios.md"
+    },
+    "wds-4-ux-design": {
+      "description": "UX design including specs, storyboards, and visual design",
+      "template": ".opencode/commands/wds-4-ux-design.md"
+    },
+    "wds-5-agentic-development": {
+      "description": "Iterative build-verify cycle with browser verification",
+      "template": ".opencode/commands/wds-5-agentic-development.md"
+    },
+    "wds-6-asset-generation": {
+      "description": "Generate design assets and visual resources",
+      "template": ".opencode/commands/wds-6-asset-generation.md"
+    },
+    "wds-7-design-system": {
+      "description": "Manage component library and design tokens",
+      "template": ".opencode/commands/wds-7-design-system.md"
+    },
+    "wds-8-product-evolution": {
+      "description": "Continuous improvement: feedback to spec to code to verify",
+      "template": ".opencode/commands/wds-8-product-evolution.md"
+    },
+    "wds-agent-freya-ux": {
+      "description": "Talk to Freya — WDS Designer for UX design and specs",
+      "template": ".opencode/commands/wds-agent-freya-ux.md"
+    },
+    "wds-agent-saga-analyst": {
+      "description": "Talk to Saga — WDS Analyst for strategic research and analysis",
+      "template": ".opencode/commands/wds-agent-saga-analyst.md"
+    },
+    "wds-agent-mimir-builder": {
+      "description": "Talk to Mimir — WDS Builder for implementation and build",
+      "template": ".opencode/commands/wds-agent-mimir-builder.md"
+    }
+  }
+}
