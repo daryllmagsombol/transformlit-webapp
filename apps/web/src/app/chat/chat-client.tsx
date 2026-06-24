@@ -1,0 +1,14 @@
+'use client';
+
+import { AuthenticatedLayout } from '../../components/layout/authenticated-layout';
+
+export default function ChatPage() {
+  return (
+    <AuthenticatedLayout>
+      <div className="space-y-6">
+        <h1 className="text-h2 font-bold">Chat</h1>
+        <p className="text-ink-soft">Real-time chat coming soon.</p>
+      </div>
+    </AuthenticatedLayout>
+  );
+}

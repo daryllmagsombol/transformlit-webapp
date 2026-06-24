@@ -11,38 +11,43 @@ import { getMainDefinition } from '@apollo/client/utilities';
 const httpUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/graphql';
 const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:3005/graphql';
 
-const httpLink = createHttpLink({ uri: httpUrl, credentials: 'include' });
+const isServer = typeof window === 'undefined';
 
-const wsLink =
-  typeof window !== 'undefined'
-    ? new GraphQLWsLink(
-        createClient({
-          url: wsUrl,
-          connectionParams: () => {
-            const token = localStorage.getItem('accessToken');
-            return { authorization: token ? `Bearer ${token}` : '' };
-          },
-        }),
-      )
-    : null;
+const httpLink = createHttpLink({
+  uri: httpUrl,
+  credentials: 'include',
+  fetch: !isServer ? undefined : undefined, // use default fetch
+});
 
-const splitLink =
-  typeof window !== 'undefined' && wsLink
-    ? split(
-        ({ query }) => {
-          const definition = getMainDefinition(query);
-          return (
-            definition.kind === 'OperationDefinition' &&
-            definition.operation === 'subscription'
-          );
+const wsLink = !isServer
+  ? new GraphQLWsLink(
+      createClient({
+        url: wsUrl,
+        connectionParams: () => {
+          const token = localStorage.getItem('accessToken');
+          return { authorization: token ? `Bearer ${token}` : '' };
         },
-        wsLink,
-        httpLink,
-      )
-    : httpLink;
+      }),
+    )
+  : null;
+
+const splitLink = !isServer && wsLink
+  ? split(
+      ({ query }) => {
+        const definition = getMainDefinition(query);
+        return (
+          definition.kind === 'OperationDefinition' &&
+          definition.operation === 'subscription'
+        );
+      },
+      wsLink,
+      httpLink,
+    )
+  : httpLink;
 
 export const apolloClient = new ApolloClient({
   link: splitLink,
+  ssrMode: isServer,
   cache: new InMemoryCache({
     typePolicies: {
       Query: {
@@ -59,5 +64,6 @@ export const apolloClient = new ApolloClient({
   }),
   defaultOptions: {
     watchQuery: { fetchPolicy: 'cache-and-network' },
+    query: { fetchPolicy: 'no-cache' },
   },
 });

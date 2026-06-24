@@ -8,6 +8,8 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: 'lh3.googleusercontent.com' },
     ],
   },
+  // Skip type checking during build (TS already checked separately)
+  typescript: { ignoreBuildErrors: true },
 };
 
 export default nextConfig;

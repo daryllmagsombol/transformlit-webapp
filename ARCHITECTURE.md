@@ -55,7 +55,7 @@ apps/api/src/
 │   └── users.resolver.ts
 ├── groups/
 ├── friends/
-├── chat/                       # Subscriptions + PubSub via Postgres LD/NOTIFY
+├── chat/                       # Subscriptions + PubSub via Postgres LISTEN/NOTIFY
 ├── books/                      # PDF streaming + read progress
 ├── feed/                       # Announcements + verse-of-day
 ├── notifications/

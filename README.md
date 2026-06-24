@@ -23,7 +23,7 @@ A community-driven platform for reading groups, book sharing, chat, and literary
 
 | Layer | Technology |
 |---|---|
-| **Monorepo** | Turborepo + npm workspaces |
+| **Monorepo** | Turborepo + pnpm workspaces |
 | **API** | NestJS 11 (TypeScript) + Apollo GraphQL |
 | **Frontend** | Next.js 16 (App Router) + React 19 |
 | **Database** | PostgreSQL via Prisma 7 ORM |
@@ -131,27 +131,26 @@ new-transformlit-webapp/
 ### Prerequisites
 
 - Node.js 22+
-- npm 10+
+- pnpm 10+
 - PostgreSQL 16+
 - Azure CLI (for infra)
 
 ### Quick Start
 
 ```bash
-# Install
-npm install
+pnpm install
 
 # Environment
 cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env
 
 # Database
-npx prisma generate
-npx prisma migrate dev
-npx prisma db seed
+pnpm exec prisma generate --schema=apps/api/prisma/schema.prisma
+pnpm exec prisma migrate dev --schema=apps/api/prisma/schema.prisma
+pnpm exec prisma db seed --schema=apps/api/prisma/schema.prisma
 
 # Dev servers (API + Web via Turbo)
-npm run dev
+pnpm dev
 ```
 
 API (GraphQL playground): `http://localhost:3005/graphql`
@@ -160,17 +159,17 @@ Web: `http://localhost:3000`
 ### Workspace Commands
 
 ```bash
-npm run dev -w apps/api     # API dev server
-npm run dev -w apps/web     # Web dev server
-npm run build -w apps/api   # Build API
-npm run build -w apps/web   # Build web
-npm run lint                # Lint all workspaces
-npm run test                # Test all workspaces
+pnpm --filter @transformlit/api dev
+pnpm --filter @transformlit/web dev
+pnpm --filter @transformlit/api build
+pnpm --filter @transformlit/web build
+pnpm lint
+pnpm test
 
 # Prisma
-npx prisma migrate dev      # Create + apply migration
-npx prisma db seed          # Seed dev data
-npx prisma studio           # DB GUI (localhost:5555)
+pnpm exec prisma migrate dev --schema=apps/api/prisma/schema.prisma
+pnpm exec prisma db seed --schema=apps/api/prisma/schema.prisma
+pnpm exec prisma studio --schema=apps/api/prisma/schema.prisma
 ```
 
 ### Environment Variables
