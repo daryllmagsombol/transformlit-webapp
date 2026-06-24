@@ -1,0 +1,414 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── User & Auth ────────────────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  MODERATOR
+  MEMBER
+}
+
+model User {
+  id             String   @id @default(uuid())
+  email          String   @unique
+  emailNormalized String  @unique
+  passwordHash   String?
+  displayName    String
+  avatarUrl      String?
+  bio            String?
+  role           UserRole @default(MEMBER)
+  status         String   @default("active")
+  lastLoginAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  identities         Identity[]
+  refreshTokens      RefreshToken[]
+  friendshipsAsRequester Friendship[]  @relation("Requester")
+  friendshipsAsAddressee Friendship[]  @relation("Addressee")
+  groupMemberships   GroupMember[]
+  sentMessages       Message[]
+  conversationMembers ConversationMember[]
+  bookAccess         BookAccess[]
+  bookProgress       BookProgress[]
+  bookmarks          Bookmark[]
+  highlights         Highlight[]
+  notifications      Notification[]     @relation("NotificationUser")
+  notificationsCreated Notification[]   @relation("NotificationCreatedBy")
+  announcementsPublished Announcement[] @relation("AnnouncementPublishedBy")
+  announcementsCreated Announcement[]   @relation("AnnouncementCreatedBy")
+  groupsCreated      Group[]            @relation("GroupCreatedBy")
+  booksCreated       Book[]             @relation("BookCreatedBy")
+  auditLogs         AuditLog[]
+
+  @@index([emailNormalized])
+  @@index([role, status])
+  @@map("users")
+}
+
+model Identity {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider   String
+  providerId String
+  email      String
+  createdAt  DateTime @default(now())
+
+  @@unique([provider, providerId])
+  @@index([userId])
+  @@map("identities")
+}
+
+model RefreshToken {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  familyId    String
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  replacedById String?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, familyId])
+  @@map("refresh_tokens")
+}
+
+// ── Groups ─────────────────────────────────────────────────────────────────
+
+enum GroupVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum GroupMemberRole {
+  OWNER
+  MEMBER
+}
+
+enum GroupMemberStatus {
+  ACTIVE
+  PENDING
+  BANNED
+}
+
+model Group {
+  id          String          @id @default(uuid())
+  name        String
+  slug        String          @unique
+  description String?
+  visibility  GroupVisibility @default(PUBLIC)
+  createdById String?
+  createdBy   User?           @relation("GroupCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+
+  members       GroupMember[]
+  conversations Conversation[]
+
+  @@index([visibility])
+  @@index([name])
+  @@map("groups")
+}
+
+model GroupMember {
+  id        String            @id @default(uuid())
+  groupId   String
+  group     Group             @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      GroupMemberRole   @default(MEMBER)
+  status    GroupMemberStatus @default(PENDING)
+  joinedAt  DateTime          @default(now())
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@index([groupId, status])
+  @@map("group_members")
+}
+
+// ── Friends ─────────────────────────────────────────────────────────────────
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  BLOCKED
+}
+
+model Friendship {
+  id          String           @id @default(uuid())
+  requesterId String
+  requester   User             @relation("Requester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addresseeId String
+  addressee   User             @relation("Addressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([requesterId, addresseeId])
+  @@index([requesterId, status])
+  @@index([addresseeId, status])
+  @@map("friendships")
+}
+
+// ── Chat ────────────────────────────────────────────────────────────────────
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+model Conversation {
+  id        String           @id @default(uuid())
+  type      ConversationType
+  groupId   String?
+  group     Group?           @relation(fields: [groupId], references: [id])
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  deletedAt DateTime?
+
+  members  ConversationMember[]
+  messages Message[]
+
+  @@index([type])
+  @@map("conversations")
+}
+
+model ConversationMember {
+  id             String   @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastReadAt     DateTime?
+  joinedAt       DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@map("conversation_members")
+}
+
+model Message {
+  id             String   @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User     @relation(fields: [senderId], references: [id])
+  body           String
+  editedAt       DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([senderId])
+  @@map("messages")
+}
+
+// ── Books ───────────────────────────────────────────────────────────────────
+
+enum BookAccessLevel {
+  FREE
+  RESTRICTED
+}
+
+enum BookStatus {
+  DRAFT
+  PUBLISHED
+  COMING_SOON
+}
+
+model Book {
+  id            String          @id @default(uuid())
+  title         String
+  author        String?
+  description   String?
+  blobPath      String?
+  coverUrl      String?
+  price         Decimal?        @db.Decimal(10, 2)
+  currency      String?         @default("USD")
+  accessLevel   BookAccessLevel @default(FREE)
+  status        BookStatus      @default(DRAFT)
+  totalPages    Int?
+  createdById   String?
+  createdBy     User?           @relation("BookCreatedBy", fields: [createdById], references: [id])
+  publishedAt   DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  deletedAt     DateTime?
+
+  access     BookAccess[]
+  progress   BookProgress[]
+  bookmarks  Bookmark[]
+  highlights Highlight[]
+
+  @@index([status])
+  @@index([title])
+  @@map("books")
+}
+
+model BookAccess {
+  id        String   @id @default(uuid())
+  bookId    String
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String?
+  grantedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([bookId, userId])
+  @@index([userId])
+  @@map("book_access")
+}
+
+model BookProgress {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookId      String
+  book        Book      @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  currentPage Int       @default(1)
+  scrollY     Float?
+  completedAt DateTime?
+  lastReadAt  DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([userId, bookId])
+  @@index([bookId])
+  @@map("book_progress")
+}
+
+model Bookmark {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookId    String
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  page      Int
+  label     String?
+  color     String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, bookId])
+  @@map("bookmarks")
+}
+
+model Highlight {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookId    String
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  page      Int
+  text      String
+  note      String?
+  color     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, bookId])
+  @@map("highlights")
+}
+
+// ── Feed ────────────────────────────────────────────────────────────────────
+
+enum AnnouncementStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model Announcement {
+  id            String             @id @default(uuid())
+  title         String
+  body          String
+  status        AnnouncementStatus @default(DRAFT)
+  publishAt     DateTime?
+  expiresAt     DateTime?
+  publishedAt   DateTime?
+  publishedById String?
+  publishedBy   User?              @relation("AnnouncementPublishedBy", fields: [publishedById], references: [id])
+  createdById   String?
+  createdBy     User?              @relation("AnnouncementCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  deletedAt     DateTime?
+
+  @@index([status, publishAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("announcements")
+}
+
+model VerseOfTheDay {
+  id        String   @id @default(uuid())
+  date      DateTime @unique
+  text      String
+  reference String
+  version   String   @default("KJV")
+  fetchedAt DateTime @default(now())
+
+  @@index([date(sort: Desc)])
+  @@map("verse_of_day")
+}
+
+// ── Notifications ──────────────────────────────────────────────────────────
+
+enum NotificationType {
+  FRIEND_REQUEST
+  FRIEND_ACCEPTED
+  GROUP_INVITE
+  GROUP_UPDATE
+  ANNOUNCEMENT
+  SYSTEM
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  userId      String
+  user        User             @relation("NotificationUser", fields: [userId], references: [id], onDelete: Cascade)
+  type        NotificationType
+  payload     Json?
+  readAt      DateTime?
+  createdById String?
+  createdBy   User?            @relation("NotificationCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime         @default(now())
+
+  @@index([userId, readAt, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+// ── Audit ───────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String
+  targetType String?
+  targetId   String?
+  payload    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

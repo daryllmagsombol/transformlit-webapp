@@ -1,7 +1,7 @@
 {
   "name": "transformlit",
   "private": true,
-  "packageManager": "npm@11.6.2",
+  "packageManager": "pnpm@10.4.1",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -14,6 +14,14 @@
     "clean": "turbo run clean",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
     "graphql:codegen": "turbo run graphql:codegen"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/engines",
+      "argon2",
+      "esbuild",
+      "prisma"
+    ]
   },
   "devDependencies": {
     "turbo": "^2.1.0",
