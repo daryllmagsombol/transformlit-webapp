@@ -20,7 +20,8 @@
       "@prisma/engines",
       "argon2",
       "esbuild",
-      "prisma"
+      "prisma",
+      "sharp"
     ],
     "overrides": {
       "lodash": ">=4.18.0",

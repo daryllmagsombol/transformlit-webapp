@@ -30,19 +30,34 @@ Branch: `feature/major-rearchitecture`
 
 - [x] GitHub Actions OIDC enabled on repo
 - [x] Cloudflare DNS write access confirmed
+- [x] Switched to pnpm (faster, better workspace support)
+- [x] Dependencies audited — 7 vulns patched, all latest compatible versions
 - [ ] Google OAuth application registered (client ID + secret)
 - [ ] Our Manna Verse of the Day API key obtained
-- [ ] Azure nonprofit sponsorship confirmed (subscription verified)
+- [x] Azure nonprofit sponsorship confirmed (subscription verified)
+
+## Current Stack Versions (2026-06-25)
+
+| Package | Version | Notes |
+|---|---|---|
+| TypeScript | 6.0.3 | Latest! |
+| Zod | 4.4.3 | Latest! |
+| GraphQL | 16.14.2 | 17 blocked (ecosystem not ready) |
+| NestJS | 11.x | Modules: Auth, Users, Groups, Friends, Chat, Books, Feed, Notifications |
+| Next.js | 16.2.9 | Turbopack build |
+| Tailwind | 4.3.1 | CSS variable tokens, dark mode |
+| Prisma | 7.8.0 | 14 models, PostgreSQL |
+| pnpm | 10.4.1 | Workspaces manager |
 
 ## Implementation Phases
 
 | # | Phase | Status | Est. Days |
 |---|---|---|---|
 | 0 | **Cleanup** — remove old `apps/api`, `apps/web`, `packages/shared`. Preserve `DESIGN_SYSTEM.md`. Rewrite docs. | ✅ Done | 0.5 |
-| 1 | **Monorepo + Shared** — turbo config, `packages/shared` (Zod schemas, enums), `packages/graphql` (codegen) | ⬜ Pending | 1 |
-| 2 | **Backend Foundation** — NestJS init, Prisma schema, Apollo GraphQL, Auth (OAuth + local + JWT + refresh), ACS Email | ⬜ Pending | 3-4 |
-| 3 | **Backend Features** — Users, Groups, Friends, Chat (subs + LD/NOTIFY), Books (PDF stream + progress), Feed | ⬜ Pending | 4-5 |
-| 4 | **Frontend Foundation** — Next.js 16, Tailwind v4 + dark tokens, Apollo Client, auth flow, layout shell, primitives | ⬜ Pending | 2 |
+| 1 | **Monorepo + Shared** — turbo config, `packages/shared` (Zod schemas, enums), `packages/graphql` (codegen) | ✅ Done | 1 |
+| 2 | **Backend Foundation** — NestJS init, Prisma schema, Apollo GraphQL, Auth (OAuth + local + JWT + refresh), ACS Email | ✅ Done | 3-4 |
+| 3 | **Backend Features** — Users, Groups, Friends, Chat (subs + LD/NOTIFY), Books (PDF stream + progress), Feed, Notifications | ✅ Done | 4-5 |
+| 4 | **Frontend Foundation** — Next.js 16, Tailwind v4 + dark tokens, Apollo Client, auth flow, layout shell, primitives | ✅ Done | 2 |
 | 5 | **Frontend Features** — Auth pages, Feed, Groups, Friends, Chat (live), Books browser + reader | ⬜ Pending | 5-7 |
 | 6 | **Terraform IaC** — all modules, dev + prod, OIDC auth | ⬜ Pending | 2-3 |
 | 7 | **CI/CD + Deploy** — workflows, GHCR build/push, provision dev, smoke test | ⬜ Pending | 1-2 |
