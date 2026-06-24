@@ -2,7 +2,6 @@
   "name": "@transformlit/api",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "scripts": {
     "build": "nest build",
     "dev": "nest start --watch",
@@ -22,6 +21,7 @@
   },
   "dependencies": {
     "@apollo/server": "^5.0.0",
+    "@as-integrations/express5": "^1.1.2",
     "@azure/communication-email": "^1.0.0",
     "@azure/storage-blob": "^12.26.0",
     "@nestjs/apollo": "^13.0.0",
@@ -32,6 +32,7 @@
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/passport": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",
+    "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@transformlit/shared": "workspace:*",
     "argon2": "^0.44.0",

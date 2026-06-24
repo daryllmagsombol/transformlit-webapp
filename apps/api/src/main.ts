@@ -12,7 +12,7 @@ async function bootstrap() {
   app.enableCors({ origin: origins, credentials: true });
   app.enableShutdownHooks();
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, transform: true }),
+    new ValidationPipe({ transform: true }),
   );
 
   const port = Number(process.env.PORT ?? 3005);

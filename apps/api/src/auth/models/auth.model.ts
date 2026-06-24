@@ -47,9 +47,9 @@ export class AuthPayload {
 
 @InputType()
 export class RegisterLocalInput {
-  @Field() email: string;
-  @Field() password: string;
-  @Field() displayName: string;
+  @Field(() => String) email: string;
+  @Field(() => String) password: string;
+  @Field(() => String) displayName: string;
 }
 
 @InputType()

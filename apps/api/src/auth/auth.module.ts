@@ -29,7 +29,7 @@ import { GoogleStrategy } from './strategies/google.strategy.js';
     JwtAuthGuard,
     RolesGuard,
     JwtStrategy,
-    GoogleStrategy,
+    // GoogleStrategy — uncomment when GOOGLE_CLIENT_ID is configured
   ],
   exports: [JwtAuthGuard, RolesGuard, AuthService, JwtModule],
 })
