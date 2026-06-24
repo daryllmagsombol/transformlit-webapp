@@ -1,1 +1,1 @@
-export type * from './graphql';
+export type * from './graphql.js';

@@ -1,7 +1,111 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { BlobService } from '../azure/blob.service.js';
+import {
+  UploadBookInput,
+  UpdateBookInput,
+  SaveProgressInput,
+  AddBookmarkInput,
+  AddHighlightInput,
+} from '@transformlit/shared';
 
 @Injectable()
 export class BooksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly blob: BlobService,
+  ) {}
+
+  async listBooks() {
+    return this.prisma.book.findMany({
+      where: { deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findById(id: string, userId?: string) {
+    const book = await this.prisma.book.findUnique({ where: { id, deletedAt: null } });
+    if (!book) throw new NotFoundException('Book not found');
+    return book;
+  }
+
+  async uploadBook(input: UploadBookInput, userId: string) {
+    return this.prisma.book.create({
+      data: { ...input, createdById: userId },
+    });
+  }
+
+  async updateBook(id: string, input: UpdateBookInput) {
+    return this.prisma.book.update({ where: { id }, data: input });
+  }
+
+  async uploadPdf(bookId: string, buffer: Buffer, filename: string) {
+    const blobPath = `books/${bookId}/${filename}`;
+    await this.blob.uploadPdf(blobPath, buffer, 'application/pdf');
+    return this.prisma.book.update({
+      where: { id: bookId },
+      data: { blobPath, status: 'PUBLISHED', publishedAt: new Date() },
+    });
+  }
+
+  async streamPdf(bookId: string, userId: string) {
+    const book = await this.prisma.book.findUnique({ where: { id: bookId } });
+    if (!book?.blobPath) throw new NotFoundException('PDF not available');
+    return this.blob.streamPdf(book.blobPath);
+  }
+
+  // Read progress
+  async getProgress(userId: string, bookId: string) {
+    return this.prisma.bookProgress.findUnique({
+      where: { userId_bookId: { userId, bookId } },
+    });
+  }
+
+  async saveProgress(userId: string, input: SaveProgressInput) {
+    return this.prisma.bookProgress.upsert({
+      where: { userId_bookId: { userId, bookId: input.bookId } },
+      update: { currentPage: input.currentPage, scrollY: input.scrollY ?? undefined, lastReadAt: new Date() },
+      create: { userId, bookId: input.bookId, currentPage: input.currentPage, scrollY: input.scrollY ?? undefined },
+    });
+  }
+
+  // Bookmarks
+  async listBookmarks(userId: string, bookId: string) {
+    return this.prisma.bookmark.findMany({
+      where: { userId, bookId },
+      orderBy: { page: 'asc' },
+    });
+  }
+
+  async addBookmark(userId: string, input: AddBookmarkInput) {
+    return this.prisma.bookmark.create({
+      data: { userId, ...input },
+    });
+  }
+
+  async removeBookmark(id: string) {
+    return this.prisma.bookmark.delete({ where: { id } });
+  }
+
+  // Highlights
+  async listHighlights(userId: string, bookId: string) {
+    return this.prisma.highlight.findMany({
+      where: { userId, bookId },
+      orderBy: { page: 'asc' },
+    });
+  }
+
+  async addHighlight(userId: string, input: AddHighlightInput) {
+    return this.prisma.highlight.create({
+      data: { userId, ...input },
+    });
+  }
+
+  async removeHighlight(id: string) {
+    return this.prisma.highlight.delete({ where: { id } });
+  }
+
+  async deleteBook(id: string) {
+    return this.prisma.book.update({ where: { id }, data: { deletedAt: new Date() } });
+  }
 }

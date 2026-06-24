@@ -2,8 +2,8 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { Pool } from 'pg';
 import { ConfigService } from '@nestjs/config';
 
-interface PubSubTrigger<T = unknown> {
-  resolve: (value: { value: T; done: boolean }) => void;
+interface PubSubTrigger {
+  resolve: (value: IteratorResult<unknown>) => void;
 }
 
 @Injectable()
@@ -47,14 +47,14 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
   }
 
   asyncIterator<T>(triggerName: string): AsyncIterator<T> {
-    const channel = triggerName; // map to PG channel name
+    const channel = triggerName;
     return {
       next: () =>
         new Promise<IteratorResult<T>>((resolve) => {
           const existing = this.listeners.get(channel) ?? [];
-          existing.push({ resolve });
+          existing.push({ resolve: resolve as (v: IteratorResult<unknown>) => void });
           this.listeners.set(channel, existing);
-        }),
+        }) as Promise<IteratorResult<T>>,
       return: async () => ({ value: undefined as any, done: true }),
       throw: async () => ({ value: undefined as any, done: true }),
     };

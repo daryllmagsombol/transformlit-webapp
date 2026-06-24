@@ -2,8 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
-import { ApolloServerPluginLandingPageLocalDefault } from '@apollo/server/plugin/landingPage/default';
 import { join } from 'node:path';
+import type { Request } from 'express';
 
 import { PrismaModule } from './prisma/prisma.module.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -26,17 +26,14 @@ import { CommonModule } from './common/common.module.js';
       autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
       sortSchema: true,
       playground: false,
-      plugins: [ApolloServerPluginLandingPageLocalDefault()],
+      introspection: true,
       subscriptions: {
         'graphql-ws': {
           path: '/graphql',
         },
       },
-      context: ({ req, extra }) => {
-        // For WebSocket connections, authorization is in connectionParams
-        const reqFromHttp = req;
-        const reqFromWs = extra?.request;
-        return { req: reqFromHttp ?? reqFromWs };
+      context: ({ req, extra }: { req?: Request; extra?: { request?: Request } }) => {
+        return { req: req ?? extra?.request };
       },
     }),
 

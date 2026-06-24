@@ -31,7 +31,7 @@ export class BlobService {
   ): Promise<string> {
     if (!this.client) throw new Error('Blob storage not configured');
     const containerClient = this.client.getContainerClient('pdfs');
-    await containerClient.createIfNotExists({ access: 'private' });
+    await containerClient.createIfNotExists();
     const blobClient = containerClient.getBlockBlobClient(blobPath);
     await blobClient.uploadData(buffer, {
       blobHTTPHeaders: { blobContentType: contentType },

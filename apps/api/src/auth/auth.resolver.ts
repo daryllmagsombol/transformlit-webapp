@@ -3,32 +3,29 @@ import { UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
-import {
-  RegisterLocalInput,
-  LoginLocalInput,
-  RefreshTokenInput,
-} from '@transformlit/shared';
+import { RegisterLocalInput, LoginLocalInput } from '@transformlit/shared';
+import { AuthPayload, User } from './models/auth.model.js';
 
 @Resolver()
 export class AuthResolver {
   constructor(private readonly authService: AuthService) {}
 
-  @Mutation(() => String, { name: 'registerLocal' })
+  @Mutation(() => AuthPayload, { name: 'registerLocal' })
   async registerLocal(@Args('input') input: RegisterLocalInput) {
     return this.authService.registerLocal(input);
   }
 
-  @Mutation(() => String, { name: 'loginLocal' })
+  @Mutation(() => AuthPayload, { name: 'loginLocal' })
   async loginLocal(@Args('input') input: LoginLocalInput) {
     return this.authService.loginLocal(input);
   }
 
-  @Mutation(() => String, { name: 'refreshToken' })
-  async refreshToken(@Args('input') input: RefreshTokenInput) {
-    return this.authService.refreshTokens(input.refreshToken);
+  @Mutation(() => AuthPayload, { name: 'refreshToken' })
+  async refreshToken(@Args('refreshToken') refreshToken: string) {
+    return this.authService.refreshTokens(refreshToken);
   }
 
-  @Query(() => String, { name: 'me' })
+  @Query(() => User, { name: 'me' })
   @UseGuards(JwtAuthGuard)
   async me(@CurrentUser() user: { id: string }) {
     return this.authService.validateUser(user.id);
