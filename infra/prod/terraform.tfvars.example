@@ -1,0 +1,21 @@
+environment                = "prod"
+location                   = "southeastasia"
+domain_name                = "app.transformlit.com"
+container_api_min_replicas = 1
+container_web_min_replicas = 0
+
+postgres_sku       = "B_Standard_B1ms"
+postgres_storage_mb = 32768
+
+subscription_id       = ""
+postgres_admin_password = ""
+jwt_secret            = ""
+jwt_refresh_secret    = ""
+google_client_id      = ""
+google_client_secret  = ""
+
+tags = {
+  environment = "prod"
+  project     = "transformlit"
+  managed_by  = "terraform"
+}
