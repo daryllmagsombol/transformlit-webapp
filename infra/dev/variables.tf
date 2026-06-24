@@ -98,3 +98,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "ghcr_owner" {
+  description = "GitHub Container Registry owner"
+  type        = string
+  default     = "transformlit"
+}

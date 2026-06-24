@@ -1,4 +1,4 @@
-import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
+import { Field, ObjectType, InputType, ID, registerEnumType } from '@nestjs/graphql';
 import { UserRole } from '@transformlit/shared';
 
 registerEnumType(UserRole, { name: 'UserRole' });
@@ -43,4 +43,17 @@ export class AuthPayload {
 
   @Field(() => User)
   user: User;
+}
+
+@InputType()
+export class RegisterLocalInput {
+  @Field() email: string;
+  @Field() password: string;
+  @Field() displayName: string;
+}
+
+@InputType()
+export class LoginLocalInput {
+  @Field() email: string;
+  @Field() password: string;
 }

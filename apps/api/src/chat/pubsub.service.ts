@@ -19,17 +19,17 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     const client = await this.pool.connect();
 
     client.on('notification', (msg) => {
-      const triggers = this.listeners.get(msg.channel) ?? [];
       const payload = msg.payload ? JSON.parse(msg.payload) : null;
-      for (const trigger of triggers) {
+      const triggers = this.listeners.get(msg.channel) ?? [];
+      if (triggers.length > 0) {
+        const trigger = triggers.shift()!;
         trigger.resolve({ value: payload, done: false });
+        this.listeners.set(msg.channel, triggers);
       }
-      this.listeners.set(msg.channel, []);
     });
 
-    await client.query('LISTEN message_added');
-    await client.query('LISTEN friend_request');
-    await client.query('LISTEN group_updated');
+    // camelCase channel name, quoted so Postgres preserves case
+    await client.query('LISTEN "messageAdded"');
 
     // Keep connection open
     client.on('error', () => {});
@@ -40,22 +40,24 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
   }
 
   async publish(channel: string, payload: unknown): Promise<void> {
-    await this.pool.query('NOTIFY $1, $2', [
+    await this.pool.query('SELECT pg_notify($1, $2)', [
       channel,
       JSON.stringify(payload),
     ]);
   }
 
   asyncIterator<T>(triggerName: string): AsyncIterator<T> {
-    const channel = triggerName;
     return {
       next: () =>
         new Promise<IteratorResult<T>>((resolve) => {
-          const existing = this.listeners.get(channel) ?? [];
+          const existing = this.listeners.get(triggerName) ?? [];
           existing.push({ resolve: resolve as (v: IteratorResult<unknown>) => void });
-          this.listeners.set(channel, existing);
+          this.listeners.set(triggerName, existing);
         }) as Promise<IteratorResult<T>>,
-      return: async () => ({ value: undefined as any, done: true }),
+      return: async () => {
+        // listener cleanup happens naturally since it won't receive more events
+        return { value: undefined as any, done: true };
+      },
       throw: async () => ({ value: undefined as any, done: true }),
     };
   }

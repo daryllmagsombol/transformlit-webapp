@@ -1,4 +1,4 @@
-import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
+import { Field, ObjectType, InputType, ID, registerEnumType } from '@nestjs/graphql';
 import { ConversationType } from '@transformlit/shared';
 
 registerEnumType(ConversationType, { name: 'ConversationType' });
@@ -58,4 +58,11 @@ export class MessageConnection {
 
   @Field()
   hasNextPage: boolean;
+}
+
+@InputType()
+export class SendMessageInput {
+  @Field(() => ID) conversationId: string;
+
+  @Field() body: string;
 }

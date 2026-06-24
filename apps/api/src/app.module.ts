@@ -2,8 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
-import { join } from 'node:path';
-import type { Request } from 'express';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { PrismaModule } from './prisma/prisma.module.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -15,7 +15,8 @@ import { BooksModule } from './books/books.module.js';
 import { FeedModule } from './feed/feed.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { AzureModule } from './azure/azure.module.js';
-import { CommonModule } from './common/common.module.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 @Module({
   imports: [
@@ -23,22 +24,37 @@ import { CommonModule } from './common/common.module.js';
 
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+      autoSchemaFile: join(__dirname, 'schema.gql'),
       sortSchema: true,
-      playground: false,
       introspection: true,
       subscriptions: {
         'graphql-ws': {
           path: '/graphql',
         },
       },
-      context: ({ req, extra }: { req?: Request; extra?: { request?: Request } }) => {
-        return { req: req ?? extra?.request };
+      context: ({ req, extra }: any) => {
+        // HTTP request
+        if (req) return { req };
+        // WebSocket connection — check connectionParams
+        if (extra) {
+          const connectionParams = extra.connectionParams || {};
+          const authHeader =
+            connectionParams.Authorization ||
+            connectionParams.authorization ||
+            '';
+          return {
+            req: {
+              headers: {
+                authorization: authHeader,
+              },
+            },
+          };
+        }
+        return { req };
       },
     }),
 
     PrismaModule,
-    CommonModule,
     AzureModule,
     AuthModule,
     UsersModule,

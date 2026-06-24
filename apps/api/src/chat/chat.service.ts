@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { PubSubService } from './pubsub.service.js';
-import { SendMessageInput } from '@transformlit/shared';
+import { SendMessageInput } from './models/chat.model.js';
 
 @Injectable()
 export class ChatService {
@@ -75,7 +75,7 @@ export class ChatService {
     });
 
     // Publish via Postgres NOTIFY
-    await this.pubSub.publish('message_added', {
+    await this.pubSub.publish('messageAdded', {
       messageAdded: msg,
     });
 

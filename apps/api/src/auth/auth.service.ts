@@ -1,8 +1,9 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { RegisterLocalInput, LoginLocalInput } from '@transformlit/shared';
+import { RegisterLocalInput, LoginLocalInput } from './models/auth.model.js';
 import { randomBytes, createHash } from 'node:crypto';
 
 @Injectable()
@@ -55,7 +56,6 @@ export class AuthService {
     const tokenHash = this.hashToken(refreshToken);
     const stored = await this.prisma.refreshToken.findUnique({
       where: { tokenHash },
-      include: { user: true },
     });
 
     if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
@@ -69,16 +69,17 @@ export class AuthService {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    // Rotate: revoke old, issue new
-    const { accessToken, refreshToken: newRefresh } =
-      await this.generateTokens(stored.userId);
+    // Rotate: revoke old + issue new in a single transaction (same family)
+    const { accessToken, refreshToken: newRefresh, user } =
+      await this.prisma.$transaction(async (tx) => {
+        await tx.refreshToken.update({
+          where: { id: stored.id },
+          data: { revokedAt: new Date() },
+        });
+        return this.generateTokens(stored.userId, stored.familyId, tx);
+      });
 
-    await this.prisma.refreshToken.update({
-      where: { id: stored.id },
-      data: { revokedAt: new Date(), replacedById: undefined },
-    });
-
-    return { accessToken, refreshToken: newRefresh };
+    return { accessToken, refreshToken: newRefresh, user };
   }
 
   async findOrCreateOAuthUser(profile: {
@@ -132,22 +133,28 @@ export class AuthService {
     });
   }
 
-  private async generateTokens(userId: string) {
+  private async generateTokens(
+    userId: string,
+    familyId?: string,
+    tx?: Prisma.TransactionClient,
+  ) {
+    const db = tx ?? this.prisma;
     const accessToken = this.jwtService.sign({ sub: userId });
     const rawRefresh = randomBytes(40).toString('hex');
     const tokenHash = this.hashToken(rawRefresh);
-    const familyId = randomBytes(16).toString('hex');
+    const famId = familyId ?? randomBytes(16).toString('hex');
 
-    await this.prisma.refreshToken.create({
+    await db.refreshToken.create({
       data: {
         userId,
         tokenHash,
-        familyId,
+        familyId: famId,
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
       },
     });
 
-    return { accessToken, refreshToken: rawRefresh };
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    return { accessToken, refreshToken: rawRefresh, user };
   }
 
   private hashToken(token: string): string {

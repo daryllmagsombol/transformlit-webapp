@@ -1,10 +1,6 @@
-import { Resolver, Mutation, Args, Query } from '@nestjs/graphql';
-import { UseGuards } from '@nestjs/common';
+import { Resolver, Mutation, Args } from '@nestjs/graphql';
 import { AuthService } from './auth.service.js';
-import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
-import { CurrentUser } from '../common/decorators/current-user.decorator.js';
-import { RegisterLocalInput, LoginLocalInput } from '@transformlit/shared';
-import { AuthPayload, User } from './models/auth.model.js';
+import { AuthPayload, RegisterLocalInput, LoginLocalInput } from './models/auth.model.js';
 
 @Resolver()
 export class AuthResolver {
@@ -23,11 +19,5 @@ export class AuthResolver {
   @Mutation(() => AuthPayload, { name: 'refreshToken' })
   async refreshToken(@Args('refreshToken') refreshToken: string) {
     return this.authService.refreshTokens(refreshToken);
-  }
-
-  @Query(() => User, { name: 'me' })
-  @UseGuards(JwtAuthGuard)
-  async me(@CurrentUser() user: { id: string }) {
-    return this.authService.validateUser(user.id);
   }
 }

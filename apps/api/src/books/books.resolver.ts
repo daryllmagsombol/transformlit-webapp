@@ -4,10 +4,10 @@ import { BooksService } from './books.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import {
+  Book, BookProgress, Bookmark, Highlight,
   UploadBookInput, UpdateBookInput, SaveProgressInput,
   AddBookmarkInput, AddHighlightInput,
-} from '@transformlit/shared';
-import { Book, BookProgress, Bookmark, Highlight } from './models/book.model.js';
+} from './models/book.model.js';
 import { GraphQLUpload, FileUpload } from 'graphql-upload-ts';
 
 @Resolver()

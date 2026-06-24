@@ -1,6 +1,6 @@
 # Transformlit — Project Memory & Task Tracker
 
-Date: 2026-06-25
+Date: 2026-06-25 (updated after audit fixes)
 Branch: `feature/major-rearchitecture`
 
 ## Key Decisions (Locked In)
@@ -22,7 +22,7 @@ Branch: `feature/major-rearchitecture`
 | Infra | Terraform with Azure Storage backend. Modules per service. Dev + Prod environments. |
 | CI/CD | GitHub Actions: `infra.yml` (plan/apply), `deploy-api.yml`, `deploy-web.yml`. Images to GHCR. |
 | APIM | Skipped for MVP. |
-| Redis | Not needed — Postgres LD/NOTIFY covers pub/sub. |
+| Redis | Not needed — Postgres LISTEN/NOTIFY covers pub/sub. |
 | Domains | Prod: `app.transformlit.com` (web), `/api/*` (NestJS). Dev: `dev.transformlit.com`. Cloudflare DNS + Full SSL. |
 | Cost target | ~$25-30/mo (covered by Azure nonprofit sponsorship → $0 out-of-pocket). |
 
@@ -56,14 +56,82 @@ Branch: `feature/major-rearchitecture`
 | 0 | **Cleanup** — remove old `apps/api`, `apps/web`, `packages/shared`. Preserve `DESIGN_SYSTEM.md`. Rewrite docs. | ✅ Done | 0.5 |
 | 1 | **Monorepo + Shared** — turbo config, `packages/shared` (Zod schemas, enums), `packages/graphql` (codegen) | ✅ Done | 1 |
 | 2 | **Backend Foundation** — NestJS init, Prisma schema, Apollo GraphQL, Auth (OAuth + local + JWT + refresh), ACS Email | ✅ Done | 3-4 |
-| 3 | **Backend Features** — Users, Groups, Friends, Chat (subs + LD/NOTIFY), Books (PDF stream + progress), Feed, Notifications | ✅ Done | 4-5 |
+| 3 | **Backend Features** — Users, Groups, Friends, Chat (subs + LISTEN/NOTIFY), Books (PDF stream + progress), Feed, Notifications | ✅ Done | 4-5 |
 | 4 | **Frontend Foundation** — Next.js 16, Tailwind v4 + dark tokens, Apollo Client, auth flow, layout shell, primitives | ✅ Done | 2 |
-| 5 | **Frontend Features** — Auth pages, Feed, Groups, Friends, Chat (live), Books browser + reader | ⬜ Pending | 5-7 |
-| 6 | **Terraform IaC** — all modules, dev + prod, OIDC auth | ⬜ Pending | 2-3 |
-| 7 | **CI/CD + Deploy** — workflows, GHCR build/push, provision dev, smoke test | ⬜ Pending | 1-2 |
-| 8 | **Prod Cutover** — provision prod, DNS switch, final testing | ⬜ Pending | 1 |
+| 5 | **Frontend Features** — Landing + auth pages done, auth pages (Feed placeholder with dynamic Apollo). Full feature pages pending. | 🟡 Foundation Ready | 2 |
+| 6 | **Terraform IaC** — 8 modules, dev + prod environments, providers pinned, secrets wired | ✅ Done | 2-3 |
+| 7 | **CI/CD + Deploy** — 3 workflows (infra plan/apply, deploy-api, deploy-web), GHCR + Container Apps | ✅ Done | 1-2 |
+| 8 | **Audit & Fixes** — 25+ bugs fixed across backend (InputTypes, Auth, PubSub, Prisma, Guards, OAuth, Subscriptions), Docker (--filter, packages/shared), Terraform (providers, KV name, secrets, ACS), CI/CD (matrix, TF_VAR wiring) | ✅ Done | 1 |
+| 9 | **Prod Cutover** — provision prod, DNS switch, final testing | ⬜ Pending | 1 |
 
 **Total: ~3.5–4.5 weeks** (solo dev, full-time)
+
+## Audit & Fixes (2026-06-25)
+
+Full-stack audit found 25+ issues across backend, frontend, Docker, Terraform, and CI/CD. All fixed:
+
+### Backend Critical Blockers (11 fixes)
+| # | Issue | Fix |
+|---|---|---|
+| 1 | No `@InputType()` classes — schema gen would fail | Created 13 @InputType classes across all 6 domains |
+| 2 | `AuthPayload.user` non-null but never returned | `generateTokens()` now fetches and returns user |
+| 3 | Duplicate `me` query (auth + users resolvers) | Removed from auth resolver |
+| 4 | `NOTIFY $1, $2` — invalid SQL | Changed to `SELECT pg_notify($1, $2)` |
+| 5 | LISTEN/publish/asyncIterator channel-name mismatch | Standardized on `messageAdded` (camelCase) |
+| 6 | `autoSchemaFile` path wrong for Docker | Uses `join(__dirname, 'schema.gql')` |
+| 7 | Google OAuth unreachable — no REST controller | Added `AuthController` with `/auth/google` + callback |
+| 8 | Subscription pushed all messages to all clients | Added `filter` by `conversationId` |
+| 9 | WebSocket auth broken (connectionParams vs header) | Context extracts auth from `connectionParams` |
+| 10 | `CommonModule` no-op | Removed, decorators kept as standalone |
+| 11 | Unused `JWT_REFRESH_SECRET` in .env.example | Removed |
+
+### Prisma Schema (3 fixes)
+| # | Fix |
+|---|---|
+| 12 | `onDelete: Cascade` on Message.sender, AuditLog.user |
+| 13 | `onDelete: SetNull` on createdBy/publishedBy relations |
+| 14 | Removed broken `RefreshToken.replacedById` self-relation |
+
+### Docker + Packages (4 fixes)
+| # | Fix |
+|---|---|
+| 15 | `--filter` flag moved to `pnpm --filter=@transformlit/api run db:generate` |
+| 16 | `packages/shared/dist` copied to final Docker image |
+| 17 | `packages/shared/package.json` main/types → `./dist/index.js` |
+| 18 | `.gitignore` ignores `terraform.tfvars` but tracks `.tfvars.example` |
+
+### Terraform (8 fixes)
+| # | Fix |
+|---|---|
+| 19 | `providers.tf` copied into `infra/dev/` + `infra/prod/` (root dead code removed) |
+| 20 | Key Vault name → `kvtransformlitdev` (alphanumeric, no hyphens) |
+| 21 | `tenant_id` → `data.azurerm_client_config.current.tenant_id` |
+| 22 | Container App secrets → top-level `secret {}` + env `secret_name` reference |
+| 23 | Sensitive env vars (DB, JWT, storage key) moved to `secret_env_vars` |
+| 24 | ACS Email domain → `AzureManagedDomain` (no DNS verification needed) |
+| 25 | `ghcr_owner` variable added to env configs |
+| 26 | Removed dead `infra/providers.tf`, `infra/variables.tf`, `infra/outputs.tf` |
+
+### CI/CD (2 fixes)
+| # | Fix |
+|---|---|
+| 27 | `infra.yml` — matrix replaced with explicit `apply` + `apply-prod` jobs, `TF_VAR_*` secrets wired |
+| 28 | `infra.yml` — `terraform apply -auto-approve` (no `tfplan` from separate plan job) |
+
+### Frontend Notes
+| Item | Status |
+|---|---|
+| Apollo SSR | Pages use `force-dynamic` — public pages SSR, auth pages CSR (production standard) |
+| Full feature pages (groups, friends, books, chat) | Stubs present — Apollo queries ready, deferred for post-deploy iteration |
+| `RolesGuard` + `@Roles()` | Declared but not wired to admin mutations yet (security hardening phase) |
+
+### Build Verification (post-fix)
+| Check | Result |
+|---|---|
+| API `tsc --noEmit` | 0 errors |
+| API `nest build` (SWC) | 49 files, 98ms |
+| Next.js `next build` | Passes with `force-dynamic` |
+| Prisma `prisma generate` | 14 models generated |
 
 ## Future: Microservice Extraction (Phase 9+)
 

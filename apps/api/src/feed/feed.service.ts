@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import {
   PublishAnnouncementInput,
   UpdateAnnouncementInput,
-} from '@transformlit/shared';
+} from './models/feed.model.js';
 
 @Injectable()
 export class FeedService {

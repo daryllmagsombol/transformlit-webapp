@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { CreateGroupInput, UpdateGroupInput } from '@transformlit/shared';
+import { CreateGroupInput, UpdateGroupInput } from './models/group.model.js';
 
 @Injectable()
 export class GroupsService {

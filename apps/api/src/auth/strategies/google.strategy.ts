@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { Strategy, VerifyCallback } from 'passport-google-oauth20';
 import { ConfigService } from '@nestjs/config';
@@ -26,6 +26,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   ) {
     const { id, displayName, emails } = profile;
     const email = emails?.[0]?.value;
+    if (!email) throw new UnauthorizedException('No email in Google profile');
 
     const tokens = await this.authService.findOrCreateOAuthUser({
       provider: 'google',

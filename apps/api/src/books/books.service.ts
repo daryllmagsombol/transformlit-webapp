@@ -7,7 +7,7 @@ import {
   SaveProgressInput,
   AddBookmarkInput,
   AddHighlightInput,
-} from '@transformlit/shared';
+} from './models/book.model.js';
 
 @Injectable()
 export class BooksService {

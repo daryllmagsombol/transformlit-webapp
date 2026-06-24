@@ -4,8 +4,7 @@ import { ChatService } from './chat.service.js';
 import { PubSubService } from './pubsub.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
-import { SendMessageInput } from '@transformlit/shared';
-import { Conversation, Message, MessageConnection } from './models/chat.model.js';
+import { Conversation, Message, MessageConnection, SendMessageInput } from './models/chat.model.js';
 
 @Resolver()
 export class ChatResolver {
@@ -57,7 +56,12 @@ export class ChatResolver {
     return this.chatService.markRead(conversationId, user.id);
   }
 
-  @Subscription(() => Message, { name: 'messageAdded' })
+  @Subscription(() => Message, {
+    name: 'messageAdded',
+    resolve: (payload) => payload.messageAdded,
+    filter: (payload, variables) =>
+      payload.messageAdded.conversationId === variables.conversationId,
+  })
   @UseGuards(JwtAuthGuard)
   messageAdded(@Args('conversationId') conversationId: string) {
     return this.pubSub.asyncIterator('messageAdded');

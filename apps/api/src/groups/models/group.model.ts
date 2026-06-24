@@ -1,4 +1,4 @@
-import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
+import { Field, ObjectType, InputType, ID, registerEnumType } from '@nestjs/graphql';
 import { GroupVisibility, GroupMemberRole, GroupMemberStatus } from '@transformlit/shared';
 
 registerEnumType(GroupVisibility, { name: 'GroupVisibility' });
@@ -48,4 +48,27 @@ export class GroupMember {
 
   @Field()
   joinedAt: Date;
+}
+
+@InputType()
+export class CreateGroupInput {
+  @Field() name: string;
+
+  @Field({ nullable: true })
+  description?: string;
+
+  @Field(() => GroupVisibility, { defaultValue: GroupVisibility.PUBLIC, nullable: true })
+  visibility?: GroupVisibility;
+}
+
+@InputType()
+export class UpdateGroupInput {
+  @Field({ nullable: true })
+  name?: string;
+
+  @Field({ nullable: true })
+  description?: string;
+
+  @Field(() => GroupVisibility, { nullable: true })
+  visibility?: GroupVisibility;
 }

@@ -3,8 +3,7 @@ import { UseGuards } from '@nestjs/common';
 import { GroupsService } from './groups.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
-import { CreateGroupInput, UpdateGroupInput } from '@transformlit/shared';
-import { Group, GroupMember } from './models/group.model.js';
+import { Group, GroupMember, CreateGroupInput, UpdateGroupInput } from './models/group.model.js';
 
 @Resolver()
 export class GroupsResolver {

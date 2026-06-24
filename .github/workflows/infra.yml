@@ -71,14 +71,12 @@ jobs:
             });
 
   apply:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        env: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('[["{0}"]]', github.event.inputs.environment)) || fromJSON('["dev"]') }}
+    environment: dev
     defaults:
       run:
-        working-directory: infra/${{ matrix.env }}
+        working-directory: infra/dev
 
     steps:
       - uses: actions/checkout@v4
@@ -100,7 +98,54 @@ jobs:
             -backend-config="resource_group_name=rg-terraform-state" \
             -backend-config="storage_account_name=tfsatransformlit" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=transformlit-${{ matrix.env }}.tfstate"
+            -backend-config="key=transformlit-dev.tfstate"
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan || terraform apply -auto-approve
+        env:
+          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_postgres_admin_password: ${{ secrets.POSTGRES_ADMIN_PASSWORD_DEV }}
+          TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET_DEV }}
+          TF_VAR_jwt_refresh_secret: ${{ secrets.JWT_REFRESH_SECRET_DEV }}
+          TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
+          TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: terraform apply -auto-approve
+
+  apply-prod:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    runs-on: ubuntu-latest
+    environment: prod
+    defaults:
+      run:
+        working-directory: infra/prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '~1.10'
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=rg-terraform-state" \
+            -backend-config="storage_account_name=tfsatransformlit" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=transformlit-prod.tfstate"
+
+      - name: Terraform Apply
+        env:
+          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_postgres_admin_password: ${{ secrets.POSTGRES_ADMIN_PASSWORD_PROD }}
+          TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET_PROD }}
+          TF_VAR_jwt_refresh_secret: ${{ secrets.JWT_REFRESH_SECRET_PROD }}
+          TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
+          TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: terraform apply -auto-approve

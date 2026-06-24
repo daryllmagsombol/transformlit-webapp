@@ -29,6 +29,14 @@ resource "azurerm_container_app" "this" {
     identity_ids = var.identity_ids
   }
 
+  dynamic "secret" {
+    for_each = var.secret_env_vars
+    content {
+      name  = secret.key
+      value = secret.value
+    }
+  }
+
   template {
     min_replicas = var.min_replicas
     max_replicas = var.max_replicas
@@ -52,7 +60,6 @@ resource "azurerm_container_app" "this" {
         content {
           name        = env.key
           secret_name = env.key
-          value       = env.value
         }
       }
     }

@@ -1,4 +1,4 @@
-import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
+import { Field, ObjectType, InputType, ID, registerEnumType } from '@nestjs/graphql';
 import { AnnouncementStatus } from '@transformlit/shared';
 
 registerEnumType(AnnouncementStatus, { name: 'AnnouncementStatus' });
@@ -43,4 +43,32 @@ export class VerseOfDay {
 
   @Field()
   version: string;
+}
+
+@InputType()
+export class PublishAnnouncementInput {
+  @Field() title: string;
+
+  @Field() body: string;
+
+  @Field({ nullable: true })
+  publishAt?: string;
+
+  @Field({ nullable: true })
+  expiresAt?: string;
+}
+
+@InputType()
+export class UpdateAnnouncementInput {
+  @Field({ nullable: true })
+  title?: string;
+
+  @Field({ nullable: true })
+  body?: string;
+
+  @Field({ nullable: true })
+  publishAt?: string;
+
+  @Field({ nullable: true })
+  expiresAt?: string;
 }

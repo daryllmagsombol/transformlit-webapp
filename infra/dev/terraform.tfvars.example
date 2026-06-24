@@ -1,6 +1,7 @@
 environment                = "dev"
 location                   = "southeastasia"
 domain_name                = "dev.transformlit.com"
+ghcr_owner                 = "transformlit"
 container_api_min_replicas = 1
 container_web_min_replicas = 0
 

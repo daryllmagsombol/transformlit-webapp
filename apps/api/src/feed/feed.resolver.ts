@@ -3,8 +3,7 @@ import { UseGuards } from '@nestjs/common';
 import { FeedService } from './feed.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
-import { PublishAnnouncementInput, UpdateAnnouncementInput } from '@transformlit/shared';
-import { Announcement, VerseOfDay } from './models/feed.model.js';
+import { Announcement, VerseOfDay, PublishAnnouncementInput, UpdateAnnouncementInput } from './models/feed.model.js';
 
 @Resolver()
 export class FeedResolver {

@@ -75,7 +75,6 @@ model RefreshToken {
   familyId    String
   expiresAt   DateTime
   revokedAt   DateTime?
-  replacedById String?
   createdAt   DateTime  @default(now())
 
   @@index([userId, familyId])
@@ -107,7 +106,7 @@ model Group {
   description String?
   visibility  GroupVisibility @default(PUBLIC)
   createdById String?
-  createdBy   User?           @relation("GroupCreatedBy", fields: [createdById], references: [id])
+  createdBy   User?           @relation("GroupCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
   deletedAt   DateTime?
@@ -207,7 +206,7 @@ model Message {
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   senderId       String
-  sender         User     @relation(fields: [senderId], references: [id])
+  sender         User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
   body           String
   editedAt       DateTime?
   createdAt      DateTime @default(now())
@@ -245,7 +244,7 @@ model Book {
   status        BookStatus      @default(DRAFT)
   totalPages    Int?
   createdById   String?
-  createdBy     User?           @relation("BookCreatedBy", fields: [createdById], references: [id])
+  createdBy     User?           @relation("BookCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   publishedAt   DateTime?
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
@@ -344,9 +343,9 @@ model Announcement {
   expiresAt     DateTime?
   publishedAt   DateTime?
   publishedById String?
-  publishedBy   User?              @relation("AnnouncementPublishedBy", fields: [publishedById], references: [id])
+  publishedBy   User?              @relation("AnnouncementPublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
   createdById   String?
-  createdBy     User?              @relation("AnnouncementCreatedBy", fields: [createdById], references: [id])
+  createdBy     User?              @relation("AnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   deletedAt     DateTime?
@@ -387,7 +386,7 @@ model Notification {
   payload     Json?
   readAt      DateTime?
   createdById String?
-  createdBy   User?            @relation("NotificationCreatedBy", fields: [createdById], references: [id])
+  createdBy   User?            @relation("NotificationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime         @default(now())
 
   @@index([userId, readAt, createdAt(sort: Desc)])
@@ -399,7 +398,7 @@ model Notification {
 model AuditLog {
   id         String   @id @default(uuid())
   userId     String
-  user       User     @relation(fields: [userId], references: [id])
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   action     String
   targetType String?
   targetId   String?
