@@ -3,7 +3,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**"]
+      "outputs": ["dist/**", ".next/**", "build/**"]
     },
     "dev": {
       "cache": false,
@@ -14,6 +14,20 @@
     },
     "test": {
       "dependsOn": ["^test"]
+    },
+    "clean": {
+      "cache": false
+    },
+    "graphql:codegen": {
+      "cache": false,
+      "outputs": ["__generated__/**"]
+    },
+    "db:generate": {
+      "cache": false,
+      "outputs": ["node_modules/.prisma/**"]
+    },
+    "db:migrate": {
+      "cache": false
     }
   }
 }

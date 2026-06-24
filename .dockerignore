@@ -3,8 +3,10 @@ node_modules
 dist
 .next
 .turbo
-coverage
 .env
-.env.*
-.github/
-images/
+.env.local
+__generated__
+infra/**/.terraform
+**/coverage
+*.log
+.DS_Store

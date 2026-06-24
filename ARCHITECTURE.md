@@ -1,180 +1,198 @@
-# Community App Architecture (MVP)
+# Transformlit Architecture
 
-Date: 2026-05-27
+Date: 2026-06-25
+Branch: `feature/major-rearchitecture`
 
-## Goals
+## Overview
 
-- Enterprise-ready baseline with a small MVP scope.
-- Multi-tenant, email/password auth (no social SSO).
-- No realtime or websockets in v1; short polling for chat.
-- Azure App Service deployment for MVP.
-- Page flow: public home (login/register) -> announcements home after login.
-- Persistent left sidebar + top bar for authenticated pages.
+Transformlit is a single-instance community platform for reading groups, book sharing, chat, and literary engagement. The backend is a **modular NestJS monolith** with domain boundaries designed for future microservice extraction. The frontend is a **mobile-first Next.js App Router** app. The API is **Apollo GraphQL-first** with subscriptions for real-time features.
 
-## Scope (MVP)
+```
+┌──────────────────────────────────────────────────────┐
+│                  Cloudflare (DNS + Full SSL)          │
+└────────────────────┬─────────────────────────────────┘
+                     │
+      app.transformlit.com  /  dev.transformlit.com
+                     │
+┌────────────────────▼─────────────────────────────────┐
+│         Azure Container Apps Environment             │
+│                                                      │
+│  ┌──────────────────────┐  ┌──────────────────────┐  │
+│  │  container-app: api  │  │ container-app: web   │  │
+│  │  NestJS + Apollo      │  │ Next.js 16           │  │
+│  │  /api/*               │  │ /*                   │  │
+│  │  min_replicas: 1      │  │ min_replicas: 0      │  │
+│  └──────┬───────────────┘  └──────────────────────┘  │
+│         │                                             │
+└─────────┼─────────────────────────────────────────────┘
+          │
+    ┌─────┴─────┬──────────────┬──────────────┐
+    │           │              │              │
+┌───▼────┐ ┌───▼────┐  ┌─────▼──────┐ ┌────▼─────┐
+│Postgres │ │ Blob   │  │  Key Vault │ │ ACS Email│
+│B1ms     │ │Storage │  │            │ │          │
+└─────────┘ └────────┘  └────────────┘ └──────────┘
+```
 
-- Groups (create, join, roles, membership management)
-- Friends (requests, acceptance, block/unfriend)
-- Chat (direct and group chat via polling)
-- Announcements (tenant-wide home feed after login)
-- Read a book (PDF viewer, protected access)
+## Backend Architecture
 
-## Out of Scope (for now)
+### Modular Monolith Structure
 
-- Realtime chat, typing indicators, read receipts across devices
-- Mobile apps
-- Recommendation engine
-- Payments or subscriptions
-- Advanced search and discovery
+The NestJS app is organized into **domain modules** with a strict dependency rule: **modules do not import each other**. All cross-cutting concerns (auth, Prisma, email, blob) live in shared infrastructure modules that domains consume.
 
-## Architecture Summary
+```
+apps/api/src/
+├── main.ts                     # Bootstrap, Apollo plugin, CORS
+├── app.module.ts               # Root module — imports all domains
+├── auth/                       # OAuth providers, JWT, refresh tokens
+│   ├── auth.module.ts
+│   ├── auth.service.ts
+│   ├── auth.resolver.ts        # login, register, refreshToken, connectOAuth
+│   └── guards/                 # GqlAuthGuard, RolesGuard
+├── users/
+│   ├── users.module.ts
+│   ├── users.service.ts
+│   └── users.resolver.ts
+├── groups/
+├── friends/
+├── chat/                       # Subscriptions + PubSub via Postgres LD/NOTIFY
+├── books/                      # PDF streaming + read progress
+├── feed/                       # Announcements + verse-of-day
+├── notifications/
+├── prisma/                     # PrismaService (@Global)
+├── azure/                      # BlobService, EmailService
+└── common/                     # Decorators, filters, pipes, scalars
+```
 
-- Monorepo (Turborepo) with separate apps for API and Web.
-- NestJS API for all business logic and data access.
-- Next.js web for UI and server-side rendering.
-- Shared package for types and DTOs to keep contracts aligned.
-- Navigation: Friends, Groups, Books (Documents) in the left sidebar.
+**Dependency rule**: Auth, Chat → imports Prisma, Auth. Chat never imports Books, etc. This guarantees extraction without refactoring.
 
-## Repository Layout (planned)
+### GraphQL API
 
-- /apps/api NestJS API
-- /apps/web Next.js web app
-- /packages/shared Shared DTOs, types, validation helpers
-- /infra Azure deployment artifacts (optional for MVP)
+- **Server**: Apollo Server via `@nestjs/graphql` (code-first with decorators)
+- **Schema**: Single unified schema — all resolvers register in root `GraphQLModule.forRootAsync`
+- **Subscriptions**: Backed by a custom `PubSubService` wrapping Postgres `LISTEN`/`NOTIFY`. Each subscription channel maps to a Postgres channel name.
+- **Auth**: `GqlAuthGuard` extracts JWT from `Authorization` header or `connectParams` (for WebSocket upgrade). `@CurrentUser()` decorator provides the resolved user context.
+- **WebSocket transport**: `graphql-ws` protocol on `wss://{domain}/api/graphql`. Container Apps ingress forwards WebSocket connections with sticky sessions.
 
-## Data Model (Core Entities)
+**Operations** (conceptual — full schema in code):
+- Queries: `me`, `users`, `friends`, `groups`, `group(id)`, `conversations`, `messages(conversationId, cursor)`, `books`, `book(id)`, `readProgress(bookId)`, `announcements`, `feed`, `notifications`
+- Mutations: `registerLocal`, `loginLocal`, `refreshToken`, `logout`, `connectOAuth(provider)`, `updateProfile`, `friendRequest`, `acceptFriend`, `removeFriend`, `createGroup`, `joinGroup`, `leaveGroup`, `sendMessage`, `markRead`, `uploadBook` (admin), `updateBook`, `saveProgress`, `addBookmark`, `addHighlight`, `publishAnnouncement`, `markNotificationRead`
+- Subscriptions: `messageAdded(conversationId)`, `friendRequestReceived`, `friendRequestUpdated`, `groupUpdated(groupId)`
 
-- Tenant
-  - id, name, slug, status, created_at
-- User
-  - id, tenant_id, email, password_hash, status
-- Profile
-  - user_id, display_name, avatar_url, bio
-- Friendship
-  - requester_id, addressee_id, status
-- Group
-  - id, tenant_id, name, description, visibility
-- GroupMember
-  - group_id, user_id, role, status
-- Conversation
-  - id, tenant_id, type (direct|group), group_id
-- Message
-  - id, conversation_id, sender_id, body, created_at
-- Document
-  - id, tenant_id, title, blob_path, access_level
-- DocumentAccess
-  - document_id, user_id, group_id, access_type
-- Announcement
-  - id, tenant_id, title, body, status, publish_at, expires_at, created_by, created_at, updated_at
+### Auth Flow
 
-Tenant isolation strategy: shared database with tenant_id on all rows.
+1. **Local register**: email + password → argon2 hash → ACS email verification → JWT access (15 min) + rotating refresh (7 days)
+2. **Google OAuth**: redirect → consent → callback → exchange code → find-or-create user → JWT + refresh
+3. **Refresh rotation**: each refresh issuance invalidates the prior refresh. Reuse detection revokes the entire token family.
+4. **JWT payload**: `{ sub: userId, role: userRole }`. No session server-side; stateless verification.
+5. **Future (phase 2)**: add Microsoft + Facebook OAuth providers.
 
-## API Design (MVP)
+### PDF Streaming
 
-- Auth
-  - POST /auth/register
-  - POST /auth/login
-  - POST /auth/logout
-  - GET /auth/me
-- Tenants
-  - POST /tenants
-  - GET /tenants/:tenantId
-- Users
-  - GET /users/:id
-  - PATCH /users/:id
-- Friends
-  - POST /friends/request
-  - POST /friends/accept
-  - DELETE /friends/:id
-  - GET /friends
-- Groups
-  - POST /groups
-  - GET /groups
-  - GET /groups/:id
-  - POST /groups/:id/join
-  - POST /groups/:id/leave
-- Chat (polling)
-  - GET /conversations
-  - POST /conversations
-  - GET /conversations/:id/messages?cursor=...
-  - POST /conversations/:id/messages
-- Documents
-  - POST /documents
-  - GET /documents
-  - GET /documents/:id
-  - GET /documents/:id/stream
-- Announcements
-  - GET /announcements
-  - GET /announcements/:id
-  - POST /announcements
-  - PATCH /announcements/:id
-  - POST /announcements/:id/publish
-  - POST /announcements/:id/unpublish
-  - DELETE /announcements/:id
+1. Admin uploads PDF → NestJS → private Blob Storage container (`pdfs`)
+2. Reader opens a book → GraphQL query returns metadata + auth token
+3. Browser requests `GET /api/books/:id/stream` → NestJS verifies JWT + access rules → streams bytes from Blob with:
+   - `Content-Type: application/pdf`
+   - `Cache-Control: no-store`
+   - `X-Content-Type-Options: nosniff`
+4. No `Content-Disposition: attachment` — browser renders inline, not download.
 
-## Frontend Stack (MVP)
+### PubSub via Postgres LISTEN/NOTIFY
 
-- Next.js App Router with server components where it helps SEO and routing.
-- Tailwind CSS with a small design system (tokens for color, spacing, typography).
-- Brand system: logo-driven orange/black with one secondary accent.
-- Reusable UI primitives: button, input, card, modal, toast, and layout shell.
-- Tanstack Query for server state and caching.
-- Redux Toolkit for client-only UI state (filters, local preferences, layout).
+```typescript
+// apps/api/src/chat/pubsub.service.ts
+@Injectable()
+export class PubSubService implements OnModuleInit, OnModuleDestroy {
+  private pool: Pool;
 
-## Chat (No Realtime)
+  publish(channel: string, payload: object): void {
+    await this.pool.query('NOTIFY $1, $2', [channel, JSON.stringify(payload)]);
+  }
 
-- Short polling every 5-10 seconds from the client.
-- Cursor-based pagination for messages.
-- Keep schema and endpoints compatible with future websocket upgrade.
+  asyncIterator<T>(channel: string): AsyncIterator<T> {
+    // Uses pg-listen or raw pg pooling — maps NOTIFY payload to AsyncIterator
+  }
+}
+```
 
-## PDF Reading Flow
+Zero extra infrastructure. Postgres handles the pub/sub; Prisma handles persistence. A single `pg` raw connection per replica listens for notifications.
 
-- PDF uploaded to Azure Blob Storage.
-- API stores metadata and access rules.
-- API streams PDF via authorized endpoint.
-- No public blob URLs for protected content.
+Triggered in services:
+```typescript
+// chat.service.ts
+async sendMessage(...) {
+  const msg = await this.prisma.message.create(...);
+  await this.pubSub.publish(`message:${conversationId}`, newMessageAdded);
+  return msg;
+}
+```
 
-## Auth and Security
+## Frontend Architecture
 
-- Email/password auth only for MVP.
-- Password hashing using a strong algorithm (argon2 or bcrypt).
-- JWT or secure session cookies for API access.
-- Rate limiting on auth and chat endpoints.
-- Audit logs for group membership and document access.
+- **Framework**: Next.js 16 (App Router), React 19
+- **Rendering**: Static generation for landing/marketing. Client components for authenticated shell (sidebar + top bar + page content). Server Components where they reduce bundle (metadata, SEO).
+- **Data fetching**: Apollo Client (`@apollo/client` + `@apollo/experimental-nextjs-app-support` for SSR/RSC). `InMemoryCache` with type policies.
+- **State**: Zustand for UI-only state (theme, sidebar collapsed, active modal). Apollo Client handles all server cache.
+- **Styling**: Tailwind v4 with CSS variables from `DESIGN_SYSTEM.md`. Dark mode via `next-themes` + `dark:` variants.
+- **Forms**: React Hook Form + Zod resolver. Shared schemas from `packages/shared`.
+- **Tables**: TanStack Table for data grids (groups list, book catalog, member lists).
+- **Mobile-first**: All layouts designed mobile-first. Sidebar becomes bottom sheet / swipeable drawer on small viewports.
 
-## Data Access, Migrations, and Seeders
+### Auth on the Client
 
-- Prisma ORM for NestJS with migrations tracked in version control.
-- Seed scripts for fast local and test environment setup.
-- Seed data includes: tenant, admin user, sample groups, announcements, and PDF metadata.
-- Keep seeders idempotent and safe for repeat runs in development.
+- Apollo Link chain: `authLink` (attaches JWT from storage) → `errorLink` (catches 401, attempts refresh, retries) → `wsLink` (split for subscriptions) → `httpLink`
+- JWT stored in `httpOnly` cookie (preferred) or localStorage fallback. Refresh token in `httpOnly` only.
+- WebSocket connection sends JWT in `connectionParams` during upgrade handshake.
 
-## Azure Deployment (MVP)
+## Cloud Infrastructure
 
-- Azure App Service (single app) for initial release.
-- Azure Database for PostgreSQL for relational data.
-- Azure Blob Storage for PDFs.
-- Optional Redis for caching and rate-limits if needed.
+| Service | Purpose | Terraform Module |
+|---|---|---|
+| Azure Container Apps Environment | Runtime for api + web containers | `container-apps-env` |
+| Container App: api | NestJS + Apollo (min_replicas=1, sticky sessions) | `container-app` |
+| Container App: web | Next.js (min_replicas=0, scale-to-zero idle) | `container-app` |
+| PostgreSQL Flexible Server | Burstable B1ms, always-on | `postgresql` |
+| Blob Storage | Private containers: pdfs, uploads, covers, avatars | `blob-storage` |
+| Key Vault | Secrets: OAuth clients, JWT secret, DB password | `key-vault` |
+| ACS Email | Transactional email via custom domain | `communication-services` |
+| App Insights + Log Analytics | Observability | `monitoring` |
+| GHCR | Container images (free with GitHub) | — (GH Actions) |
 
-Recommendation: split API and Web into separate App Services for enterprise scale and safer deployments once traffic grows or realtime features start.
+## Environment Strategy
 
-## Observability and Ops
+| Env | Purpose | Auto-deploy trigger |
+|---|---|---|
+| `dev` | Develop & test | merge PR to `main` |
+| `prod` | Production | tag `v*` on `main` |
 
-- Structured logging (request id, tenant id, user id).
-- Centralized logs and metrics (Azure Monitor/App Insights).
-- Backups for PostgreSQL and Blob Storage.
-- CI/CD with staging and production slots.
+Both share the same Terraform module set. `terraform.tfvars` per environment controls SKU, scale rules, secrets.
 
-## Risks and Follow-ups
+## Observability
 
-- Single App Service limits independent scaling.
-- Polling chat increases API load; consider websocket when adoption grows.
-- Multi-tenancy needs strict tenant_id enforcement and testing.
+- **Logs**: NestJS structured logging (request ID, user ID, operation). Shipped to Log Analytics.
+- **Metrics**: Apollo Server plugin collects query latency, error rates. Custom metrics for PDF stream throughput.
+- **Traces**: Request → resolver → Prisma query → database round trip. App Insights distributed tracing.
+- **Alerts**: 5xx error rate > 1%, DB connection failure, container crash loop.
 
-## Next Milestones
+## Security
 
-- Confirm tenant model and auth approach (JWT vs session).
-- Define DTOs and API contracts.
-- Design announcements permissions and home feed ordering.
-- Set up Tailwind + design system primitives for the initial UI.
-- Decide on background jobs for notifications and moderation.
+- All traffic over HTTPS (Cloudflare Full SSL → Container Apps TLS)
+- CORS: `app.transformlit.com` allowed origin; all others rejected
+- Rate limiting: ThrottlerModule on auth and subscription endpoints
+- JWT validation: stateless, no server-side session store
+- Blob access: never public; all reads via authenticated NestJS proxy
+- Secrets: never in code; loaded from Key Vault references in Container Apps env vars
+- DB: private endpoint + firewall rules; no public access
+
+## Future: Microservice Extraction (Phase 9+)
+
+When a domain's load or team ownership justifies isolation:
+
+1. Create `apps/api-{domain}/` workspace
+2. Copy domain module + its resolver/service from `apps/api/src/`
+3. Create minimal `AppModule` importing only: `PrismaModule`, `AuthModule`, `{Domain}Module`
+4. Deploy as separate Container App in the same ACA environment
+5. Ingress path: `/api/chat/*` → chat container; `/api/books/*` → books container
+6. Extend Apollo Client with `splitLink` to route operations by domain
+
+No rewrites. No schema changes. Module boundaries designed for this from day one.
