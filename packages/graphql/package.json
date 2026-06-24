@@ -7,10 +7,10 @@
     "clean": "rm -rf __generated__"
   },
   "devDependencies": {
-    "@graphql-codegen/cli": "^5.0.0",
-    "@graphql-codegen/typescript": "^4.0.0",
-    "@graphql-codegen/typescript-operations": "^4.0.0",
-    "@graphql-codegen/typescript-react-apollo": "^4.0.0",
-    "typescript": "^5.6.2"
+    "@graphql-codegen/cli": "^5.0.7",
+    "@graphql-codegen/typescript": "^4.1.6",
+    "@graphql-codegen/typescript-operations": "^4.6.1",
+    "@graphql-codegen/typescript-react-apollo": "^4.4.2",
+    "typescript": "^6.0.0"
   }
 }
