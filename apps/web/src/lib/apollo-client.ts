@@ -4,6 +4,7 @@ import {
   createHttpLink,
   split,
 } from '@apollo/client';
+import { setContext } from '@apollo/client/link/context';
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
 import { createClient } from 'graphql-ws';
 import { getMainDefinition } from '@apollo/client/utilities';
@@ -17,6 +18,17 @@ const httpLink = createHttpLink({
   uri: httpUrl,
   credentials: 'include',
   fetch: !isServer ? undefined : undefined, // use default fetch
+});
+
+/** Auth middleware — attaches Bearer token to every HTTP request */
+const authLink = setContext((_, { headers }) => {
+  const token = isServer ? null : localStorage.getItem('accessToken');
+  return {
+    headers: {
+      ...headers,
+      authorization: token ? `Bearer ${token}` : '',
+    },
+  };
 });
 
 const wsLink = !isServer
@@ -46,7 +58,7 @@ const splitLink = !isServer && wsLink
   : httpLink;
 
 export const apolloClient = new ApolloClient({
-  link: splitLink,
+  link: authLink.concat(splitLink),
   ssrMode: isServer,
   cache: new InMemoryCache({
     typePolicies: {

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -107,13 +107,22 @@ function MicrosoftIcon() {
 /*  LoginForm                                                         */
 /* ------------------------------------------------------------------ */
 
+/** Derive REST API base URL by stripping /graphql suffix */
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/graphql').replace(
+  /\/graphql$/,
+  '',
+);
+
 export default function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const setAuth = useAuthStore((s) => s.setAuth);
+  const token = useAuthStore((s) => s.token);
   const { addToast } = useToast();
 
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [oauthHandled, setOauthHandled] = useState(false);
 
   const {
     register,
@@ -124,6 +133,52 @@ export default function LoginForm() {
     mode: 'onSubmit',
     reValidateMode: 'onChange',
   });
+
+  /* ---------- Google OAuth callback handler ---------- */
+  /* When the backend redirects back to /login?token=...&refresh=...
+     after a successful Google sign-in, parse those params, store the
+     tokens, fetch the current user via the `me` query, then navigate   */
+  useEffect(() => {
+    if (oauthHandled || token) return; // already authenticated or already processed
+
+    const urlToken = searchParams.get('token');
+    const urlRefresh = searchParams.get('refresh');
+
+    if (!urlToken || !urlRefresh) return;
+
+    setOauthHandled(true);
+
+    (async () => {
+      try {
+        // Temporarily store the access token so the authLink middleware
+        // picks it up for the `me` query below.
+        localStorage.setItem('accessToken', urlToken);
+        localStorage.setItem('refreshToken', urlRefresh);
+
+        const [{ gql }, { apolloClient }] = await Promise.all([
+          import('@apollo/client'),
+          import('../../lib/apollo-client'),
+        ]);
+
+        // Fetch user profile using the freshly stored access token
+        const { data } = await apolloClient.query({
+          query: gql`
+            query Me { me { id email displayName photoUrl } }
+          `,
+        });
+
+        setAuth(data.me, urlToken);
+        addToast('Welcome back!', 'success');
+        router.push('/feed');
+      } catch {
+        // If the `me` query fails (e.g. expired token), clear tokens
+        // and let the user log in manually.
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+        addToast('Google sign-in failed. Please try again.', 'error');
+      }
+    })();
+  }, [searchParams, token, oauthHandled, router, setAuth, addToast]);
 
   /* ---------- Submit handler ---------- */
 
@@ -138,8 +193,8 @@ export default function LoginForm() {
 
         const result = await apolloClient.mutate({
           mutation: gql`
-            mutation Login($input: LoginInput!) {
-              login(input: $input) {
+            mutation LoginLocal($input: LoginLocalInput!) {
+              loginLocal(input: $input) {
                 user { id email displayName photoUrl }
                 accessToken
                 refreshToken
@@ -149,7 +204,7 @@ export default function LoginForm() {
           variables: { input: { email: values.email.trim(), password: values.password } },
         });
 
-        const { user, accessToken, refreshToken } = result.data.login;
+        const { user, accessToken, refreshToken } = result.data.loginLocal;
         setAuth(user, accessToken);
         if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
 
@@ -170,6 +225,10 @@ export default function LoginForm() {
   );
 
   /* ---------- Social login handlers ---------- */
+
+  const handleGoogleLogin = useCallback(() => {
+    window.location.href = `${API_BASE}/auth/google`;
+  }, []);
 
   const handleSocialLogin = useCallback(
     (provider: string) => {
@@ -335,7 +394,7 @@ export default function LoginForm() {
           <div className="grid grid-cols-3 gap-3">
             <button
               type="button"
-              onClick={() => handleSocialLogin('Google')}
+              onClick={handleGoogleLogin}
               className="flex items-center justify-center h-11 border border-border rounded-lg hover:bg-paper hover:border-ink-soft/20 transition-all group"
               title="Login with Google"
             >

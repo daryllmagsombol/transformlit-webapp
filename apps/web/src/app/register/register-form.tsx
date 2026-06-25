@@ -10,6 +10,12 @@ import { useAuthStore } from '../../store';
 import { useToast, TextInput } from '../../components/ui';
 import { Footer } from '../../components/layout';
 
+/** Derive REST API base URL by stripping /graphql suffix */
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/graphql').replace(
+  /\/graphql$/,
+  '',
+);
+
 /* ------------------------------------------------------------------ */
 /*  Zod schema                                                        */
 /* ------------------------------------------------------------------ */
@@ -137,8 +143,8 @@ export default function RegisterForm() {
 
         const result = await apolloClient.mutate({
           mutation: gql`
-            mutation Register($input: RegisterInput!) {
-              register(input: $input) {
+            mutation RegisterLocal($input: RegisterLocalInput!) {
+              registerLocal(input: $input) {
                 user { id email displayName photoUrl }
                 accessToken
                 refreshToken
@@ -154,7 +160,7 @@ export default function RegisterForm() {
           },
         });
 
-        const { user, accessToken, refreshToken } = result.data.register;
+        const { user, accessToken, refreshToken } = result.data.registerLocal;
         setAuth(user, accessToken);
         if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
 
@@ -175,6 +181,10 @@ export default function RegisterForm() {
   );
 
   /* ---------- Social login handlers ---------- */
+
+  const handleGoogleLogin = useCallback(() => {
+    window.location.href = `${API_BASE}/auth/google`;
+  }, []);
 
   const handleSocialLogin = useCallback(
     (provider: string) => {
@@ -315,7 +325,7 @@ export default function RegisterForm() {
           <div className="grid grid-cols-3 gap-3">
             <button
               type="button"
-              onClick={() => handleSocialLogin('Google')}
+              onClick={handleGoogleLogin}
               className="flex items-center justify-center h-11 border border-border rounded-lg hover:bg-surface hover:border-ink-soft/20 transition-all group"
               title="Register with Google"
             >
