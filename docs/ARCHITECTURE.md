@@ -1,9 +1,9 @@
-# Transformlit Architecture
+# 🏛️ Transformlit Architecture
 
 Date: 2026-06-25
 Branch: `feature/major-rearchitecture`
 
-## Overview
+## 🔭 Overview
 
 Transformlit is a single-instance community platform for reading groups, book sharing, chat, and literary engagement. The backend is a **modular NestJS monolith** with domain boundaries designed for future microservice extraction. The frontend is a **mobile-first Next.js App Router** app. The API is **Apollo GraphQL-first** with subscriptions for real-time features.
 
@@ -34,9 +34,9 @@ Transformlit is a single-instance community platform for reading groups, book sh
 └─────────┘ └────────┘  └────────────┘ └──────────┘
 ```
 
-## Backend Architecture
+## ⚙️ Backend Architecture
 
-### Modular Monolith Structure
+### 📦 Modular Monolith Structure
 
 The NestJS app is organized into **domain modules** with a strict dependency rule: **modules do not import each other**. All cross-cutting concerns (auth, Prisma, email, blob) live in shared infrastructure modules that domains consume.
 
@@ -57,7 +57,7 @@ apps/api/src/
 ├── friends/
 ├── chat/                       # Subscriptions + PubSub via Postgres LISTEN/NOTIFY
 ├── books/                      # PDF streaming + read progress
-├── feed/                       # Announcements + verse-of-day
+  ├── feed/                       # Announcements + verse-of-day (Our Manna API, key-less)
 ├── notifications/
 ├── prisma/                     # PrismaService (@Global)
 ├── azure/                      # BlobService, EmailService
@@ -66,7 +66,7 @@ apps/api/src/
 
 **Dependency rule**: Auth, Chat → imports Prisma, Auth. Chat never imports Books, etc. This guarantees extraction without refactoring.
 
-### GraphQL API
+### 📡 GraphQL API
 
 - **Server**: Apollo Server via `@nestjs/graphql` (code-first with decorators)
 - **Schema**: Single unified schema — all resolvers register in root `GraphQLModule.forRootAsync`
@@ -79,7 +79,7 @@ apps/api/src/
 - Mutations: `registerLocal`, `loginLocal`, `refreshToken`, `logout`, `connectOAuth(provider)`, `updateProfile`, `friendRequest`, `acceptFriend`, `removeFriend`, `createGroup`, `joinGroup`, `leaveGroup`, `sendMessage`, `markRead`, `uploadBook` (admin), `updateBook`, `saveProgress`, `addBookmark`, `addHighlight`, `publishAnnouncement`, `markNotificationRead`
 - Subscriptions: `messageAdded(conversationId)`, `friendRequestReceived`, `friendRequestUpdated`, `groupUpdated(groupId)`
 
-### Auth Flow
+### 🔐 Auth Flow
 
 1. **Local register**: email + password → argon2 hash → ACS email verification → JWT access (15 min) + rotating refresh (7 days)
 2. **Google OAuth**: redirect → consent → callback → exchange code → find-or-create user → JWT + refresh
@@ -87,7 +87,7 @@ apps/api/src/
 4. **JWT payload**: `{ sub: userId, role: userRole }`. No session server-side; stateless verification.
 5. **Future (phase 2)**: add Microsoft + Facebook OAuth providers.
 
-### PDF Streaming
+### 📄 PDF Streaming
 
 1. Admin uploads PDF → NestJS → private Blob Storage container (`pdfs`)
 2. Reader opens a book → GraphQL query returns metadata + auth token
@@ -97,7 +97,7 @@ apps/api/src/
    - `X-Content-Type-Options: nosniff`
 4. No `Content-Disposition: attachment` — browser renders inline, not download.
 
-### PubSub via Postgres LISTEN/NOTIFY
+### 📢 PubSub via Postgres LISTEN/NOTIFY
 
 ```typescript
 // apps/api/src/chat/pubsub.service.ts
@@ -127,7 +127,7 @@ async sendMessage(...) {
 }
 ```
 
-## Frontend Architecture
+## 🎨 Frontend Architecture
 
 - **Framework**: Next.js 16 (App Router), React 19
 - **Rendering**: Static generation for landing/marketing. Client components for authenticated shell (sidebar + top bar + page content). Server Components where they reduce bundle (metadata, SEO).
@@ -138,13 +138,13 @@ async sendMessage(...) {
 - **Tables**: TanStack Table for data grids (groups list, book catalog, member lists).
 - **Mobile-first**: All layouts designed mobile-first. Sidebar becomes bottom sheet / swipeable drawer on small viewports.
 
-### Auth on the Client
+### 🔑 Auth on the Client
 
 - Apollo Link chain: `authLink` (attaches JWT from storage) → `errorLink` (catches 401, attempts refresh, retries) → `wsLink` (split for subscriptions) → `httpLink`
 - JWT stored in `httpOnly` cookie (preferred) or localStorage fallback. Refresh token in `httpOnly` only.
 - WebSocket connection sends JWT in `connectionParams` during upgrade handshake.
 
-## Cloud Infrastructure
+## ☁️ Cloud Infrastructure
 
 | Service | Purpose | Terraform Module |
 |---|---|---|
@@ -158,7 +158,7 @@ async sendMessage(...) {
 | App Insights + Log Analytics | Observability | `monitoring` |
 | GHCR | Container images (free with GitHub) | — (GH Actions) |
 
-## Environment Strategy
+## 🌍 Environment Strategy
 
 | Env | Purpose | Auto-deploy trigger |
 |---|---|---|
@@ -167,14 +167,14 @@ async sendMessage(...) {
 
 Both share the same Terraform module set. `terraform.tfvars` per environment controls SKU, scale rules, secrets.
 
-## Observability
+## 📊 Observability
 
 - **Logs**: NestJS structured logging (request ID, user ID, operation). Shipped to Log Analytics.
 - **Metrics**: Apollo Server plugin collects query latency, error rates. Custom metrics for PDF stream throughput.
 - **Traces**: Request → resolver → Prisma query → database round trip. App Insights distributed tracing.
 - **Alerts**: 5xx error rate > 1%, DB connection failure, container crash loop.
 
-## Security
+## 🔒 Security
 
 - All traffic over HTTPS (Cloudflare Full SSL → Container Apps TLS)
 - CORS: `app.transformlit.com` allowed origin; all others rejected
@@ -184,7 +184,7 @@ Both share the same Terraform module set. `terraform.tfvars` per environment con
 - Secrets: never in code; loaded from Key Vault references in Container Apps env vars
 - DB: private endpoint + firewall rules; no public access
 
-## Future: Microservice Extraction (Phase 9+)
+## 🔮 Future: Microservice Extraction (Phase 9+)
 
 When a domain's load or team ownership justifies isolation:
 

@@ -1,8 +1,8 @@
-# Transformlit Deployment
+# 🚀 Transformlit Deployment
 
 Date: 2026-06-25
 
-## Overview
+## 🔭 Overview
 
 Transformlit is deployed on **Azure Container Apps** with infrastructure managed by **Terraform** and CI/CD orchestrated by **GitHub Actions**. Container images are stored in **GitHub Container Registry (GHCR)**. DNS and SSL are handled by **Cloudflare**.
 
@@ -38,7 +38,7 @@ Developer pushes to main
 └─────────────────────────────────────────────┘
 ```
 
-## Cloud Architecture
+## ☁️ Cloud Architecture
 
 | Component | Azure Service | SKU / Tier | Cost/mo (est.) |
 |---|---|---|---|
@@ -54,7 +54,7 @@ Developer pushes to main
 
 All costs covered by Azure nonprofit sponsorship ($2,000/yr credits).
 
-## Environment Strategy
+## 🌍 Environment Strategy
 
 | Env | Domain | Terraform dir | Deploy trigger |
 |---|---|---|---|
@@ -63,7 +63,7 @@ All costs covered by Azure nonprofit sponsorship ($2,000/yr credits).
 
 Each environment has its own resource group, Container Apps environment, PostgreSQL instance, and DNS records. State files are stored in separate containers in the same Azure Storage account.
 
-## Terraform Structure
+## 🏗️ Terraform Structure
 
 ```
 infra/
@@ -142,7 +142,7 @@ domain_name        = "dev.transformlit.com"
 
 (~65 managed resources per env — well under HCP Terraform free 500 RUM limit.)
 
-## GitHub Actions Workflows
+## 🔄 GitHub Actions Workflows
 
 ### infra.yml — Terraform Plan/Apply
 
@@ -243,7 +243,7 @@ jobs:
 # Trigger: apps/web/**, packages/shared/**, packages/graphql/**
 ```
 
-## Domain Setup (Cloudflare)
+## 🌐 Domain Setup (Cloudflare)
 
 ### DNS Records (per environment)
 
@@ -268,7 +268,7 @@ Terraform creates the Azure Communication Services Email domain. Once provisione
 
 Manual step until automated via Cloudflare Terraform provider.
 
-## Prisma Migrations in CI/CD
+## 🗄️ Prisma Migrations in CI/CD
 
 Migrations run automatically before deploy:
 
@@ -284,7 +284,7 @@ This requires the DB to be network-reachable from the GitHub Actions runner. App
 - **Option A** (dev only): Allow GH Actions runner IP in PostgreSQL firewall. Rotate IP allowlist.
 - **Option B** (recommended): Use Azure Service Connector or a jump VM with a stable outbound IP.
 
-## CI/CD Flow (End-to-End)
+## 🔁 CI/CD Flow
 
 1. Developer opens a PR with Terraform changes
 2. `infra.yml` runs `terraform plan` → plan output posted as PR comment
@@ -294,7 +294,7 @@ This requires the DB to be network-reachable from the GitHub Actions runner. App
 6. Tag `v1.0.0` pushed → `infra.yml` applies `prod` + `deploy-api.yml` deploys to `prod`
 7. ACA revision labeled `prod` activated
 
-## Manual Actions
+## ✋ Manual Actions
 
 ### Destroy environment
 ```bash

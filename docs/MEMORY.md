@@ -1,9 +1,9 @@
-# Transformlit — Project Memory & Task Tracker
+# 🧠 Transformlit — Project Memory & Task Tracker
 
-Date: 2026-06-25 (updated after audit fixes)
+Date: 2026-06-25 (updated after feed page implementation)
 Branch: `feature/major-rearchitecture`
 
-## Key Decisions (Locked In)
+## 🔒 Key Decisions (Locked In)
 
 | Decision | Choice |
 |---|---|
@@ -26,17 +26,17 @@ Branch: `feature/major-rearchitecture`
 | Domains | Prod: `app.transformlit.com` (web), `/api/*` (NestJS). Dev: `dev.transformlit.com`. Cloudflare DNS + Full SSL. |
 | Cost target | ~$25-30/mo (covered by Azure nonprofit sponsorship → $0 out-of-pocket). |
 
-## Pre-Work Checklist
+## ✅ Pre-Work Checklist
 
 - [x] GitHub Actions OIDC enabled on repo
 - [x] Cloudflare DNS write access confirmed
 - [x] Switched to pnpm (faster, better workspace support)
 - [x] Dependencies audited — 7 vulns patched, all latest compatible versions
 - [ ] Google OAuth application registered (client ID + secret)
-- [ ] Our Manna Verse of the Day API key obtained
+- [x] Our Manna Verse of the Day API key obtained → **No longer needed — `beta.ourmanna.com` is key-less**
 - [x] Azure nonprofit sponsorship confirmed (subscription verified)
 
-## Current Stack Versions (2026-06-25)
+## 📦 Current Stack Versions
 
 | Package | Version | Notes |
 |---|---|---|
@@ -49,7 +49,7 @@ Branch: `feature/major-rearchitecture`
 | Prisma | 7.8.0 | 14 models, PostgreSQL |
 | pnpm | 10.4.1 | Workspaces manager |
 
-## Implementation Phases
+## 🚧 Implementation Phases
 
 | # | Phase | Status | Est. Days |
 |---|---|---|---|
@@ -58,7 +58,7 @@ Branch: `feature/major-rearchitecture`
 | 2 | **Backend Foundation** — NestJS init, Prisma schema, Apollo GraphQL, Auth (OAuth + local + JWT + refresh), ACS Email | ✅ Done | 3-4 |
 | 3 | **Backend Features** — Users, Groups, Friends, Chat (subs + LISTEN/NOTIFY), Books (PDF stream + progress), Feed, Notifications | ✅ Done | 4-5 |
 | 4 | **Frontend Foundation** — Next.js 16, Tailwind v4 + dark tokens, Apollo Client, auth flow, layout shell, primitives | ✅ Done | 2 |
-| 5 | **Frontend Features** — Landing + auth pages done, auth pages (Feed placeholder with dynamic Apollo). Full feature pages pending. | 🟡 Foundation Ready | 2 |
+| 5 | **Frontend Features** — Landing + auth pages done, **Feed page fully implemented** (MD3 color tokens, Our Manna verse-of-day, announcements with categories, groups sidebar, mobile bottom nav, FAB). Full feature pages (friends, groups, books) pending. | ✅ Feed Done | 2 |
 | 6 | **Terraform IaC** — 8 modules, dev + prod environments, providers pinned, secrets wired | ✅ Done | 2-3 |
 | 7 | **CI/CD + Deploy** — 3 workflows (infra plan/apply, deploy-api, deploy-web), GHCR + Container Apps | ✅ Done | 1-2 |
 | 8 | **Audit & Fixes** — 25+ bugs fixed across backend (InputTypes, Auth, PubSub, Prisma, Guards, OAuth, Subscriptions), Docker (--filter, packages/shared), Terraform (providers, KV name, secrets, ACS), CI/CD (matrix, TF_VAR wiring) | ✅ Done | 1 |
@@ -66,7 +66,7 @@ Branch: `feature/major-rearchitecture`
 
 **Total: ~3.5–4.5 weeks** (solo dev, full-time)
 
-## Audit & Fixes (2026-06-25)
+## 🔧 Audit & Fixes
 
 Full-stack audit found 25+ issues across backend, frontend, Docker, Terraform, and CI/CD. All fixed:
 
@@ -133,7 +133,25 @@ Full-stack audit found 25+ issues across backend, frontend, Docker, Terraform, a
 | Next.js `next build` | Passes with `force-dynamic` |
 | Prisma `prisma generate` | 14 models generated |
 
-## Future: Microservice Extraction (Phase 9+)
+### Feed Page Implementation (2026-06-25)
+
+Full `/feed` page built matching the Material Design 3 spec:
+
+| Area | Details |
+|---|---|
+| **Design tokens** | 60+ MD3 color tokens (primary, secondary, tertiary, surface containers, outline, inverse) + typography scale (micro→display) + Manrope font |
+| **TopNavBar** | Brand, desktop nav tabs (Feed/Library/Community), search pill, notifications, avatar |
+| **SideNavBar** | Nav items with active indicator, "Your Progress" widget (yearly goal bar, quote, CTA), Settings/Help links |
+| **Verse of the Day** | Bento hero card with gradient glow. Reads from `verse_of_day` cache table, fetches `beta.ourmanna.com` on miss (**key-less API**). |
+| **Announcements** | Cards with `AnnouncementCategory` badges (EVENT=teal, UPDATE=blue, GENERAL=neutral). Sourced from DB. |
+| **Groups Update** | Sidebar widget listing groups with member counts, activity text, discover CTA |
+| **Quick Track** | Dashed-border card with quick-chapter pills |
+| **Mobile** | BottomNavBar (Feed/Friends/Groups/Books) + FAB (edit action) |
+| **Dark mode** | `@custom-variant dark` wired to next-themes `.dark` class |
+| **New DB migration** | `AnnouncementCategory` enum (EVENT/UPDATE/GENERAL) + `category` field on `Announcement` |
+| **Seed data** | 5 groups, 3 categorized announcements, verse of the day, 2 users, 7 memberships |
+
+## 🔮 Future: Microservice Extraction
 
 Conditions that trigger splitting a domain into its own Container App:
 - Chat: >100 concurrent WebSocket connections → split to `apps/api-chat/` + Redis pub/sub
@@ -148,10 +166,10 @@ Extraction steps per domain:
 5. Add Container App to Terraform `module.container-app`
 6. Update GitHub Actions deploy matrix
 
-## Open Questions (Not Blocking)
+## ❓ Open Questions
 
 - Notification delivery: in-app only, or email push as well? (defer — in-app only for MVP)
 - Group chat: default all-members conversation or opt-in channels? (defer — one per group for MVP)
 - Admin dashboard: separate SPA or integrated into main web app? (defer — integrated for MVP)
-- Bible API refresh frequency: daily at midnight UTC or on-demand with 24h cache? (daily at midnight)
+- Bible API refresh frequency: daily at midnight UTC or on-demand with 24h cache? (**Resolved: cache-first, fetch from `beta.ourmanna.com` on cache miss, no API key needed**)
 - Book catalog: admin-upload only, or import metadata from Google Books/Open Library APIs? (admin upload for MVP)

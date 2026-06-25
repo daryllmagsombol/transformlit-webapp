@@ -72,12 +72,20 @@ export class FeedService {
   }
 
   async getVerseOfDay() {
-    // Check cache first
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    // Compute "today" in UTC+8 (e.g., Asia/Manila)
+    // UTC+8 midnight = 4 PM UTC on the previous calendar day in UTC terms
+    const now = new Date();
+    const shifted = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const baseUTC = Date.UTC(
+      shifted.getUTCFullYear(),
+      shifted.getUTCMonth(),
+      shifted.getUTCDate(),
+    );
+    const verseDate = new Date(baseUTC - 8 * 60 * 60 * 1000);
 
+    // Check cache first
     const cached = await this.prisma.verseOfTheDay.findUnique({
-      where: { date: today },
+      where: { date: verseDate },
     });
     if (cached) return cached;
 
@@ -94,13 +102,13 @@ export class FeedService {
       const version = details?.version ?? 'NIV';
 
       const verse = await this.prisma.verseOfTheDay.create({
-        data: { date: today, text, reference, version },
+        data: { date: verseDate, text, reference, version },
       });
       return verse;
     } catch {
       // Fallback — return a static verse to avoid empty UI
       return {
-        date: today.toISOString(),
+        date: verseDate.toISOString(),
         text: '"The heart of man plans his way, but the Lord establishes his steps."',
         reference: 'Proverbs 16:9',
         version: 'ESV',

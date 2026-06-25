@@ -1,12 +1,12 @@
-# Transformlit Design System
+# 🎨 Transformlit Design System
 
 Date: 2026-06-25 (revised — added dark mode tokens + mobile-first notes)
 
-## Brand Direction
+## 🧭 Brand Direction
 
 Transformlit is warm, literary, and modern. The visual identity is anchored in the orange-and-ink logo, with a single secondary accent for depth. The UI should feel like a clean reading room: bright, warm paper tones in light mode, and a cozy ink-dark reading environment in dark mode. **Mobile-first** — all components designed for touch and small viewports first, then scaled up.
 
-## Color Tokens
+## 🎯 Color Tokens
 
 ### Light Mode
 
@@ -59,7 +59,7 @@ Transformlit is warm, literary, and modern. The visual identity is anchored in t
 | Error | `#B9382D` | Destructive actions, validation failures |
 | Info | `#2E6FAD` | Informational banners |
 
-## Typography
+## ✍️ Typography
 
 Two-font system: a sharp, modern grotesk for UI and a readable serif for content blocks.
 
@@ -82,13 +82,13 @@ Two-font system: a sharp, modern grotesk for UI and a readable serif for content
 
 **Mobile**: Body scales down to 15px on viewports < 375px via `clamp()`. Display reduces to 32px.
 
-## Spacing Scale (px)
+## 📏 Spacing Scale
 
 `4, 8, 12, 16, 20, 24, 32, 40, 48, 64`
 
 Mobile-first spacing: base spacing on 4px grid. Touch targets minimum 44×44px.
 
-## Radii
+## ⭕ Radii
 
 | Token | Value | Usage |
 |---|---|---|
@@ -97,7 +97,7 @@ Mobile-first spacing: base spacing on 4px grid. Touch targets minimum 44×44px.
 | Lg | 16px | Sheets, drawers |
 | Xl | 20px | Full-screen overlays |
 
-## Shadows
+## 👥 Shadows
 
 ### Light Mode
 
@@ -113,7 +113,7 @@ Mobile-first spacing: base spacing on 4px grid. Touch targets minimum 44×44px.
 | Soft | `0 2px 12px rgba(0, 0, 0, 0.4)` |
 | Lift | `0 10px 30px rgba(0, 0, 0, 0.5)` |
 
-## Gradients and Backgrounds
+## 🌈 Gradients & Backgrounds
 
 ### Light Mode
 
@@ -125,7 +125,7 @@ Mobile-first spacing: base spacing on 4px grid. Touch targets minimum 44×44px.
 - **Surface Gradient**: `linear-gradient(180deg, #1A1A1A 0%, #2C2C2C 100%)`
 - **Accent Wash**: `radial-gradient(60% 60% at 10% 10%, rgba(244, 161, 28, 0.12), rgba(244, 161, 28, 0) 60%)`
 
-## Layout
+## 📐 Layout
 
 ### Mobile First
 
@@ -146,7 +146,7 @@ Mobile-first spacing: base spacing on 4px grid. Touch targets minimum 44×44px.
 | lg | ≥ 1024px | Sidebar expanded, two-column content |
 | xl | ≥ 1280px | Max-width constrained |
 
-## Components (MVP)
+## 🧩 Components (MVP)
 
 ### Button
 
@@ -199,7 +199,7 @@ Mobile-first spacing: base spacing on 4px grid. Touch targets minimum 44×44px.
 - Auto-dismiss after 4s. Swipe to dismiss on mobile.
 - Colors mapped to Feedback tokens.
 
-## Motion
+## 🎬 Motion
 
 | Interaction | Duration | Easing | Notes |
 |---|---|---|---|
@@ -213,7 +213,7 @@ Mobile-first spacing: base spacing on 4px grid. Touch targets minimum 44×44px.
 
 **Respect `prefers-reduced-motion`**: all animations disabled when user preference is set.
 
-## Tailwind v4 Token Mapping
+## 🎨 Tailwind v4 Token Mapping
 
 ```css
 /* globals.css */
@@ -291,7 +291,7 @@ export default {
 };
 ```
 
-## Usage Notes
+## 📝 Usage Notes
 
 - **Mobile-first**: Design at 375px first. Use `sm:`, `md:`, `lg:` breakpoints to layer complexity.
 - **Touch targets**: Minimum 44×44px for all interactive elements. Buttons, nav items, form controls.
@@ -301,7 +301,7 @@ export default {
 - **Maintain strong contrast**: ink text over paper/surface backgrounds. Orange for primary actions only — never for decorative elements.
 - **Typography hierarchy**: Display/H1 only on public hero. H2–H4 in authenticated pages. Body for all paragraph content. Micro for timestamps and metadata.
 
-## Accessibility
+## ♿ Accessibility
 
 - All interactive elements must pass WCAG 2.1 AA contrast (4.5:1 for text, 3:1 for large text / UI components).
 - Focus rings: 2px orange outline on `:focus-visible` for all interactive elements.

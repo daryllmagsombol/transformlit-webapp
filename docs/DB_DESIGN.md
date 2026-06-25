@@ -1,12 +1,12 @@
-# Transformlit Database Design
+# 🗄️ Transformlit Database Design
 
 Date: 2026-06-25
 
-## Overview
+## 📊 Overview
 
 Single-instance PostgreSQL schema for Transformlit. UUID primary keys, audit fields on core tables, soft deletes. GraphQL subscriptions backed by Postgres `LISTEN`/`NOTIFY` — no Redis at MVP.
 
-## Conventions
+## 📐 Conventions
 
 - **Database**: PostgreSQL (Azure Flexible Server Burstable B1ms)
 - **ORM**: Prisma 7
@@ -17,7 +17,7 @@ Single-instance PostgreSQL schema for Transformlit. UUID primary keys, audit fie
 - **Tenancy**: Single-instance — **no `tenantId` columns**
 - **Casing**: `camelCase` in Prisma, `snake_case` in Postgres via `@map`
 
-## Enums
+## 🏷️ Enums
 
 ### UserRole
 - `ADMIN` — full platform access, manage users, upload books, publish announcements
@@ -61,6 +61,11 @@ Single-instance PostgreSQL schema for Transformlit. UUID primary keys, audit fie
 - `PUBLISHED` — live
 - `ARCHIVED` — expired / manually archived
 
+### AnnouncementCategory
+- `EVENT` — reading challenge, group event, meetup
+- `UPDATE` — platform update, feature change
+- `GENERAL` — welcome, informational, other
+
 ### NotificationType
 - `FRIEND_REQUEST` — someone sent a friend request
 - `FRIEND_ACCEPTED` — request accepted
@@ -69,7 +74,7 @@ Single-instance PostgreSQL schema for Transformlit. UUID primary keys, audit fie
 - `ANNOUNCEMENT` — new published announcement
 - `SYSTEM` — admin message, maintenance
 
-## Tables
+## 📋 Tables
 
 ### User
 ```
@@ -379,10 +384,11 @@ model Highlight {
 ### Announcement
 ```
 model Announcement {
-  id                String             @id @default(uuid())
+  id                String               @id @default(uuid())
   title             String
   body              String
-  status            AnnouncementStatus @default(DRAFT)
+  status            AnnouncementStatus   @default(DRAFT)
+  category          AnnouncementCategory @default(GENERAL)  // event, update, general
   publishAt         DateTime?          // scheduled publication
   expiresAt         DateTime?          // auto-archive after
   publishedAt       DateTime?
@@ -453,7 +459,7 @@ model AuditLog {
 }
 ```
 
-## Relationship Notes
+## 🔗 Relationship Notes
 
 - `User` is the central entity. All domain tables reference it.
 - `Identity` allows multiple SSO providers per user (e.g., same email via Google AND Microsoft).
@@ -461,25 +467,25 @@ model AuditLog {
 - `Conversation` can be `DIRECT` (1-to-1, no group) or `GROUP` (linked to a Group). Direct conversations have exactly 2 members.
 - `Book` with `status: COMING_SOON` has no `blobPath` — teaser listing only.
 - `BookAccess` grants individual user-level access. Group-level access via `Book.role` check against `GroupMember.role`.
-- `VerseOfTheDay` is a cache table. The NestJS feed service calls Our Manna API once per day, writes the result, and serves subsequent requests from this table.
+- `VerseOfTheDay` is a cache table. The NestJS feed service calls the Our Manna API (`beta.ourmanna.com`, no API key required) once per day at UTC midnight, writes the result, and serves subsequent requests from this table.
 - `Notification` uses a `Json` payload for flexibility. The client reads `type` to render the correct notification card.
 - `AuditLog` is append-only. Write-heavy operations (chat messages) do NOT create audit entries — only sensitive actions (auth, admin operations, access grants).
 
-## Indexing Strategy
+## 🔍 Indexing Strategy
 
 - All foreign keys indexed for JOIN performance.
 - Read-heavy query paths (messages by conversation, notifications by user, announcements by status) have composite covering indexes.
 - `createdAt DESC` sort on feed/chat indexes avoids explicit sort operations.
 - UUID primary keys use B-tree default indexes.
 
-## Soft Delete Behavior
+## 🗑️ Soft Delete Behavior
 
 - Core tables (`User`, `Group`, `Book`, `Announcement`, `Message`) support soft deletes via `deletedAt`.
 - All GraphQL queries default to `WHERE "deletedAt" IS NULL`. Admin resolvers can include soft-deleted rows for audit/recovery.
 - Child records (messages in a deleted conversation, members in a deleted group) cascade or are separately soft-deleted in service logic.
 - Hard-deletes: only for non-critical data (`RefreshToken` on rotation, old `Notification` rows via scheduled cleanup).
 
-## Migrations
+## 🔄 Migrations
 
 - Prisma Migrate via `npx prisma migrate dev` / `npx prisma migrate deploy`
 - Tracked in version control under `apps/api/prisma/migrations/`
