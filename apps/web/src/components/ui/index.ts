@@ -5,3 +5,19 @@ export type { TextInputProps } from './text-input';
 export { Card } from './card';
 export { Modal } from './modal';
 export { ToastProvider, useToast } from './toast';
+export { NavItem } from './nav-item';
+export { UserAvatar } from './user-avatar';
+export { SkeletonCard } from './skeleton-card';
+export {
+  MailIcon,
+  LockIcon,
+  EyeIcon,
+  EyeOffIcon,
+  PersonIcon,
+  GoogleIcon,
+  FacebookIcon,
+  MicrosoftIcon,
+  SpinnerIcon,
+  AutoStoriesIcon,
+} from './icons';
+export type { IconProps } from './icons';

@@ -3,18 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useUIStore } from '../../store';
-
-const navItems = [
-  { label: 'Feed', href: '/feed', icon: 'dynamic_feed' },
-  { label: 'Friends', href: '/friends', icon: 'group' },
-  { label: 'Groups', href: '/groups', icon: 'diversity_3' },
-  { label: 'Books', href: '/books', icon: 'menu_book' },
-];
-
-const bottomNavItems = [
-  { label: 'Settings', href: '/settings', icon: 'settings' },
-  { label: 'Help', href: '/help', icon: 'help' },
-];
+import { NavItem } from '../ui/nav-item';
+import { SIDEBAR_NAV_ITEMS } from '../../lib/constants';
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -31,7 +21,8 @@ export function Sidebar() {
       )}
 
       <aside
-        className={`fixed left-0 top-16 bottom-0 z-40 bg-surface-raised dark:bg-surface-raised border-r border-border
+        className={`fixed left-0 top-16 bottom-0 z-40 bg-surface-container-low dark:bg-surface-container-lowest
+          border-r border-outline-variant
           transition-transform duration-200 ease-out
           w-[240px] flex flex-col
           md:translate-x-0
@@ -40,49 +31,36 @@ export function Sidebar() {
       >
         {/* Main nav */}
         <nav className="flex flex-col gap-1 p-4 flex-1">
-          {navItems.map((item) => {
-            const isActive = pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center gap-3 px-4 py-3 text-sm font-medium transition-all ${
-                  isActive
-                    ? 'bg-brand/10 text-brand border-l-4 border-brand font-bold'
-                    : 'text-ink-soft hover:text-ink hover:bg-surface-high'
-                }`}
-              >
-                <span
-                  className={`material-symbols-outlined text-xl ${isActive ? 'filled' : ''}`}
-                >
-                  {item.icon}
-                </span>
-                {item.label}
-              </Link>
-            );
-          })}
+          {SIDEBAR_NAV_ITEMS.map((item) => (
+            <NavItem
+              key={item.href}
+              {...item}
+              active={pathname.startsWith(item.href)}
+              variant="sidebar"
+            />
+          ))}
         </nav>
 
         {/* Progress widget */}
         <div className="px-4 pb-4">
-          <div className="bg-paper-warm/50 dark:bg-paper-warm/10 rounded-lg p-4 border border-border">
-            <h3 className="text-xs uppercase tracking-widest text-ink-soft mb-3 font-semibold">
+          <div className="bg-paper-warm/50 rounded-lg p-4 border border-outline-variant shadow-sm">
+            <h3 className="font-micro text-micro uppercase tracking-widest text-on-surface-variant mb-3">
               Your Progress
             </h3>
             <div className="flex justify-between items-end mb-2">
-              <span className="text-sm text-ink-soft">Yearly Goal</span>
-              <span className="text-lg font-bold text-brand">12/24</span>
+              <span className="font-small text-small text-on-surface-variant">Yearly Goal</span>
+              <span className="font-headline-h4 text-headline-h4 text-primary">12/24</span>
             </div>
-            <div className="w-full bg-surface-high h-2 rounded-full overflow-hidden">
+            <div className="w-full bg-surface-container-highest h-2 rounded-full overflow-hidden">
               <div
-                className="bg-brand h-full rounded-full transition-all"
+                className="bg-brand-orange-dark h-full rounded-full transition-all"
                 style={{ width: '50%' }}
               />
             </div>
-            <p className="text-xs text-ink-soft mt-3 italic text-center">
+            <p className="font-micro text-micro text-on-surface-variant mt-3 italic text-center">
               &ldquo;Steady steps lead to deep wisdom.&rdquo;
             </p>
-            <button className="mt-4 w-full py-2 bg-brand text-white rounded-md text-sm font-bold flex items-center justify-center gap-2 hover:bg-brand-dark transition-colors active-press">
+            <button className="mt-4 w-full py-2 bg-primary text-on-primary rounded-md font-display text-small font-bold flex items-center justify-center gap-2 hover:bg-brand-orange-dark transition-colors active:scale-95">
               <span className="material-symbols-outlined text-[18px]">auto_stories</span>
               Track Progress
             </button>
@@ -90,17 +68,21 @@ export function Sidebar() {
         </div>
 
         {/* Bottom nav */}
-        <div className="border-t border-border p-4 flex flex-col gap-1">
-          {bottomNavItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="flex items-center gap-3 px-4 py-2 text-sm text-ink-soft hover:text-ink hover:bg-surface-high transition-colors"
-            >
-              <span className="material-symbols-outlined text-lg">{item.icon}</span>
-              {item.label}
-            </Link>
-          ))}
+        <div className="border-t border-outline-variant p-4 flex flex-col gap-1">
+          <Link
+            href="/settings"
+            className="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-highest transition-all text-micro uppercase tracking-wider"
+          >
+            <span className="material-symbols-outlined text-lg">settings</span>
+            Settings
+          </Link>
+          <Link
+            href="/help"
+            className="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-highest transition-all text-micro uppercase tracking-wider"
+          >
+            <span className="material-symbols-outlined text-lg">help</span>
+            Help
+          </Link>
         </div>
       </aside>
     </>

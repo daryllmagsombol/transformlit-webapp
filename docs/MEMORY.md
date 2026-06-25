@@ -1,6 +1,6 @@
 # 🧠 Transformlit — Project Memory & Task Tracker
 
-Date: 2026-06-25 (updated after feed page implementation)
+Date: 2026-06-25 (updated after feed page implementation + DRY refactor)
 Branch: `feature/major-rearchitecture`
 
 ## 🔒 Key Decisions (Locked In)
@@ -150,6 +150,24 @@ Full `/feed` page built matching the Material Design 3 spec:
 | **Dark mode** | `@custom-variant dark` wired to next-themes `.dark` class |
 | **New DB migration** | `AnnouncementCategory` enum (EVENT/UPDATE/GENERAL) + `category` field on `Announcement` |
 | **Seed data** | 5 groups, 3 categorized announcements, verse of the day, 2 users, 7 memberships |
+
+### Code Quality & DRY Refactor (2026-06-26)
+
+Extracted duplicated patterns into shared components, utilities, and constants. Unified the entire app (layout shell, auth pages, error pages) to use MD3 color tokens.
+
+| Change | Files Affected | Lines Removed |
+|---|---|---|
+| **`components/ui/icons.tsx`** — 10 shared SVG icon components (`MailIcon`, `LockIcon`, `EyeIcon`, `EyeOffIcon`, `PersonIcon`, `GoogleIcon`, `FacebookIcon`, `MicrosoftIcon`, `SpinnerIcon`, `AutoStoriesIcon`) | login-form.tsx, register-form.tsx | ~180 |
+| **`lib/constants.ts`** — added `API_BASE` (derived from `NEXT_PUBLIC_API_URL`) | login-form.tsx, register-form.tsx | 4 |
+| **`sidebar.tsx`** — replaced inline `<Link>` loop with `<NavItem>` + `SIDEBAR_NAV_ITEMS` import; updated all tokens to MD3 (`surface-container-low`, `outline-variant`, `primary`, `on-surface-variant`) | sidebar.tsx | ~30 |
+| **`topbar.tsx`** — replaced local nav array + old tokens with `SIDEBAR_NAV_ITEMS` import + MD3 tokens | topbar.tsx | ~20 |
+| **`app-shell.tsx`** — updated container to MD3 tokens (`bg-surface`, `border-outline-variant`) | app-shell.tsx | 2 |
+| **`loading.tsx`** — swapped `brand`/`ink-soft` → `primary`/`on-surface-variant` | loading.tsx | 2 |
+| **`error.tsx`** — replaced old `card` class + `ink` tokens with MD3 card (`surface-container-low`, `outline-variant`, `rounded-xl`) | error.tsx | 10 |
+| **`not-found.tsx`** — same MD3 treatment as error.tsx | not-found.tsx | 10 |
+| **`page.tsx`** (home) — replaced `btn-primary`/`btn-secondary` classes with inline MD3-styled buttons | page.tsx | 8 |
+
+**Result**: All 3 packages build clean. Every route now renders with the unified MD3 design system — no more old `brand`/`ink`/`border` tokens in any page component.
 
 ## 🔮 Future: Microservice Extraction
 
