@@ -14,17 +14,26 @@ import { Footer } from '../../components/layout';
 /*  Zod schema                                                        */
 /* ------------------------------------------------------------------ */
 
-const loginSchema = z.object({
+const registerSchema = z.object({
+  fullName: z.string().min(2, 'Name must be at least 2 characters'),
   email: z.string().email('Please enter a valid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
-  rememberMe: z.boolean().optional(),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
 });
 
-type LoginFormValues = z.infer<typeof loginSchema>;
+type RegisterFormValues = z.infer<typeof registerSchema>;
 
 /* ------------------------------------------------------------------ */
 /*  Inline SVG icons                                                  */
 /* ------------------------------------------------------------------ */
+
+function PersonIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
 
 function MailIcon() {
   return (
@@ -63,16 +72,6 @@ function EyeOffIcon() {
   );
 }
 
-function AutoStoriesIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 19.5v-15A2.5 2.5 0 016.5 2H20v20H6.5a2.5 2.5 0 010-5H20" />
-      <path d="M8 7h6" />
-      <path d="M8 11h3" />
-    </svg>
-  );
-}
-
 function GoogleIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24">
@@ -104,10 +103,10 @@ function MicrosoftIcon() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  LoginForm                                                         */
+/*  RegisterForm                                                      */
 /* ------------------------------------------------------------------ */
 
-export default function LoginForm() {
+export default function RegisterForm() {
   const router = useRouter();
   const setAuth = useAuthStore((s) => s.setAuth);
   const { addToast } = useToast();
@@ -119,8 +118,8 @@ export default function LoginForm() {
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<LoginFormValues>({
-    resolver: zodResolver(loginSchema),
+  } = useForm<RegisterFormValues>({
+    resolver: zodResolver(registerSchema),
     mode: 'onSubmit',
     reValidateMode: 'onChange',
   });
@@ -128,7 +127,7 @@ export default function LoginForm() {
   /* ---------- Submit handler ---------- */
 
   const onSubmit = useCallback(
-    async (values: LoginFormValues) => {
+    async (values: RegisterFormValues) => {
       setLoading(true);
       try {
         const [{ gql }, { apolloClient }] = await Promise.all([
@@ -138,29 +137,35 @@ export default function LoginForm() {
 
         const result = await apolloClient.mutate({
           mutation: gql`
-            mutation Login($input: LoginInput!) {
-              login(input: $input) {
+            mutation Register($input: RegisterInput!) {
+              register(input: $input) {
                 user { id email displayName photoUrl }
                 accessToken
                 refreshToken
               }
             }
           `,
-          variables: { input: { email: values.email.trim(), password: values.password } },
+          variables: {
+            input: {
+              displayName: values.fullName.trim(),
+              email: values.email.trim(),
+              password: values.password,
+            },
+          },
         });
 
-        const { user, accessToken, refreshToken } = result.data.login;
+        const { user, accessToken, refreshToken } = result.data.register;
         setAuth(user, accessToken);
         if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
 
-        addToast('Welcome back!', 'success');
+        addToast('Account created! Welcome to Transformlit.', 'success');
         router.push('/feed');
       } catch (err: any) {
         const message =
           err?.graphQLErrors?.[0]?.message ??
           err?.networkError?.result?.errors?.[0]?.message ??
           err?.message ??
-          'Invalid email or password';
+          'Registration failed. Please try again.';
         addToast(message, 'error');
       } finally {
         setLoading(false);
@@ -173,7 +178,7 @@ export default function LoginForm() {
 
   const handleSocialLogin = useCallback(
     (provider: string) => {
-      addToast(`${provider} sign-in coming soon`, 'info');
+      addToast(`${provider} registration coming soon`, 'info');
     },
     [addToast],
   );
@@ -181,42 +186,59 @@ export default function LoginForm() {
   /* ---------- Render ---------- */
 
   return (
-    <div className="min-h-dvh flex flex-col bg-paper">
-      {/* ======================== HEADER ======================== */}
-      <header className="fixed top-0 inset-x-0 z-50 bg-paper/80 backdrop-blur-md">
-        <div className="flex items-center justify-center h-14 px-4">
-          <span className="font-sans text-2xl sm:text-3xl text-brand tracking-tight font-bold">
-            Transformlit
-          </span>
-        </div>
-      </header>
+    <div className="min-h-dvh flex flex-col bg-paper relative overflow-hidden">
+      {/* Decorative blobs */}
+      <div
+        className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] rounded-full bg-brand/10 blur-[120px] pointer-events-none"
+        aria-hidden="true"
+      />
+      <div
+        className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] rounded-full bg-accent/15 blur-[120px] pointer-events-none"
+        aria-hidden="true"
+      />
 
       {/* ======================== MAIN ======================== */}
-      <main className="flex-1 flex items-center justify-center px-4 pt-20 pb-8">
-        {/* ---- Card ---- */}
-        <div className="relative w-full max-w-[440px] bg-surface rounded-xl shadow-soft border border-ink-soft/10 p-8 overflow-hidden">
-          {/* Accent bar */}
-          <div
-            className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-brand to-brand-dark"
-            aria-hidden="true"
-          />
-
-          {/* ---------- Title ---------- */}
-          <h1 className="font-sans text-3xl sm:text-4xl font-bold text-ink tracking-tight mb-1">
-            Welcome Back
+      <main className="flex-1 flex flex-col items-center justify-center px-4 py-16 relative z-10">
+        {/* ---- Brand header above card ---- */}
+        <div className="text-center mb-8">
+          <h1 className="font-sans text-2xl sm:text-3xl text-brand tracking-tight font-bold mb-1">
+            Transformlit
           </h1>
-          <p className="font-serif text-base sm:text-lg text-ink-soft italic mb-8">
-            The library awaits your return.
+          <p className="text-sm text-ink-soft italic">
+            Where every word finds its purpose.
+          </p>
+        </div>
+
+        {/* ---- Card ---- */}
+        <div className="w-full max-w-[440px] bg-paper rounded-xl shadow-soft border border-border p-8">
+          {/* ---------- Title ---------- */}
+          <h2 className="font-sans text-2xl font-bold text-ink mb-1">
+            Create Account
+          </h2>
+          <p className="font-serif text-base text-ink-soft mb-8">
+            Begin your literary journey with us today.
           </p>
 
           {/* ---------- Form ---------- */}
           <form className="space-y-5" onSubmit={handleSubmit(onSubmit)} noValidate>
+            {/* Full Name */}
+            <TextInput
+              id="fullName"
+              type="text"
+              label="Full Name"
+              placeholder="Arthur Conan Doyle"
+              autoComplete="name"
+              icon={<PersonIcon />}
+              error={errors.fullName?.message}
+              {...register('fullName')}
+            />
+
             {/* Email */}
             <TextInput
               id="email"
               type="email"
               label="Email Address"
-              placeholder="reader@transformlit.com"
+              placeholder="scholar@transformlit.com"
               autoComplete="email"
               icon={<MailIcon />}
               error={errors.email?.message}
@@ -224,65 +246,28 @@ export default function LoginForm() {
             />
 
             {/* Password */}
-            <div>
-              {/* Password label row */}
-              <div className="flex items-center justify-between ml-1 mb-2">
-                <label
-                  htmlFor="password"
-                  className="font-sans text-sm font-semibold text-ink"
+            <TextInput
+              id="password"
+              label="Password"
+              type={showPassword ? 'text' : 'password'}
+              placeholder="••••••••"
+              autoComplete="new-password"
+              icon={<LockIcon />}
+              hint="Must be at least 8 characters long."
+              error={errors.password?.message}
+              rightElement={
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((p) => !p)}
+                  className="text-ink-soft/60 hover:text-ink-soft transition-colors p-1 -m-1"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  tabIndex={-1}
                 >
-                  Password
-                </label>
-                <Link
-                  href="/forgot-password"
-                  className="font-sans text-sm font-semibold text-brand-dark hover:text-brand transition-colors underline decoration-ink-soft/30 underline-offset-4"
-                >
-                  Forgot?
-                </Link>
-              </div>
-
-              <TextInput
-                id="password"
-                type={showPassword ? 'text' : 'password'}
-                placeholder="••••••••"
-                autoComplete="current-password"
-                icon={<LockIcon />}
-                error={errors.password?.message}
-                rightElement={
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((p) => !p)}
-                    className="text-ink-soft/60 hover:text-ink-soft transition-colors p-1 -m-1"
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    tabIndex={-1}
-                  >
-                    {showPassword ? <EyeOffIcon /> : <EyeIcon />}
-                  </button>
-                }
-                {...register('password')}
-              />
-            </div>
-
-            {/* Remember me */}
-            <div className="flex items-center gap-2 px-1">
-              <input
-                id="remember"
-                type="checkbox"
-                className="
-                  w-4 h-4 rounded border border-border
-                  accent-brand-dark
-                  focus:ring-brand focus:ring-offset-0
-                  cursor-pointer
-                "
-                {...register('rememberMe')}
-              />
-              <label
-                htmlFor="remember"
-                className="text-sm text-ink-soft cursor-pointer select-none"
-              >
-                Remember me for 30 days
-              </label>
-            </div>
+                  {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+                </button>
+              }
+              {...register('password')}
+            />
 
             {/* Submit button */}
             <button
@@ -293,13 +278,13 @@ export default function LoginForm() {
                 bg-brand-dark hover:bg-brand
                 text-white font-sans text-lg font-semibold
                 rounded-lg
-                border-b-4 border-brand
+                shadow-sm hover:shadow-md
+                border-2 border-brand/20
                 flex items-center justify-center gap-2
-                shadow-sm
                 transition-all duration-150
-                active:translate-y-1 active:border-b-0
-                disabled:opacity-60 disabled:cursor-not-allowed disabled:active:translate-y-0 disabled:active:border-b-4
-                mt-4
+                active:scale-[0.98]
+                disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100
+                mt-2
               "
             >
               {loading ? (
@@ -308,15 +293,10 @@ export default function LoginForm() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  Logging in…
+                  Creating account…
                 </span>
               ) : (
-                <>
-                  <span>Log In</span>
-                  <span className="group-hover:translate-x-0.5 transition-transform">
-                    <AutoStoriesIcon />
-                  </span>
-                </>
+                'Sign Up'
               )}
             </button>
           </form>
@@ -326,8 +306,8 @@ export default function LoginForm() {
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-border" />
             </div>
-            <span className="relative px-4 bg-surface text-sm text-ink-soft">
-              or continue with
+            <span className="relative px-4 bg-paper text-xs text-ink-soft uppercase tracking-widest">
+              Or register with
             </span>
           </div>
 
@@ -336,8 +316,8 @@ export default function LoginForm() {
             <button
               type="button"
               onClick={() => handleSocialLogin('Google')}
-              className="flex items-center justify-center h-11 border border-border rounded-lg hover:bg-paper hover:border-ink-soft/20 transition-all group"
-              title="Login with Google"
+              className="flex items-center justify-center h-11 border border-border rounded-lg hover:bg-surface hover:border-ink-soft/20 transition-all group"
+              title="Register with Google"
             >
               <span className="group-hover:scale-110 transition-transform">
                 <GoogleIcon />
@@ -347,8 +327,8 @@ export default function LoginForm() {
             <button
               type="button"
               onClick={() => handleSocialLogin('Microsoft')}
-              className="flex items-center justify-center h-11 border border-border rounded-lg hover:bg-paper hover:border-ink-soft/20 transition-all group"
-              title="Login with Microsoft"
+              className="flex items-center justify-center h-11 border border-border rounded-lg hover:bg-surface hover:border-ink-soft/20 transition-all group"
+              title="Register with Microsoft"
             >
               <span className="group-hover:scale-110 transition-transform">
                 <MicrosoftIcon />
@@ -358,15 +338,45 @@ export default function LoginForm() {
             <button
               type="button"
               onClick={() => handleSocialLogin('Facebook')}
-              className="flex items-center justify-center h-11 border border-border rounded-lg hover:bg-paper hover:border-ink-soft/20 transition-all group"
-              title="Login with Facebook"
+              className="flex items-center justify-center h-11 border border-border rounded-lg hover:bg-surface hover:border-ink-soft/20 transition-all group"
+              title="Register with Facebook"
             >
               <span className="group-hover:scale-110 transition-transform">
                 <FacebookIcon />
               </span>
             </button>
           </div>
+
+          {/* ---------- Terms footnote ---------- */}
+          <p className="mt-5 text-center text-xs text-ink-soft leading-relaxed">
+            By clicking Sign Up, you agree to Transformlit&rsquo;s{' '}
+            <Link
+              href="/terms"
+              className="underline hover:text-brand transition-colors"
+            >
+              Terms of Service
+            </Link>{' '}
+            and{' '}
+            <Link
+              href="/privacy"
+              className="underline hover:text-brand transition-colors"
+            >
+              Privacy Policy
+            </Link>
+            .
+          </p>
         </div>
+
+        {/* ---------- Secondary link below card ---------- */}
+        <p className="mt-6 text-sm text-ink-soft">
+          Already have an account?{' '}
+          <Link
+            href="/login"
+            className="font-semibold text-brand-dark hover:text-brand transition-colors"
+          >
+            Log In
+          </Link>
+        </p>
       </main>
 
       {/* ======================== FOOTER ======================== */}

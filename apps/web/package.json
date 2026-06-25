@@ -11,14 +11,17 @@
   },
   "dependencies": {
     "@apollo/client": "^3.13.0",
+    "@hookform/resolvers": "^3.10.0",
+    "@transformlit/graphql": "workspace:*",
+    "@transformlit/shared": "workspace:*",
     "graphql-ws": "^6.0.0",
     "next": "^16.0.0",
     "next-themes": "^0.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "zustand": "^5.0.0",
-    "@transformlit/shared": "workspace:*",
-    "@transformlit/graphql": "workspace:*"
+    "react-hook-form": "^7.80.0",
+    "zod": "^3.25.76",
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
