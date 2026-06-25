@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   PublishAnnouncementInput,
@@ -8,10 +7,7 @@ import {
 
 @Injectable()
 export class FeedService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async getAnnouncements() {
     return this.prisma.announcement.findMany({
@@ -85,25 +81,30 @@ export class FeedService {
     });
     if (cached) return cached;
 
-    // Fetch from Our Manna API
-    const apiKey = this.config.get<string>('VERSE_API_KEY');
-    if (!apiKey) {
-      return { date: today.toISOString(), text: 'John 3:16 — For God so loved the world...', reference: 'John 3:16', version: 'KJV' };
-    }
-
+    // Fetch from Our Manna API (no API key required)
     try {
-      const res = await fetch(`https://api.ourmanna.com/api/v1/get?format=json`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-      const data = await res.json() as any;
-      const text = data.verse?.details?.text ?? data.detail ?? 'Verse unavailable';
-      const reference = data.verse?.details?.reference ?? '';
+      const res = await fetch(
+        'https://beta.ourmanna.com/api/v1/get?format=json&order=daily',
+        { headers: { accept: 'application/json' } },
+      );
+      const data = (await res.json()) as any;
+      const details = data.verse?.details;
+      const text = details?.text ?? 'Verse unavailable';
+      const reference = details?.reference ?? '';
+      const version = details?.version ?? 'NIV';
+
       const verse = await this.prisma.verseOfTheDay.create({
-        data: { date: today, text, reference, version: 'KJV' },
+        data: { date: today, text, reference, version },
       });
       return verse;
     } catch {
-      return { date: today.toISOString(), text: 'Verse unavailable', reference: '', version: 'KJV' };
+      // Fallback — return a static verse to avoid empty UI
+      return {
+        date: today.toISOString(),
+        text: '"The heart of man plans his way, but the Lord establishes his steps."',
+        reference: 'Proverbs 16:9',
+        version: 'ESV',
+      };
     }
   }
 }

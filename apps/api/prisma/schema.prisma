@@ -334,20 +334,27 @@ enum AnnouncementStatus {
   ARCHIVED
 }
 
+enum AnnouncementCategory {
+  EVENT
+  UPDATE
+  GENERAL
+}
+
 model Announcement {
-  id            String             @id @default(uuid())
+  id            String               @id @default(uuid())
   title         String
   body          String
-  status        AnnouncementStatus @default(DRAFT)
+  status        AnnouncementStatus   @default(DRAFT)
+  category      AnnouncementCategory @default(GENERAL)
   publishAt     DateTime?
   expiresAt     DateTime?
   publishedAt   DateTime?
   publishedById String?
-  publishedBy   User?              @relation("AnnouncementPublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
+  publishedBy   User?                @relation("AnnouncementPublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
   createdById   String?
-  createdBy     User?              @relation("AnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
+  createdBy     User?                @relation("AnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
   deletedAt     DateTime?
 
   @@index([status, publishAt(sort: Desc)])

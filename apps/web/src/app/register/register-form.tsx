@@ -145,7 +145,7 @@ export default function RegisterForm() {
           mutation: gql`
             mutation RegisterLocal($input: RegisterLocalInput!) {
               registerLocal(input: $input) {
-                user { id email displayName photoUrl }
+                user { id email displayName avatarUrl }
                 accessToken
                 refreshToken
               }
@@ -222,12 +222,14 @@ export default function RegisterForm() {
         {/* ---- Card ---- */}
         <div className="w-full max-w-[440px] bg-paper rounded-xl shadow-soft border border-border p-8">
           {/* ---------- Title ---------- */}
-          <h2 className="font-sans text-2xl font-bold text-ink mb-1">
-            Create Account
-          </h2>
-          <p className="font-serif text-base text-ink-soft mb-8">
-            Begin your literary journey with us today.
-          </p>
+          <div className="text-center mb-8">
+            <h2 className="font-sans text-2xl font-bold text-ink mb-1">
+              Create Account
+            </h2>
+            <p className="font-serif text-base text-ink-soft">
+              Begin your literary journey with us today.
+            </p>
+          </div>
 
           {/* ---------- Form ---------- */}
           <form className="space-y-5" onSubmit={handleSubmit(onSubmit)} noValidate>

@@ -1,7 +1,8 @@
 import { Field, ObjectType, InputType, ID, registerEnumType } from '@nestjs/graphql';
-import { AnnouncementStatus } from '@transformlit/shared';
+import { AnnouncementStatus, AnnouncementCategory } from '@transformlit/shared';
 
 registerEnumType(AnnouncementStatus, { name: 'AnnouncementStatus' });
+registerEnumType(AnnouncementCategory, { name: 'AnnouncementCategory' });
 
 @ObjectType()
 export class Announcement {
@@ -16,6 +17,9 @@ export class Announcement {
 
   @Field(() => AnnouncementStatus)
   status: AnnouncementStatus;
+
+  @Field(() => AnnouncementCategory)
+  category: AnnouncementCategory;
 
   @Field({ nullable: true })
   publishAt?: Date;
@@ -51,6 +55,9 @@ export class PublishAnnouncementInput {
 
   @Field() body: string;
 
+  @Field(() => AnnouncementCategory, { nullable: true, defaultValue: AnnouncementCategory.GENERAL })
+  category?: AnnouncementCategory;
+
   @Field({ nullable: true })
   publishAt?: string;
 
@@ -65,6 +72,9 @@ export class UpdateAnnouncementInput {
 
   @Field({ nullable: true })
   body?: string;
+
+  @Field(() => AnnouncementCategory, { nullable: true })
+  category?: AnnouncementCategory;
 
   @Field({ nullable: true })
   publishAt?: string;

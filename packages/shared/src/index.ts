@@ -14,6 +14,7 @@ export {
   BookAccessLevel,
   BookStatus,
   AnnouncementStatus,
+  AnnouncementCategory,
   NotificationType,
 } from './enums.js';
 export type {

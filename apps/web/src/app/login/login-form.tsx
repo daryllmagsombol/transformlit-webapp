@@ -163,7 +163,7 @@ export default function LoginForm() {
         // Fetch user profile using the freshly stored access token
         const { data } = await apolloClient.query({
           query: gql`
-            query Me { me { id email displayName photoUrl } }
+            query Me { me { id email displayName avatarUrl } }
           `,
         });
 
@@ -195,7 +195,7 @@ export default function LoginForm() {
           mutation: gql`
             mutation LoginLocal($input: LoginLocalInput!) {
               loginLocal(input: $input) {
-                user { id email displayName photoUrl }
+                user { id email displayName avatarUrl }
                 accessToken
                 refreshToken
               }
@@ -261,12 +261,14 @@ export default function LoginForm() {
           />
 
           {/* ---------- Title ---------- */}
-          <h1 className="font-sans text-3xl sm:text-4xl font-bold text-ink tracking-tight mb-1">
-            Welcome Back
-          </h1>
-          <p className="font-serif text-base sm:text-lg text-ink-soft italic mb-8">
-            The library awaits your return.
-          </p>
+          <div className="text-center mb-8">
+            <h1 className="font-sans text-3xl sm:text-4xl font-bold text-ink tracking-tight mb-1">
+              Welcome Back
+            </h1>
+            <p className="font-serif text-base sm:text-lg text-ink-soft italic">
+              The library awaits your return.
+            </p>
+          </div>
 
           {/* ---------- Form ---------- */}
           <form className="space-y-5" onSubmit={handleSubmit(onSubmit)} noValidate>
@@ -425,6 +427,17 @@ export default function LoginForm() {
               </span>
             </button>
           </div>
+
+          {/* ---------- Register link ---------- */}
+          <p className="mt-6 text-sm text-ink-soft text-center">
+            New to the collection?{' '}
+            <Link
+              href="/register"
+              className="font-semibold text-brand-dark hover:text-brand transition-colors"
+            >
+              Register here.
+            </Link>
+          </p>
         </div>
       </main>
 

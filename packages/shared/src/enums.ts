@@ -51,6 +51,12 @@ export enum AnnouncementStatus {
   ARCHIVED = 'ARCHIVED',
 }
 
+export enum AnnouncementCategory {
+  EVENT = 'EVENT',
+  UPDATE = 'UPDATE',
+  GENERAL = 'GENERAL',
+}
+
 export enum NotificationType {
   FRIEND_REQUEST = 'FRIEND_REQUEST',
   FRIEND_ACCEPTED = 'FRIEND_ACCEPTED',

@@ -110,6 +110,7 @@ export interface GraphQLAnnouncement {
   title: string;
   body: string;
   status: string;
+  category: string;
   publishedAt?: string | null;
   expiresAt?: string | null;
   createdBy: GraphQLUser;

@@ -125,6 +125,7 @@ export type AddHighlightInput = z.infer<typeof addHighlightSchema>;
 export const publishAnnouncementSchema = z.object({
   title: z.string().min(1).max(200),
   body: z.string().min(1).max(10000),
+  category: z.enum(['EVENT', 'UPDATE', 'GENERAL']).default('GENERAL'),
   publishAt: z.string().datetime().optional(),
   expiresAt: z.string().datetime().optional(),
 });
@@ -132,6 +133,7 @@ export const publishAnnouncementSchema = z.object({
 export const updateAnnouncementSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   body: z.string().min(1).max(10000).optional(),
+  category: z.enum(['EVENT', 'UPDATE', 'GENERAL']).optional(),
   publishAt: z.string().datetime().optional(),
   expiresAt: z.string().datetime().optional(),
   status: z.enum(['DRAFT', 'PUBLISHED', 'ARCHIVED']).optional(),
