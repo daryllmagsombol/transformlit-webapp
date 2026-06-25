@@ -2,12 +2,22 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card } from '../../components/ui';
+import { gql } from '@apollo/client';
+import { Card, useToast } from '../../components/ui';
 import { useAuthStore } from '../../store';
+import { apolloClient } from '../../lib/apollo-client';
+
+const FEED_QUERY = gql`
+  query Feed {
+    announcements { id title body status publishedAt createdAt }
+    verseOfDay { date text reference version }
+  }
+`;
 
 export default function FeedClient() {
   const token = useAuthStore((s) => s.token);
   const router = useRouter();
+  const { addToast } = useToast();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -17,24 +27,18 @@ export default function FeedClient() {
       return;
     }
 
-    // Dynamically import Apollo and execute query
-    import('../../lib/apollo-client').then(({ apolloClient }) => {
-      const gql = require('@apollo/client').gql;
-      return apolloClient.query({
-        query: gql`
-          query Feed {
-            announcements { id title body status publishedAt createdAt }
-            verseOfDay { date text reference version }
-          }
-        `,
+    apolloClient
+      .query({ query: FEED_QUERY })
+      .then((result) => {
+        setData(result.data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('Feed query failed:', err);
+        addToast('Failed to load feed. Please try again.', 'error');
+        setLoading(false);
       });
-    }).then((result) => {
-      setData(result.data);
-      setLoading(false);
-    }).catch(() => {
-      setLoading(false);
-    });
-  }, [token, router]);
+  }, [token, router, addToast]);
 
   if (!token) return null;
 

@@ -17,9 +17,9 @@
   --color-error: #B9382D;
   --color-success: #1F7A6D;
 
-  --font-sans: 'Space Grotesk', 'Manrope', 'Segoe UI', sans-serif;
-  --font-serif: 'Newsreader', 'Literata', 'Georgia', serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+  --font-sans: var(--font-space-grotesk, 'Space Grotesk'), 'Manrope', 'Segoe UI', sans-serif;
+  --font-serif: var(--font-newsreader, 'Newsreader'), 'Literata', 'Georgia', serif;
+  --font-mono: var(--font-jetbrains-mono, 'JetBrains Mono'), 'SF Mono', monospace;
 
   --radius-sm: 8px;
   --radius-md: 12px;

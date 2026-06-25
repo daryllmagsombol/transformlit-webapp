@@ -1,3 +1,10 @@
+import type { Metadata } from 'next';
 import BooksClient from './books-client';
-export const dynamic = 'force-dynamic';
-export default function Route() { return <BooksClient />; }
+
+export const metadata: Metadata = {
+  title: 'Books — Transformlit',
+};
+
+export default function Route() {
+  return <BooksClient />;
+}

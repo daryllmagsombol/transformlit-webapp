@@ -1,3 +1,10 @@
+import type { Metadata } from 'next';
 import GroupsClient from './groups-client';
-export const dynamic = 'force-dynamic';
-export default function Route() { return <GroupsClient />; }
+
+export const metadata: Metadata = {
+  title: 'Groups — Transformlit',
+};
+
+export default function Route() {
+  return <GroupsClient />;
+}

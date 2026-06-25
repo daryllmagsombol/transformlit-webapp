@@ -1,3 +1,10 @@
+import type { Metadata } from 'next';
 import ChatClient from './chat-client';
-export const dynamic = 'force-dynamic';
-export default function Route() { return <ChatClient />; }
+
+export const metadata: Metadata = {
+  title: 'Chat — Transformlit',
+};
+
+export default function Route() {
+  return <ChatClient />;
+}
