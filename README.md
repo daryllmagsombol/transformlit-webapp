@@ -11,11 +11,11 @@ A community-driven platform for reading groups, book sharing, chat, and literary
 
 | File | Contents |
 |---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 🏛️ System design, modular monolith, GraphQL API, subscriptions, auth flow, PDF streaming, deployment model |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 🏛️ System design, modular monolith, GraphQL API, subscriptions, auth flow, PDF streaming |
 | [`docs/DB_DESIGN.md`](docs/DB_DESIGN.md) | 🗄️ Full PostgreSQL schema: tables, enums, indexes, constraints, conventions |
-| [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) | 🎨 Brand direction, color tokens (light + dark), typography, spacing, components, Tailwind config |
-| [`docs/Deployment.md`](docs/Deployment.md) | 🚀 Azure Container Apps, Terraform IaC, GitHub Actions CI/CD, Cloudflare DNS, GHCR |
+| [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) | 🎨 Brand direction, color tokens (light + dark), typography, spacing, components |
 | [`docs/MEMORY.md`](docs/MEMORY.md) | 🧠 Task tracker, decisions log, open questions, future microservice extraction plan |
+| [`docs/Deployment.md`](docs/Deployment.md) | 🚀 Azure Container Apps, Terraform IaC, GitHub Actions CI/CD, Cloudflare DNS, GHCR |
 
 ---
 
