@@ -57,6 +57,14 @@ export enum AnnouncementCategory {
   GENERAL = 'GENERAL',
 }
 
+export enum GroupCategory {
+  BIBLICAL_STUDIES = 'BIBLICAL_STUDIES',
+  MODERN_FICTION = 'MODERN_FICTION',
+  HISTORICAL = 'HISTORICAL',
+  PHILOSOPHY = 'PHILOSOPHY',
+  YOUNG_ADULT = 'YOUNG_ADULT',
+}
+
 export enum NotificationType {
   FRIEND_REQUEST = 'FRIEND_REQUEST',
   FRIEND_ACCEPTED = 'FRIEND_ACCEPTED',

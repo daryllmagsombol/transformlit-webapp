@@ -91,3 +91,13 @@ export const BOTTOM_NAV_ITEMS = SIDEBAR_NAV_ITEMS;
 export const API_BASE = (
   process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/graphql'
 ).replace(/\/graphql$/, '');
+
+// ── Group Categories ─────────────────────────────────────────────────────────
+
+export const GROUP_CATEGORIES = [
+  { key: 'BIBLICAL_STUDIES', label: 'Biblical Studies', icon: 'menu_book' },
+  { key: 'MODERN_FICTION', label: 'Modern Fiction', icon: 'auto_stories' },
+  { key: 'HISTORICAL', label: 'Historical', icon: 'history_edu' },
+  { key: 'PHILOSOPHY', label: 'Philosophy', icon: 'psychology' },
+  { key: 'YOUNG_ADULT', label: 'Young Adult', icon: 'child_care' },
+] as const;

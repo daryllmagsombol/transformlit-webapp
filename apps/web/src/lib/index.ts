@@ -1,2 +1,13 @@
 export { apolloClient } from './apollo-client';
-export { getAccessToken, setAccessToken, removeAccessToken, clearAuth } from './auth';
+export {
+  getAccessToken,
+  setAccessToken,
+  removeAccessToken,
+  getRefreshToken,
+  setRefreshToken,
+  removeRefreshToken,
+  clearAuth,
+  decodeJwt,
+  getTokenExpiry,
+  isTokenExpiringSoon,
+} from './auth';

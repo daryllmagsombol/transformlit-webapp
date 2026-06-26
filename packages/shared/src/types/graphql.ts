@@ -17,6 +17,9 @@ export interface GraphQLGroup {
   slug: string;
   description?: string | null;
   visibility: string;
+  category?: string | null;
+  coverImageUrl?: string | null;
+  featured: boolean;
   memberCount: number;
   myRole?: string | null;
   createdAt: string;

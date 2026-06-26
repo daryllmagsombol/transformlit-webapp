@@ -1,9 +1,22 @@
-import { Field, ObjectType, InputType, ID, registerEnumType } from '@nestjs/graphql';
-import { GroupVisibility, GroupMemberRole, GroupMemberStatus } from '@transformlit/shared';
+import {
+  Field,
+  ObjectType,
+  InputType,
+  ID,
+  Int,
+  registerEnumType,
+} from '@nestjs/graphql';
+import {
+  GroupVisibility,
+  GroupMemberRole,
+  GroupMemberStatus,
+  GroupCategory,
+} from '@transformlit/shared';
 
 registerEnumType(GroupVisibility, { name: 'GroupVisibility' });
 registerEnumType(GroupMemberRole, { name: 'GroupMemberRole' });
 registerEnumType(GroupMemberStatus, { name: 'GroupMemberStatus' });
+registerEnumType(GroupCategory, { name: 'GroupCategory' });
 
 @ObjectType()
 export class Group {
@@ -22,7 +35,16 @@ export class Group {
   @Field(() => GroupVisibility)
   visibility: GroupVisibility;
 
+  @Field(() => GroupCategory, { nullable: true })
+  category?: GroupCategory;
+
+  @Field({ nullable: true })
+  coverImageUrl?: string;
+
   @Field()
+  featured: boolean;
+
+  @Field(() => Int)
   memberCount: number;
 
   @Field({ nullable: true })
@@ -59,6 +81,12 @@ export class CreateGroupInput {
 
   @Field(() => GroupVisibility, { defaultValue: GroupVisibility.PUBLIC, nullable: true })
   visibility?: GroupVisibility;
+
+  @Field(() => GroupCategory, { nullable: true })
+  category?: GroupCategory;
+
+  @Field({ nullable: true })
+  coverImageUrl?: string;
 }
 
 @InputType()
@@ -71,4 +99,13 @@ export class UpdateGroupInput {
 
   @Field(() => GroupVisibility, { nullable: true })
   visibility?: GroupVisibility;
+
+  @Field(() => GroupCategory, { nullable: true })
+  category?: GroupCategory;
+
+  @Field({ nullable: true })
+  coverImageUrl?: string;
+
+  @Field({ nullable: true })
+  featured?: boolean;
 }

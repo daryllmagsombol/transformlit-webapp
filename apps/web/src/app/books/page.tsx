@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { AuthenticatedLayout } from '../../components/layout/authenticated-layout';
 import BooksClient from './books-client';
 
 export const metadata: Metadata = {
@@ -6,5 +7,9 @@ export const metadata: Metadata = {
 };
 
 export default function Route() {
-  return <BooksClient />;
+  return (
+    <AuthenticatedLayout>
+      <BooksClient />
+    </AuthenticatedLayout>
+  );
 }

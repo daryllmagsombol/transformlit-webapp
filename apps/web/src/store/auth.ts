@@ -1,13 +1,20 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { GraphQLUser } from '@transformlit/shared';
+import {
+  setAccessToken,
+  setRefreshToken,
+  clearAuth as clearAuthStorage,
+} from '../lib/auth';
 
 interface AuthStore {
   user: GraphQLUser | null;
   token: string | null;
-  setAuth: (user: GraphQLUser, token: string) => void;
+  isHydrated: boolean;
+  setAuth: (user: GraphQLUser, token: string, refreshToken?: string) => void;
   clearAuth: () => void;
   isAuthenticated: () => boolean;
+  setHydrated: (value: boolean) => void;
 }
 
 export const useAuthStore = create<AuthStore>()(
@@ -15,20 +22,30 @@ export const useAuthStore = create<AuthStore>()(
     (set, get) => ({
       user: null,
       token: null,
-      setAuth: (user, token) => {
-        localStorage.setItem('accessToken', token);
+      isHydrated: false,
+      setAuth: (user, token, refreshToken) => {
+        setAccessToken(token);
+        if (refreshToken) setRefreshToken(refreshToken);
         set({ user, token });
       },
       clearAuth: () => {
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('refreshToken');
+        clearAuthStorage();
         set({ user: null, token: null });
       },
       isAuthenticated: () => !!get().token,
+      setHydrated: (value) => set({ isHydrated: value }),
     }),
     {
       name: 'auth-storage',
+      storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ user: state.user, token: state.token }),
+      onRehydrateStorage: () => (state, error) => {
+        if (!error && state) {
+          useAuthStore.getState().setHydrated(true);
+          const currentToken = useAuthStore.getState().token;
+          if (currentToken) setAccessToken(currentToken);
+        }
+      },
     },
   ),
 );

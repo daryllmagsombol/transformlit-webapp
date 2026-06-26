@@ -1,18 +1,53 @@
-import { Resolver, Query, Mutation, Args } from '@nestjs/graphql';
+import {
+  Resolver,
+  Query,
+  Mutation,
+  Args,
+  ResolveField,
+  Parent,
+  Int,
+} from '@nestjs/graphql';
 import { UseGuards } from '@nestjs/common';
 import { GroupsService } from './groups.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Group, GroupMember, CreateGroupInput, UpdateGroupInput } from './models/group.model.js';
+import { GroupCategory } from '@transformlit/shared';
 
-@Resolver()
+@Resolver(() => Group)
 export class GroupsResolver {
   constructor(private readonly groupsService: GroupsService) {}
+
+  // ── Field Resolvers ────────────────────────────────────────────────────────
+
+  @ResolveField(() => Int)
+  async memberCount(@Parent() group: Group) {
+    // If the service already computed it, use it; otherwise count fresh
+    if ((group as any).memberCount != null) return (group as any).memberCount;
+    return this.groupsService.countActiveMembers(group.id);
+  }
+
+  // ── Queries ────────────────────────────────────────────────────────────────
 
   @Query(() => [Group], { name: 'groups' })
   @UseGuards(JwtAuthGuard)
   async groups(@CurrentUser() user: { id: string }) {
     return this.groupsService.listGroups(user.id);
+  }
+
+  @Query(() => [Group], { name: 'myGroups' })
+  @UseGuards(JwtAuthGuard)
+  async myGroups(@CurrentUser() user: { id: string }) {
+    return this.groupsService.myGroups(user.id);
+  }
+
+  @Query(() => [Group], { name: 'discoverGroups' })
+  @UseGuards(JwtAuthGuard)
+  async discoverGroups(
+    @CurrentUser() user: { id: string },
+    @Args('category', { type: () => GroupCategory, nullable: true }) category?: GroupCategory,
+  ) {
+    return this.groupsService.discoverGroups(user.id, category);
   }
 
   @Query(() => Group, { name: 'group', nullable: true })
@@ -32,6 +67,8 @@ export class GroupsResolver {
   async groupMembers(@Args('groupId') groupId: string) {
     return this.groupsService.listMembers(groupId);
   }
+
+  // ── Mutations ──────────────────────────────────────────────────────────────
 
   @Mutation(() => Group, { name: 'createGroup' })
   @UseGuards(JwtAuthGuard)

@@ -76,8 +76,7 @@ export default function RegisterForm() {
         });
 
         const { user, accessToken, refreshToken } = result.data.registerLocal;
-        setAuth(user, accessToken);
-        if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
+        setAuth(user, accessToken, refreshToken ?? undefined);
 
         addToast('Account created! Welcome to Transformlit.', 'success');
         router.push('/feed');

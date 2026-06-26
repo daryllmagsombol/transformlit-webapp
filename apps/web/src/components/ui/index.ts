@@ -8,6 +8,12 @@ export { ToastProvider, useToast } from './toast';
 export { NavItem } from './nav-item';
 export { UserAvatar } from './user-avatar';
 export { SkeletonCard } from './skeleton-card';
+export { GroupCard } from './group-card';
+export { CategoryChip } from './category-chip';
+export { FeaturedGroupCard } from './featured-group-card';
+export { CompactGroupCard } from './compact-group-card';
+export { BookCard, BookCardSkeleton } from './book-card';
+export { ReadingProgressCard } from './reading-progress-card';
 export {
   MailIcon,
   LockIcon,

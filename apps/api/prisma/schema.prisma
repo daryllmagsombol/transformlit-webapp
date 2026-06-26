@@ -83,6 +83,14 @@ model RefreshToken {
 
 // ── Groups ─────────────────────────────────────────────────────────────────
 
+enum GroupCategory {
+  BIBLICAL_STUDIES
+  MODERN_FICTION
+  HISTORICAL
+  PHILOSOPHY
+  YOUNG_ADULT
+}
+
 enum GroupVisibility {
   PUBLIC
   PRIVATE
@@ -100,21 +108,26 @@ enum GroupMemberStatus {
 }
 
 model Group {
-  id          String          @id @default(uuid())
-  name        String
-  slug        String          @unique
-  description String?
-  visibility  GroupVisibility @default(PUBLIC)
-  createdById String?
-  createdBy   User?           @relation("GroupCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  deletedAt   DateTime?
+  id            String          @id @default(uuid())
+  name          String
+  slug          String          @unique
+  description   String?
+  visibility    GroupVisibility @default(PUBLIC)
+  category      GroupCategory?
+  coverImageUrl String?
+  featured      Boolean         @default(false)
+  createdById   String?
+  createdBy     User?           @relation("GroupCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  deletedAt     DateTime?
 
   members       GroupMember[]
   conversations Conversation[]
 
   @@index([visibility])
+  @@index([category])
+  @@index([featured])
   @@index([name])
   @@map("groups")
 }

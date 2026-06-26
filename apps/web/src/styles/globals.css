@@ -231,6 +231,20 @@ button, a, input, select, textarea {
 /* ── Utilities ────────────────────────────────────────────────── */
 .text-balance { text-wrap: balance; }
 
+/* Hide scrollbar but keep functionality */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Bento grid (auto-fill, min 300px columns) */
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 24px;
+}
+
 /* Paper texture background */
 .paper-texture {
   background-color: #fff8f4;

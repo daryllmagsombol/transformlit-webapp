@@ -7,6 +7,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuthStore } from '../../store';
+import { setAccessToken, setRefreshToken, removeAccessToken, removeRefreshToken } from '../../lib/auth';
 import { useToast, TextInput, SpinnerIcon, MailIcon, LockIcon, EyeIcon, EyeOffIcon, AutoStoriesIcon, GoogleIcon, FacebookIcon, MicrosoftIcon } from '../../components/ui';
 import { Footer } from '../../components/layout';
 import { API_BASE } from '../../lib/constants';
@@ -66,8 +67,8 @@ export default function LoginForm() {
       try {
         // Temporarily store the access token so the authLink middleware
         // picks it up for the `me` query below.
-        localStorage.setItem('accessToken', urlToken);
-        localStorage.setItem('refreshToken', urlRefresh);
+        setAccessToken(urlToken);
+        setRefreshToken(urlRefresh);
 
         const [{ gql }, { apolloClient }] = await Promise.all([
           import('@apollo/client'),
@@ -81,14 +82,16 @@ export default function LoginForm() {
           `,
         });
 
-        setAuth(data.me, urlToken);
+        setAuth(data.me, urlToken, urlRefresh);
         addToast('Welcome back!', 'success');
-        router.push('/feed');
+        // Replace history so the OAuth tokens do not remain in the
+        // browser history entry for /login.
+        router.replace('/feed');
       } catch {
         // If the `me` query fails (e.g. expired token), clear tokens
         // and let the user log in manually.
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('refreshToken');
+        removeAccessToken();
+        removeRefreshToken();
         addToast('Google sign-in failed. Please try again.', 'error');
       }
     })();
@@ -119,8 +122,7 @@ export default function LoginForm() {
         });
 
         const { user, accessToken, refreshToken } = result.data.loginLocal;
-        setAuth(user, accessToken);
-        if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
+        setAuth(user, accessToken, refreshToken ?? undefined);
 
         addToast('Welcome back!', 'success');
         router.push('/feed');

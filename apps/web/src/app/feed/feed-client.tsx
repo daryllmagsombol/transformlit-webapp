@@ -37,6 +37,7 @@ const GROUPS_QUERY = gql`
 export default function FeedClient() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
+  const isHydrated = useAuthStore((s) => s.isHydrated);
   const router = useRouter();
   const { addToast } = useToast();
 
@@ -62,11 +63,21 @@ export default function FeedClient() {
   }, [addToast]);
 
   useEffect(() => {
+    if (!isHydrated) return;
     if (!token) { router.push('/login'); return; }
     loadData();
-  }, [token, router, loadData]);
+  }, [token, isHydrated, router, loadData]);
 
-  if (!token) return null;
+  if (!isHydrated || !token) {
+    return (
+      <div className="min-h-screen bg-surface flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
+          <span className="text-on-surface-variant font-small">Loading…</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

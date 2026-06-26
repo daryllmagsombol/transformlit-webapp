@@ -122,16 +122,36 @@ Full-stack audit found 25+ issues across backend, frontend, Docker, Terraform, a
 | Item | Status |
 |---|---|
 | Apollo SSR | Pages use `force-dynamic` — public pages SSR, auth pages CSR (production standard) |
-| Full feature pages (groups, friends, books, chat) | Stubs present — Apollo queries ready, deferred for post-deploy iteration |
+| Full feature pages (groups, friends, books, chat) | Partially done — Feed ✅, Groups ✅, Books ✅. Friends + Chat still stubs |
 | `RolesGuard` + `@Roles()` | Declared but not wired to admin mutations yet (security hardening phase) |
+
+### Auth Hardening (2026-06-26)
+
+Implemented automatic JWT refresh and Zustand hydration guards to fix the logout-after-refresh bug.
+
+| Change | File(s) | Notes |
+|---|---|---|
+| **Apollo error link** | `apps/web/src/lib/apollo-client.ts` | Intercepts `UNAUTHENTICATED` / 401 errors, calls `refreshToken` mutation, retries the failed request once, and redirects to `/login` on failure. Deduplicates concurrent refresh attempts. |
+| **Proactive refresh** | `apps/web/src/lib/apollo-client.ts` | Refreshes the access token ~2 minutes before the 15-minute expiry on the next GraphQL operation. |
+| **Hydration guard** | `apps/web/src/store/auth.ts`, `feed/books/groups-client.tsx` | Added `isHydrated` state so protected pages no longer redirect to `/login` before Zustand rehydrates the persisted token. |
+| **Token helpers** | `apps/web/src/lib/auth.ts` | Centralized access/refresh token localStorage access + JWT decode + expiry checks. |
+| **JWT secret** | `apps/api/src/auth/auth.module.ts`, `jwt.strategy.ts` | Removed `dev-secret` fallback; `JWT_SECRET` is now required (`getOrThrow`). |
+| **OAuth URL cleanup** | `apps/web/src/app/login/login-form.tsx` | OAuth callback now uses `router.replace('/feed')` so tokens are not retained in the `/login` browser history entry. |
+
+**Remaining security risks & recommended follow-up:**
+1. **Tokens still live in `localStorage`** — XSS can steal them. Long-term, move the refresh token to an `httpOnly`, `Secure`, `SameSite=Lax` cookie and keep only the short-lived access token in memory.
+2. **OAuth tokens still pass through the redirect URL** — server logs, referrer headers, and analytics may capture them. Replace the query-param redirect with either (a) `httpOnly` cookies set by the backend callback, or (b) a short-lived one-time code exchanged by the frontend.
+3. **No server-side logout** — `clearAuth()` only clears client storage. Add a `logout` mutation that revokes the current refresh token family in Postgres.
+4. **No rate limiting / lockout** — Add rate limiting to `loginLocal`, `registerLocal`, and `refreshToken` to mitigate brute-force and token reuse.
+5. **CSRF** — Not currently relevant because auth is bearer-token-in-header, but required if cookies are adopted.
 
 ### Build Verification (post-fix)
 | Check | Result |
 |---|---|
 | API `tsc --noEmit` | 0 errors |
 | API `nest build` (SWC) | 49 files, 98ms |
-| Next.js `next build` | Passes with `force-dynamic` |
-| Prisma `prisma generate` | 14 models generated |
+| Web `tsc --noEmit` | 0 errors |
+| Next.js `next build` | Passes |
 
 ### Feed Page Implementation (2026-06-25)
 
@@ -168,6 +188,92 @@ Extracted duplicated patterns into shared components, utilities, and constants. 
 | **`page.tsx`** (home) — replaced `btn-primary`/`btn-secondary` classes with inline MD3-styled buttons | page.tsx | 8 |
 
 **Result**: All 3 packages build clean. Every route now renders with the unified MD3 design system — no more old `brand`/`ink`/`border` tokens in any page component.
+
+### Groups Page UI + Functionality (2026-06-26)
+
+Built a full Groups page (`/groups`) replicating the HTML mockup with MD3 design tokens and real backend data.
+
+#### Schema Changes
+- Added `GroupCategory` enum (`BIBLICAL_STUDIES`, `MODERN_FICTION`, `HISTORICAL`, `PHILOSOPHY`, `YOUNG_ADULT`)
+- Added fields to `Group` model: `category` (nullable), `coverImageUrl` (nullable), `featured` (boolean, default false)
+
+#### Backend (NestJS / GraphQL)
+| Change | Details |
+|---|---|
+| **Group entity** | Registered `GroupCategory` enum, exposed new fields in GraphQL object |
+| **Field resolver** | `memberCount` computed via `countActiveMembers()` — counts ACTIVE GroupMember records |
+| **New query `myGroups`** | Returns groups the current user is an ACTIVE member of |
+| **New query `discoverGroups(category?)`** | Returns public groups the user has NOT joined, filterable by category, sorted by featured first |
+| **Join mutation** | `joinGroup(groupId)` — upserts GroupMember, sets ACTIVE if public, PENDING if private |
+| **Service refactor** | Extracted `groupInclude()` and `mapGroup()` helpers for DRY query building |
+
+#### Seed Data
+- 7 groups with categories, cover images, and featured flags matching the HTML design
+- 10 fake users created for realistic membership counts (7–8 members per group)
+- Admin is OWNER of all groups, test user (Sarah) is MEMBER of 2 groups
+
+#### Frontend
+| Component | Location | Purpose |
+|---|---|---|
+| `GroupCard` | `components/ui/group-card.tsx` | Bento-grid card: cover image, name, member count, description, "Open Circle" |
+| `CategoryChip` | `components/ui/category-chip.tsx` | Filter chip: icon + label, active/inactive states |
+| `FeaturedGroupCard` | `components/ui/featured-group-card.tsx` | Large "Editor's Choice" card with image overlay badge |
+| `CompactGroupCard` | `components/ui/compact-group-card.tsx` | Side discovery card with colored icon, name, subtitle |
+| `groups-client.tsx` | `app/groups/groups-client.tsx` | Full page: hero, active groups grid, discover section with category filters |
+| `[slug]/page.tsx` | `app/groups/[slug]/page.tsx` | Group detail stub |
+
+#### CSS Utilities Added
+- `.no-scrollbar` — hide scrollbar in category chip row
+- `.bento-grid` — auto-fill grid with 300px min columns
+
+### Books Page UI (2026-06-26)
+
+Built the full Books Library page (`/books`) matching the provided HTML mockup with MD3 tokens, real GraphQL data, and responsive layout.
+
+#### Frontend
+| Component | Location | Purpose |
+|---|---|---|
+| `BookCard` | `components/ui/book-card.tsx` | Grid card: 2/3 cover, Community/Premium badge, genre label, title, author, price/FREE, Read/Buy action |
+| `BookCardSkeleton` | `components/ui/book-card.tsx` | Loading placeholder for the browse grid |
+| `ReadingProgressCard` | `components/ui/reading-progress-card.tsx` | Horizontal-scroll "Currently Reading" card with cover, %, page progress bar, Continue CTA |
+| `books-client.tsx` | `app/books/books-client.tsx` | Full page: hero reading list, browse filters/sort, bento grid, empty state, mobile bottom nav + FAB |
+
+#### Data Flow
+- `BOOKS_QUERY` calls the `books` GraphQL query returning all `Book` fields (`id`, `title`, `author`, `coverUrl`, `price`, `currency`, `accessLevel`, `status`, `totalPages`, `createdAt`, etc.).
+- Browse grid filters by `accessLevel` (All / Community = FREE / Premium = RESTRICTED) and sorts by newest, title A-Z, or price.
+- "Currently Reading" uses two hardcoded mock cards from the HTML mockup (`The Architect of Thought`, `Quiet Echoes`) for MVP; real `readProgress` integration can replace this later.
+
+#### Interactions
+- **Free books**: "Read" outline button (opens reader toast: "Reader opening soon.").
+- **Premium/paid books**: "Buy" filled button shows toast "Paid books coming soon." per MEMORY.md decision that paid books are Coming Soon only in MVP.
+- **FAB** (+ icon): triggers the same reader toast for quick progress tracking.
+- **Load more**: no pagination yet; shows "No more books to load." info toast.
+
+#### Responsive Layout
+- Uses `AuthenticatedLayout` → `AppShell` for topbar + sidebar consistency (matches Groups page).
+- Mobile adds a fixed bottom nav and FAB inside the page, matching the HTML mockup.
+- Browse grid: `grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5` with `gap-4 md:gap-6`.
+
+### Books Seed Data (2026-06-26)
+
+Added seed data for the MOVE Discipleship Program book series to `apps/api/prisma/seed.ts`:
+
+| Book | Subtitle | Access | Status | Pages |
+|---|---|---|---|---|
+| Book 1: Usbong | Salvation | FREE | PUBLISHED | 120 |
+| Book 2: Usad | Spiritual Disciplines | FREE | PUBLISHED | 140 |
+| Book 3: Unlad | Servant-Leadership | FREE | PUBLISHED | 160 |
+| Book 4: Ugnay | Systematic Theology | FREE | PUBLISHED | 280 |
+
+**Field mapping to current schema:**
+- `name` → `Book.title`
+- `description` + `content` + `subtitle` → `Book.description`
+- `author_id` ignored; `createdById` set to seeded admin user
+- `order` ignored (current schema has no order field; books seed in sequence)
+- `logo_name` / `cover_name` → not stored; placeholder Unsplash `coverUrl` used for seed UI
+- `accessLevel: FREE`, `status: PUBLISHED`
+
+Run seed with: `pnpm exec prisma db seed` (from `apps/api/`).
 
 ## 🔮 Future: Microservice Extraction
 
