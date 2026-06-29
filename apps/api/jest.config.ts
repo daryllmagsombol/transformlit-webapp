@@ -6,6 +6,7 @@ export default {
   collectCoverageFrom: ['**/*.(t|j)s'],
   coverageDirectory: '../coverage',
   testEnvironment: 'node',
+  passWithNoTests: true,
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
   },

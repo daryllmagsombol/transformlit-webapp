@@ -13,7 +13,7 @@ export default {
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   testRegex: '.*\\.spec\\.ts$',
-  collectCoverageFrom: ['src/**/*.ts', '!src/**/__tests__/**', '!src/enums.ts', '!src/types/**'],
+  collectCoverageFrom: ['src/**/*.ts', '!src/**/__tests__/**', '!src/types/**'],
   coverageDirectory: 'coverage',
   coverageThreshold: {
     global: {
