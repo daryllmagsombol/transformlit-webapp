@@ -3,6 +3,7 @@ import { createMockUser, MockUser } from './create-mock-user';
 
 export interface MockGroupMember {
   id: string;
+  groupId: string;
   userId: string;
   user: MockUser;
   role: 'OWNER' | 'MEMBER';
@@ -32,9 +33,10 @@ export function createMockGroup(
   overrides: Partial<MockGroup> = {},
 ): MockGroup {
   groupCounter++;
+  const groupId = randomUUID();
   const creator = overrides.createdBy ?? createMockUser();
   return {
-    id: randomUUID(),
+    id: groupId,
     name: `Test Group ${groupCounter}`,
     slug: `test-group-${groupCounter}`,
     description: `Description for test group ${groupCounter}`,
@@ -47,6 +49,7 @@ export function createMockGroup(
     members: [
       {
         id: randomUUID(),
+        groupId,
         userId: creator.id,
         user: creator,
         role: 'OWNER',

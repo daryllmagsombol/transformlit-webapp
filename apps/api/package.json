@@ -11,6 +11,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
+    "test:coverage": "jest --coverage",
     "test:integration": "jest --config jest.integration.config.ts",
     "clean": "rm -rf dist",
     "db:generate": "prisma generate --schema=prisma/schema.prisma",

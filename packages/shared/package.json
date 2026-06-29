@@ -9,7 +9,8 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "NODE_OPTIONS='--experimental-vm-modules' jest"
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage"
   },
   "dependencies": {
     "zod": "^4.0.0"
