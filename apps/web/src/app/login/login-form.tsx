@@ -35,6 +35,8 @@ export default function LoginForm() {
   const token = useAuthStore((s) => s.token);
   const { addToast } = useToast();
 
+  const isHydrated = useAuthStore((s) => s.isHydrated);
+
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [oauthHandled, setOauthHandled] = useState(false);
@@ -96,6 +98,13 @@ export default function LoginForm() {
       }
     })();
   }, [searchParams, token, oauthHandled, router, setAuth, addToast]);
+
+  /* ---------- Redirect if already authenticated ---------- */
+  useEffect(() => {
+    if (isHydrated && token) {
+      router.replace('/feed');
+    }
+  }, [isHydrated, token, router]);
 
   /* ---------- Submit handler ---------- */
 

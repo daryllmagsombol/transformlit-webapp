@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useForm } from 'react-hook-form';
@@ -30,6 +30,8 @@ type RegisterFormValues = z.infer<typeof registerSchema>;
 export default function RegisterForm() {
   const router = useRouter();
   const setAuth = useAuthStore((s) => s.setAuth);
+  const token = useAuthStore((s) => s.token);
+  const isHydrated = useAuthStore((s) => s.isHydrated);
   const { addToast } = useToast();
 
   const [loading, setLoading] = useState(false);
@@ -44,6 +46,13 @@ export default function RegisterForm() {
     mode: 'onSubmit',
     reValidateMode: 'onChange',
   });
+
+  /* ---------- Redirect if already authenticated ---------- */
+  useEffect(() => {
+    if (isHydrated && token) {
+      router.replace('/feed');
+    }
+  }, [isHydrated, token, router]);
 
   /* ---------- Submit handler ---------- */
 

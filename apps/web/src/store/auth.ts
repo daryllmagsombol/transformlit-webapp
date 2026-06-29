@@ -39,9 +39,13 @@ export const useAuthStore = create<AuthStore>()(
       name: 'auth-storage',
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ user: state.user, token: state.token }),
-      onRehydrateStorage: () => (state, error) => {
-        if (!error && state) {
-          useAuthStore.getState().setHydrated(true);
+      onRehydrateStorage: () => (state) => {
+        // Always mark as hydrated after rehydration, even on error,
+        // so the UI never gets stuck in a loading state.
+        // If rehydration fails, token defaults to null and the user
+        // is cleanly redirected to /login instead of being stuck.
+        useAuthStore.getState().setHydrated(true);
+        if (state) {
           const currentToken = useAuthStore.getState().token;
           if (currentToken) setAccessToken(currentToken);
         }
