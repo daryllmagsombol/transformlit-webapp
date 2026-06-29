@@ -10,5 +10,6 @@ export default {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
     '^(\\.{1,2}/.*)\\.js$': '$1',
+    '^@transformlit/shared$': '<rootDir>/../../../packages/shared/src/index.ts',
   },
 };
