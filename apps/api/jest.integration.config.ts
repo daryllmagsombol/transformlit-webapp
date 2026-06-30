@@ -8,8 +8,11 @@ const config: Config = {
   testEnvironment: 'node',
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/../src/$1',
+    '^(\\.{1,2}/.*)\\.js$': '$1',
+    '^@transformlit/shared$': '<rootDir>/../../../packages/shared/src/index.ts',
   },
   testTimeout: 60000,
+  forceExit: true,
 };
 
 export default config;
