@@ -99,13 +99,7 @@ describe('FeedClient', () => {
       expect(screen.getByText('Loading…')).toBeInTheDocument();
     });
 
-    it('shows loading spinner when no token', () => {
-      mockAuthState = { user: null, token: null, isHydrated: true };
-      render(<FeedClient />);
-      expect(screen.getByText('Loading…')).toBeInTheDocument();
-    });
-
-    it('redirects to login when no token and hydrated', () => {
+    it('redirects to login when hydrated but no token instead of showing spinner', () => {
       mockAuthState = { user: null, token: null, isHydrated: true };
       render(<FeedClient />);
       expect(mockPush).toHaveBeenCalledWith('/login');

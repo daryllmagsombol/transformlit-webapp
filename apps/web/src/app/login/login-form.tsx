@@ -99,13 +99,6 @@ export default function LoginForm() {
     })();
   }, [searchParams, token, oauthHandled, router, setAuth, addToast]);
 
-  /* ---------- Redirect if already authenticated ---------- */
-  useEffect(() => {
-    if (isHydrated && token) {
-      router.replace('/feed');
-    }
-  }, [isHydrated, token, router]);
-
   /* ---------- Submit handler ---------- */
 
   const onSubmit = useCallback(

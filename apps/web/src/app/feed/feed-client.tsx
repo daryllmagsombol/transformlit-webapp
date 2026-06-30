@@ -68,7 +68,7 @@ export default function FeedClient() {
     loadData();
   }, [token, isHydrated, router, loadData]);
 
-  if (!isHydrated || !token) {
+  if (!isHydrated) {
     return (
       <div className="min-h-screen bg-surface flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
@@ -77,6 +77,11 @@ export default function FeedClient() {
         </div>
       </div>
     );
+  }
+
+  if (!token) {
+    router.push('/login');
+    return null;
   }
 
   return (

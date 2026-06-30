@@ -368,7 +368,7 @@ describe('LoginForm', () => {
   });
 
   describe('already authenticated', () => {
-    it('redirects to /feed when user is already logged in', () => {
+    it('does not auto-redirect from the form component', () => {
       mockAuthState = {
         user: { id: '1' },
         token: 'existing-token',
@@ -377,7 +377,7 @@ describe('LoginForm', () => {
       };
 
       render(<LoginForm />);
-      expect(mockReplace).toHaveBeenCalledWith('/feed');
+      expect(mockReplace).not.toHaveBeenCalled();
     });
   });
 });
