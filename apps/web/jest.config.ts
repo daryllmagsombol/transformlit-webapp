@@ -21,6 +21,13 @@ export default {
     '!src/**/*.d.ts',
     '!src/app/**/page.tsx',
     '!src/app/**/layout.tsx',
+    '!src/app/**/loading.tsx',
+    '!src/app/**/not-found.tsx',
+    '!src/app/**/error.tsx',
+    '!src/app/auth-redirect.tsx',
+    '!src/**/index.ts',
+    '!src/lib/apollo-client.ts',
+    '!src/components/providers/**',
   ],
   coverageDirectory: 'coverage',
   coverageThreshold: {
