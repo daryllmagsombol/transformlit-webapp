@@ -39,31 +39,25 @@ export const useAuthStore = create<AuthStore>()(
       name: 'auth-storage',
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ user: state.user, token: state.token }),
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<AuthStore> | undefined;
+        const current = currentState as AuthStore;
+
+        // If current state has a token (set by setAuth before rehydration completed),
+        // prefer it over the persisted state to avoid overwriting fresh auth data
+        if (current.token) {
+          return { ...current, ...persisted, user: current.user, token: current.token, isHydrated: true };
+        }
+
+        // Normal merge: persisted state fills in missing values, mark hydrated
+        return { ...current, ...persisted, isHydrated: true };
+      },
       onRehydrateStorage: () => (state, error) => {
         if (error) {
           console.error('Failed to rehydrate auth store:', error);
-          useAuthStore.getState().setHydrated(true);
-          return;
         }
-
-        const currentState = useAuthStore.getState();
-
-        if (currentState.token && state?.token && currentState.token !== state.token) {
-          useAuthStore.getState().setHydrated(true);
-          return;
-        }
-
-        if (state) {
-          useAuthStore.setState({
-            user: state.user,
-            token: state.token,
-            isHydrated: true,
-          });
-          if (state.token) {
-            setAccessToken(state.token);
-          }
-        } else {
-          useAuthStore.getState().setHydrated(true);
+        if (state?.token) {
+          setAccessToken(state.token);
         }
       },
     },

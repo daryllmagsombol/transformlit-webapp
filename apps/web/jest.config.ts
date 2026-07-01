@@ -15,6 +15,7 @@ export default {
     '\\.(jpg|jpeg|png|gif|webp|svg)$': '<rootDir>/test/__mocks__/fileMock.ts',
   },
   testRegex: '.*\\.spec\\.(ts|tsx)$',
+  testPathIgnorePatterns: ['/node_modules/', '/e2e/'],
   passWithNoTests: true,
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
