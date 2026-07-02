@@ -36,6 +36,10 @@ jest.mock('../../lib/apollo-client', () => ({
 
 const mockAddToast = jest.fn();
 
+jest.mock('../../components/layout/sidebar', () => ({
+  Sidebar: () => <div data-testid="sidebar" />,
+}));
+
 jest.mock('../../components/ui', () => ({
   useToast: () => ({ addToast: mockAddToast }),
   NavItem: ({ label, href, active }: { label: string; href: string; active?: boolean }) => (
@@ -67,10 +71,6 @@ jest.mock('../../lib/constants', () => ({
     timeLabel: fallbackTime,
   }),
   QUICK_TRACK_CHAPTERS: ['Romans 12', 'Psalms 23'],
-  SIDEBAR_NAV_ITEMS: [
-    { label: 'Feed', href: '/feed', icon: 'dynamic_feed' },
-    { label: 'Friends', href: '/friends', icon: 'group' },
-  ],
   BOTTOM_NAV_ITEMS: [
     { label: 'Feed', href: '/feed', icon: 'dynamic_feed' },
     { label: 'Friends', href: '/friends', icon: 'group' },

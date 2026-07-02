@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { gql } from '@apollo/client';
 import type { GraphQLAnnouncement, GraphQLVerseOfDay, GraphQLGroup } from '@transformlit/shared';
 import { useToast, NavItem, UserAvatar, SkeletonCard } from '../../components/ui';
+import { Sidebar } from '../../components/layout/sidebar';
 import { useAuthStore } from '../../store';
 import { apolloClient } from '../../lib/apollo-client';
 import { timeAgo } from '../../lib/time-ago';
@@ -13,7 +14,6 @@ import {
   getCategoryConfig,
   getGroupMeta,
   QUICK_TRACK_CHAPTERS,
-  SIDEBAR_NAV_ITEMS,
   BOTTOM_NAV_ITEMS,
 } from '../../lib/constants';
 
@@ -112,48 +112,9 @@ export default function FeedClient() {
       </header>
 
       {/* ═══════════════════════════════════════════════════════════
-          SIDE NAV BAR (Desktop)
+          SIDE NAV BAR (Desktop) — shared Sidebar component
           ═══════════════════════════════════════════════════════════ */}
-      <aside className="fixed left-0 top-0 h-full w-[240px] hidden md:flex flex-col bg-surface-container-low dark:bg-surface-container-lowest border-r border-outline-variant pt-16 z-40">
-        <div className="p-6 flex flex-col gap-6 h-full">
-          <div className="flex flex-col gap-1">
-            {SIDEBAR_NAV_ITEMS.map((item) => (
-              <NavItem key={item.href} {...item} active={item.href === '/feed'} variant="sidebar" />
-            ))}
-          </div>
-          {/* Progress Widget */}
-          <div className="mt-4 pt-4 border-t border-outline-variant">
-            <h3 className="font-display text-micro uppercase tracking-widest text-on-surface-variant px-4 mb-3">Your Progress</h3>
-            <div className="bg-paper-warm/50 rounded-lg p-4 border border-outline-variant shadow-sm">
-              <div className="flex justify-between items-end mb-2">
-                <span className="font-small text-small text-on-surface-variant">Yearly Goal</span>
-                <span className="font-headline-h4 text-headline-h4 text-primary">12/24</span>
-              </div>
-              <div className="w-full bg-surface-container-highest h-2 rounded-full overflow-hidden">
-                <div className="bg-brand-orange-dark h-full" style={{ width: '50%' }} />
-              </div>
-              <p className="font-micro text-micro text-on-surface-variant mt-3 italic text-center">
-                &ldquo;Steady steps lead to deep wisdom.&rdquo;
-              </p>
-              <button className="mt-4 w-full py-2 bg-primary text-on-primary rounded-md font-display text-small font-bold flex items-center justify-center gap-2 hover:bg-brand-orange-dark transition-colors active:scale-95">
-                <span className="material-symbols-outlined text-[18px]">auto_stories</span>
-                Track Progress
-              </button>
-            </div>
-          </div>
-          {/* Bottom links */}
-          <div className="mt-auto pb-8 flex flex-col gap-1">
-            <div className="text-on-surface-variant hover:bg-surface-container-highest px-4 py-2 flex items-center gap-3 transition-all cursor-pointer">
-              <span className="material-symbols-outlined">settings</span>
-              <span className="font-micro text-micro uppercase tracking-wider">Settings</span>
-            </div>
-            <div className="text-on-surface-variant hover:bg-surface-container-highest px-4 py-2 flex items-center gap-3 transition-all cursor-pointer">
-              <span className="material-symbols-outlined">help</span>
-              <span className="font-micro text-micro uppercase tracking-wider">Help</span>
-            </div>
-          </div>
-        </div>
-      </aside>
+      <Sidebar />
 
       {/* ═══════════════════════════════════════════════════════════
           MAIN CONTENT
