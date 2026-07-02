@@ -20,6 +20,7 @@ let mockAuthState: Record<string, unknown> = {
 
 jest.mock('../../store', () => ({
   useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector(mockAuthState),
+  useUIStore: (selector: (s: Record<string, unknown>) => unknown) => selector({ sidebarOpen: true, toggleSidebar: jest.fn() }),
 }));
 
 const mockQuery = jest.fn();
@@ -40,8 +41,8 @@ jest.mock('../../components/layout/sidebar', () => ({
   Sidebar: () => <div data-testid="sidebar" />,
 }));
 
-jest.mock('../../components/layout/topbar', () => ({
-  TopBar: () => <div data-testid="topbar" />,
+jest.mock('../../components/layout/bottom-nav', () => ({
+  BottomNav: () => <div data-testid="bottom-nav" />,
 }));
 
 jest.mock('../../components/ui', () => ({

@@ -1,6 +1,6 @@
 # 🎨 Transformlit Design System
 
-Date: 2026-06-25 (revised — added dark mode tokens + mobile-first notes)
+Date: 2026-07-02 (revised — dark mode CSS polish, desktop sidebar toggle, layout consistency)
 
 ## 🧭 Brand Direction
 
@@ -25,15 +25,24 @@ Transformlit is warm, literary, and modern. The visual identity is anchored in t
 
 | Token | Hex | Usage |
 |---|---|---|
-| Surface Dark | `#1A1A1A` | Page background |
-| Surface Raised | `#2C2C2C` | Cards, modals, elevated surfaces |
-| Surface High | `#3E3E3E` | Input backgrounds, tooltips |
+| Background | `#1A1A1A` | Page background |
+| Surface | `#1A1A1A` | General surfaces |
+| Surface Container Low | `#2C2C2C` | Sidebar, cards |
+| Surface Container High | `#3E3E3E` | Elevated surfaces, inputs |
+| Surface Variant | `#3E3E3E` | Category chips, secondary surfaces |
 | Brand Orange | `#F4A11C` | Primary CTAs (same, pops on dark) |
 | Brand Orange Dark | `#D88710` | Hover/pressed states |
-| Ink White | `#F5F5F5` | Primary text in dark mode |
-| Ink Dim | `#B0B0B0` | Secondary text in dark mode |
+| On Surface | `#F5F5F5` | Primary text |
+| On Surface Variant | `#D8C3AE` | Secondary text |
+| On Background | `#F5F5F5` | Body text |
+| Outline | `#A0907E` | Borders, dividers |
+| Outline Variant | `#524434` | Subtle borders |
+| Ink White | `#F5F5F5` | Primary text |
+| Ink Dim | `#B0B0B0` | Secondary text |
 | Accent Teal | `#1F7A6D` | Links, emphasis |
 | Accent Teal Light | `#3AAD99` | Brighter teal for dark backgrounds |
+| Paper | `#1A1A1A` | Page background (paper texture) |
+| Paper Warm | `#2C2C2C` | Card backgrounds |
 
 ### Neutrals
 
@@ -119,11 +128,13 @@ Mobile-first spacing: base spacing on 4px grid. Touch targets minimum 44×44px.
 
 - **Paper Gradient**: `linear-gradient(180deg, #FFF6E8 0%, #FFE8C7 100%)`
 - **Accent Wash**: `radial-gradient(60% 60% at 10% 10%, rgba(244, 161, 28, 0.18), rgba(244, 161, 28, 0) 60%)`
+- **Paper Texture**: Subtle felt texture overlay (`transparenttextures.com/felt-paper.png`) on `var(--color-background)`
 
 ### Dark Mode
 
 - **Surface Gradient**: `linear-gradient(180deg, #1A1A1A 0%, #2C2C2C 100%)`
 - **Accent Wash**: `radial-gradient(60% 60% at 10% 10%, rgba(244, 161, 28, 0.12), rgba(244, 161, 28, 0) 60%)`
+- **Paper Texture**: Dark denim texture overlay (`transparenttextures.com/dark-denim-3.png`) on `var(--color-background)`
 
 ## 📐 Layout
 
@@ -134,6 +145,7 @@ Mobile-first spacing: base spacing on 4px grid. Touch targets minimum 44×44px.
   - **Mobile (< 768px)**: Top bar with hamburger/horizontal nav. Sidebar becomes a bottom sheet / swipeable drawer.
   - **Tablet/Desktop (≥ 768px)**: Persistent left sidebar (240px fixed) + top bar beyond. Content area fills remaining width.
 - **Left sidebar items**: Feed, Friends, Groups, Books.
+- **Sidebar toggle**: Hamburger button in top bar toggles sidebar open/closed on all screen sizes. Sidebar slides with `transition-transform duration-200 ease-out`. Main content padding animates in sync via `transition-all duration-200 ease-out`.
 - **Max content width**: 1200px for main feed/content area.
 
 ### Responsive Breakpoints (Tailwind v4 defaults)
@@ -173,18 +185,24 @@ Mobile-first spacing: base spacing on 4px grid. Touch targets minimum 44×44px.
 
 ### Top Bar
 
-- **Light**: Ink text on paper background.
-- **Dark**: Ink White text on Surface Dark background.
+- **Light**: Ink text on surface background, `shadow-sm`.
+- **Dark**: Ink White text on Surface Dark background, `shadow-sm`.
+- **Padding**: `px-4 md:px-5` (matches sidebar content padding).
 - Right area: user avatar, dropdown menu (profile, settings, logout).
-- Mobile: hamburger icon left, logo center, user avatar right.
+- Hamburger icon left toggles sidebar on all screen sizes (not just mobile).
+- Desktop: center nav links (Feed, Library/Friends/Groups/Books).
 
 ### Sidebar
 
-- **Light**: Paper background with ink dividers (`border-ink/5`).
-- **Dark**: Surface Raised with subtle dividers (`border-white/5`).
-- Active item: orange highlight background + left accent bar (3px).
+- **Light**: Surface container low background with outline-variant border.
+- **Dark**: Surface container lowest background with outline-variant border.
+- **Width**: 240px fixed, slides off-screen via `-translate-x-full` when toggled.
+- **Animation**: `transition-transform duration-200 ease-out`.
+- **Bottom nav**: Settings link, Help link, ThemeToggle (sun/moon icons).
+- Active item: orange highlight background + left accent bar (4px, primary border).
 - Icons: 20px, Grayscale default, color on active.
 - Items: 44px height for touch targets.
+- Mobile overlay: semi-transparent backdrop (`bg-black/30`) when sidebar is open.
 
 ### Modal / Sheet
 
@@ -210,6 +228,7 @@ Mobile-first spacing: base spacing on 4px grid. Touch targets minimum 44×44px.
 | Modal open | 200ms | ease-out | Scale(0.95 → 1) + fade |
 | Loading skeleton | Indefinite | linear | Pulse animation, 1.5s cycle |
 | Theme toggle | 300ms | ease-in-out | Crossfade between themes |
+| Sidebar slide | 200ms | ease-out | Translate in/out + main content padding |
 
 **Respect `prefers-reduced-motion`**: all animations disabled when user preference is set.
 
@@ -295,7 +314,7 @@ export default {
 
 - **Mobile-first**: Design at 375px first. Use `sm:`, `md:`, `lg:` breakpoints to layer complexity.
 - **Touch targets**: Minimum 44×44px for all interactive elements. Buttons, nav items, form controls.
-- **Dark mode**: Toggle via `next-themes`. Use `dark:` prefix in Tailwind for overrides. Prefer CSS variable approach — most components just work.
+- **Dark mode**: Toggle via `next-themes` with hamburger + ThemeToggle in sidebar. Use `dark:` prefix in Tailwind for overrides. Prefer CSS variable approach — most components just work. The `.paper-texture` class uses `var(--color-background)` and switches to a dark texture in `.dark`. All color tokens (surface-variant, on-background, outline) have dark mode overrides in `globals.css`.
 - **Prefer surface backgrounds** over pure white (light) or pure black (dark) to echo the reading theme.
 - **Use teal accent sparingly** for secondary emphasis (links, stats, tabs).
 - **Maintain strong contrast**: ink text over paper/surface backgrounds. Orange for primary actions only — never for decorative elements.

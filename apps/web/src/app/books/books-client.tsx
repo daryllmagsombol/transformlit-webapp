@@ -6,14 +6,12 @@ import { gql } from '@apollo/client';
 import type { GraphQLBook } from '@transformlit/shared';
 import {
   useToast,
-  NavItem,
   BookCard,
   BookCardSkeleton,
   ReadingProgressCard,
 } from '../../components/ui';
 import { useAuthStore } from '../../store';
 import { apolloClient } from '../../lib/apollo-client';
-import { BOTTOM_NAV_ITEMS } from '../../lib/constants';
 
 // ── GraphQL Queries ──────────────────────────────────────────────────────────
 
@@ -281,15 +279,6 @@ export default function BooksClient() {
           </div>
         )}
       </section>
-
-      {/* ═══════════════════════════════════════════════════════════
-          BOTTOM NAV BAR (Mobile Only)
-          ═══════════════════════════════════════════════════════════ */}
-      <nav className="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-2 py-1 md:hidden bg-paper-warm shadow-lg border-t border-outline-variant">
-        {BOTTOM_NAV_ITEMS.map((item) => (
-          <NavItem key={item.href} {...item} active={item.href === '/books'} variant="bottom" />
-        ))}
-      </nav>
 
       {/* ═══════════════════════════════════════════════════════════
           FAB

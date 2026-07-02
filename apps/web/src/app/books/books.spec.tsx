@@ -60,12 +60,7 @@ jest.mock('../../components/ui', () => ({
   ),
 }));
 
-jest.mock('../../lib/constants', () => ({
-  BOTTOM_NAV_ITEMS: [
-    { label: 'Feed', href: '/feed', icon: 'dynamic_feed' },
-    { label: 'Books', href: '/books', icon: 'auto_stories' },
-  ],
-}));
+// BOTTOM_NAV_ITEMS mock removed — now in shared BottomNav (AppShell)
 
 import BooksClient from './books-client';
 
@@ -441,15 +436,5 @@ describe('BooksClient', () => {
     });
   });
 
-  describe('bottom navigation', () => {
-    it('renders bottom nav items', async () => {
-      mockQuery.mockResolvedValueOnce({ data: { books: [] } });
-      render(<BooksClient />);
-
-      await waitFor(() => {
-        expect(screen.getByText('Feed')).toBeInTheDocument();
-        expect(screen.getByText('Books')).toBeInTheDocument();
-      });
-    });
-  });
+  // bottom navigation moved to shared BottomNav (AppShell)
 });

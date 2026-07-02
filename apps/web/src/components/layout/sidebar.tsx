@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useUIStore } from '../../store';
@@ -10,6 +11,18 @@ import { ThemeToggle } from '../ui/theme-toggle';
 export function Sidebar() {
   const pathname = usePathname();
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
+  const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
+
+  // Open sidebar on desktop, close on mobile — respond to resize across breakpoint
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const handler = (e: MediaQueryListEvent | MediaQueryList) => {
+      setSidebarOpen(e.matches);
+    };
+    handler(mq); // set initial state
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, [setSidebarOpen]);
 
   return (
     <>
@@ -17,7 +30,7 @@ export function Sidebar() {
       {sidebarOpen && (
         <div
           className="fixed inset-0 bg-black/30 z-40 md:hidden"
-          onClick={() => useUIStore.getState().setSidebarOpen(false)}
+          onClick={() => setSidebarOpen(false)}
         />
       )}
 
@@ -26,8 +39,8 @@ export function Sidebar() {
           border-r border-outline-variant
           transition-transform duration-200 ease-out
           w-[240px] flex flex-col
-          md:translate-x-0
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+          ${sidebarOpen ? 'md:translate-x-0' : 'md:-translate-x-full'}
         `}
       >
         {/* Main nav */}

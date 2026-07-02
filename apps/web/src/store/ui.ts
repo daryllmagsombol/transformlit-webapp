@@ -13,7 +13,7 @@ interface UIStore {
 export const useUIStore = create<UIStore>((set) => ({
   theme: 'system',
   setTheme: (theme) => set({ theme }),
-  sidebarOpen: true,
+  sidebarOpen: false,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
 }));

@@ -188,6 +188,9 @@
   --color-surface-container-highest: #3E3E3E;
   --color-on-surface: #f5f5f5;
   --color-on-surface-variant: #d8c3ae;
+  --color-surface-variant: #3E3E3E;
+  --color-on-background: #f5f5f5;
+  --color-outline: #a0907e;
   --color-outline-variant: #524434;
   --color-ink-black: #F5F5F5;
   --color-ink-soft: #B0B0B0;
@@ -247,8 +250,12 @@ button, a, input, select, textarea {
 
 /* Paper texture background */
 .paper-texture {
-  background-color: #fff8f4;
+  background-color: var(--color-background);
   background-image: url("https://www.transparenttextures.com/patterns/felt-paper.png");
+}
+
+.dark .paper-texture {
+  background-image: url("https://www.transparenttextures.com/patterns/dark-denim-3.png");
 }
 
 /* Custom scrollbar */

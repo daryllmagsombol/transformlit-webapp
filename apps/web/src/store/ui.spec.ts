@@ -4,7 +4,7 @@ describe('UI Store', () => {
   beforeEach(() => {
     useUIStore.setState({
       theme: 'system',
-      sidebarOpen: true,
+      sidebarOpen: false,
     });
   });
 
@@ -13,8 +13,8 @@ describe('UI Store', () => {
       expect(useUIStore.getState().theme).toBe('system');
     });
 
-    it('has sidebarOpen set to true', () => {
-      expect(useUIStore.getState().sidebarOpen).toBe(true);
+    it('has sidebarOpen set to false (mobile-first default)', () => {
+      expect(useUIStore.getState().sidebarOpen).toBe(false);
     });
   });
 
@@ -37,21 +37,21 @@ describe('UI Store', () => {
   });
 
   describe('toggleSidebar', () => {
-    it('toggles sidebarOpen from true to false', () => {
-      useUIStore.getState().toggleSidebar();
-      expect(useUIStore.getState().sidebarOpen).toBe(false);
-    });
-
     it('toggles sidebarOpen from false to true', () => {
-      useUIStore.setState({ sidebarOpen: false });
       useUIStore.getState().toggleSidebar();
       expect(useUIStore.getState().sidebarOpen).toBe(true);
+    });
+
+    it('toggles sidebarOpen from true to false', () => {
+      useUIStore.setState({ sidebarOpen: true });
+      useUIStore.getState().toggleSidebar();
+      expect(useUIStore.getState().sidebarOpen).toBe(false);
     });
 
     it('toggles back and forth', () => {
       useUIStore.getState().toggleSidebar();
       useUIStore.getState().toggleSidebar();
-      expect(useUIStore.getState().sidebarOpen).toBe(true);
+      expect(useUIStore.getState().sidebarOpen).toBe(false);
     });
   });
 

@@ -82,6 +82,25 @@ export default function GroupsClient() {
     loadData();
   }, [token, isHydrated, router, loadData]);
 
+  const handleJoinGroup = useCallback(
+    async (groupId: string) => {
+      setJoining((prev) => new Set(prev).add(groupId));
+      try {
+        await apolloClient.mutate({
+          mutation: JOIN_GROUP_MUTATION,
+          variables: { groupId },
+        });
+        addToast('Joined group! Welcome aboard.', 'success');
+        loadData();
+      } catch {
+        addToast('Failed to join group. Please try again.', 'error');
+      } finally {
+        setJoining((prev) => { const next = new Set(prev); next.delete(groupId); return next; });
+      }
+    },
+    [addToast, loadData],
+  );
+
   if (!isHydrated || !token) {
     return (
       <div className="min-h-screen bg-surface flex items-center justify-center">
@@ -92,25 +111,6 @@ export default function GroupsClient() {
       </div>
     );
   }
-
-  const handleJoinGroup = useCallback(
-    async (groupId: string) => {
-      setJoining((prev) => new Set(prev).add(groupId));
-      try {
-        await apolloClient.mutate({
-          mutation: JOIN_GROUP_MUTATION,
-          variables: { groupId },
-        });
-        addToast('Joined group! Welcome aboard.', 'success');
-        loadData(); // refresh lists
-      } catch {
-        addToast('Failed to join group. Please try again.', 'error');
-      } finally {
-        setJoining((prev) => { const next = new Set(prev); next.delete(groupId); return next; });
-      }
-    },
-    [addToast, loadData],
-  );
 
   if (!token) return null;
 

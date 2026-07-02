@@ -2,14 +2,23 @@
 
 import { Sidebar } from './sidebar';
 import { TopBar } from './topbar';
+import { BottomNav } from './bottom-nav';
+import { useUIStore } from '../../store';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const sidebarOpen = useUIStore((s) => s.sidebarOpen);
+
   return (
     <div className="min-h-dvh bg-surface dark:bg-surface-dark paper-texture">
       <TopBar />
       <Sidebar />
-      <main className="pt-16 pb-24 md:pb-8 md:pl-[240px] min-h-dvh">
-        <div className="max-w-[1200px] mx-auto px-4 md:px-6">
+      <BottomNav />
+      <main
+        className={`pt-20 pb-24 md:pb-8 min-h-screen transition-all duration-200 ease-out ${
+          sidebarOpen ? 'md:pl-[240px]' : 'md:pl-0'
+        }`}
+      >
+        <div className="max-w-[1200px] mx-auto px-4 md:px-5">
           {children}
         </div>
       </main>

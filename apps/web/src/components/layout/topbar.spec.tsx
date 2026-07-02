@@ -26,11 +26,11 @@ jest.mock('../../store', () => {
 
 describe('TopBar', () => {
   describe('brand', () => {
-    it('renders the brand name as a link to /feed', () => {
+    it('renders the brand name as a heading', () => {
       render(<TopBar />);
       const brand = screen.getByText('Transformlit');
       expect(brand).toBeInTheDocument();
-      expect(brand.closest('a')).toHaveAttribute('href', '/feed');
+      expect(brand.tagName).toBe('H1');
     });
   });
 
@@ -48,15 +48,14 @@ describe('TopBar', () => {
   });
 
   describe('desktop nav', () => {
-    it('renders all navigation items', () => {
+    it('renders all navigation items (Feed, Library, Community)', () => {
       render(<TopBar />);
       const header = screen.getByRole('banner');
       expect(header).toBeInTheDocument();
       const nav = header.querySelector('nav');
       expect(nav?.textContent).toContain('Feed');
-      expect(nav?.textContent).toContain('Friends');
-      expect(nav?.textContent).toContain('Groups');
-      expect(nav?.textContent).toContain('Books');
+      expect(nav?.textContent).toContain('Library');
+      expect(nav?.textContent).toContain('Community');
     });
 
     it('highlights the active nav item', () => {
@@ -85,11 +84,10 @@ describe('TopBar', () => {
   });
 
   describe('user avatar', () => {
-    it('renders Login link when user is not authenticated', () => {
+    it('renders UserAvatar with fallback initial', () => {
       render(<TopBar />);
-      const loginLink = screen.getByText('Login');
-      expect(loginLink).toBeInTheDocument();
-      expect(loginLink.closest('a')).toHaveAttribute('href', '/login');
+      // UserAvatar renders 'U' as fallback when no displayName
+      expect(screen.getByText('U')).toBeInTheDocument();
     });
   });
 });

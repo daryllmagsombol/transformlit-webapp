@@ -4,7 +4,12 @@ import { useUIStore, useAuthStore } from '../../store';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { UserAvatar } from '../ui/user-avatar';
-import { SIDEBAR_NAV_ITEMS } from '../../lib/constants';
+
+const NAV_LINKS = [
+  { label: 'Feed', href: '/feed' },
+  { label: 'Library', href: '/books' },
+  { label: 'Community', href: '/groups' },
+] as const;
 
 export function TopBar() {
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
@@ -12,48 +17,50 @@ export function TopBar() {
   const pathname = usePathname();
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 h-16 bg-surface dark:bg-surface-dark border-b border-outline-variant flex items-center justify-between px-4 md:px-6">
+    <header className="flex justify-between items-center h-16 px-4 md:px-5 w-full fixed top-0 bg-surface dark:bg-surface-dark z-50 shadow-sm">
       {/* Left: hamburger + brand */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-4">
         <button
           onClick={toggleSidebar}
-          className="p-2 text-on-surface-variant hover:text-on-surface md:hidden"
+          className="material-symbols-outlined text-primary cursor-pointer p-1"
           aria-label="Toggle sidebar"
         >
-          <span className="material-symbols-outlined">menu</span>
+          menu
         </button>
-        <Link href="/feed" className="font-display text-headline-h3 font-bold text-primary dark:text-primary-fixed">
+        <h1 className="font-display text-headline-h3 font-bold text-primary dark:text-primary-fixed">
           Transformlit
-        </Link>
+        </h1>
       </div>
 
       {/* Center: desktop nav */}
-      <nav className="hidden md:flex items-center gap-8">
-        {SIDEBAR_NAV_ITEMS.map((item) => {
-          const isActive = pathname.startsWith(item.href);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`font-display text-headline-h4 transition-colors ${
-                isActive
-                  ? 'text-primary font-bold border-b-2 border-primary py-2'
-                  : 'text-on-surface-variant font-medium hover:text-primary py-2'
-              }`}
-            >
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
+      <div className="hidden md:flex items-center gap-8">
+        <nav className="flex gap-6 items-center">
+          {NAV_LINKS.map(({ label, href }) => {
+            const isActive = pathname.startsWith(href);
+            return (
+              <Link
+                key={href}
+                href={href}
+                className={`font-display text-headline-h4 ${
+                  isActive
+                    ? 'text-primary font-bold border-b-2 border-primary py-2'
+                    : 'text-on-surface-variant font-medium hover:text-primary transition-colors py-2'
+                }`}
+              >
+                {label}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
 
       {/* Right: search + notifications + avatar */}
       <div className="flex items-center gap-3">
         {/* Search pill */}
-        <div className="hidden sm:flex bg-surface-container-high border border-outline-variant rounded-full items-center gap-2 px-4 py-1.5">
+        <div className="hidden sm:flex bg-surface-container-high px-4 py-1.5 rounded-full items-center gap-2 border border-outline-variant">
           <span className="material-symbols-outlined text-on-surface-variant text-[20px]">search</span>
           <input
-            className="bg-transparent border-none focus:ring-0 font-small text-small p-0 w-40 placeholder-on-surface-variant/60"
+            className="bg-transparent border-none focus:ring-0 text-small font-small p-0 w-48 placeholder-on-surface-variant/60"
             placeholder="Search scripture, books..."
             type="text"
           />
@@ -61,20 +68,14 @@ export function TopBar() {
 
         {/* Notifications */}
         <button
-          className="p-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded-full transition-colors"
+          className="material-symbols-outlined text-on-surface-variant cursor-pointer p-2 hover:bg-surface-container rounded-full transition-colors"
           aria-label="Notifications"
         >
-          <span className="material-symbols-outlined">notifications</span>
+          notifications
         </button>
 
         {/* User avatar */}
-        {user ? (
-          <UserAvatar avatarUrl={user.avatarUrl} displayName={user.displayName} />
-        ) : (
-          <Link href="/login" className="btn-primary text-small py-2 px-4">
-            Login
-          </Link>
-        )}
+        <UserAvatar avatarUrl={user?.avatarUrl} displayName={user?.displayName} />
       </div>
     </header>
   );

@@ -51,7 +51,7 @@ describe('AppShell', () => {
   it('applies responsive layout classes to main', () => {
     render(<AppShell><div>Content</div></AppShell>);
     const main = screen.getByRole('main');
-    expect(main.className).toContain('pt-16');
+    expect(main.className).toContain('pt-20');
     expect(main.className).toContain('md:pl-[240px]');
   });
 
