@@ -13,6 +13,16 @@ jest.mock('next/navigation', () => ({
   usePathname: () => '/feed',
 }));
 
+var mockTheme = 'light';
+
+jest.mock('next-themes', () => ({
+  useTheme: () => ({
+    theme: mockTheme,
+    setTheme: jest.fn(),
+    resolvedTheme: mockTheme,
+  }),
+}));
+
 jest.mock('../../store', () => {
   mockSetSidebarOpen = jest.fn();
   const state = { sidebarOpen: true, toggleSidebar: jest.fn(), setSidebarOpen: mockSetSidebarOpen };
