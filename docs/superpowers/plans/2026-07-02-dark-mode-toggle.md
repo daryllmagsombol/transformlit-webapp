@@ -210,3 +210,56 @@ git commit -m "feat: add dark mode toggle to sidebar"
 
 - [ ] Run full test suite: `npx jest apps/web --no-coverage`
 - [ ] Start dev server and verify: sun icon in dark mode, moon in light mode, toggle works
+
+---
+
+### Task 3: Refactor feed page to use shared Sidebar
+
+**Files:**
+- Modify: `apps/web/src/app/feed/feed-client.tsx`
+- Modify: `apps/web/src/app/feed/feed.spec.tsx`
+
+- [ ] Import `Sidebar` from `../../components/layout/sidebar` instead of inline sidebar code
+- [ ] Remove duplicate sidebar markup (~46 lines) and replace with `<Sidebar />`
+- [ ] Mock `Sidebar` component in `feed.spec.tsx`
+- [ ] Remove unused `SIDEBAR_NAV_ITEMS` import
+- [ ] Commit
+
+---
+
+### Task 4: Desktop hamburger sidebar toggle with animation
+
+**Files:**
+- Modify: `apps/web/src/components/layout/topbar.tsx`
+- Modify: `apps/web/src/components/layout/sidebar.tsx`
+- Modify: `apps/web/src/components/layout/app-shell.tsx`
+- Modify: `apps/web/src/app/feed/feed-client.tsx`
+- Modify: `apps/web/src/components/layout/app-shell.spec.tsx`
+
+- [ ] **TopBar**: Remove `md:hidden` from hamburger, change `border-b` to `shadow-sm`, `md:px-6` to `md:px-5`
+- [ ] **Sidebar**: Remove `md:translate-x-0`, use conditional classes based on `sidebarOpen`
+- [ ] **AppShell**: Import `useUIStore`, make `md:pl-[240px]` conditional, add `transition-all duration-200`
+- [ ] **Feed**: Add `useUIStore`, make hamburger a `<button>` with `onClick`, animate main content padding
+- [ ] Update `app-shell.spec.tsx` to match new class values
+- [ ] Add `useUIStore` mock to `feed.spec.tsx`
+- [ ] Commit
+
+---
+
+### Task 5: Fix dark mode CSS issues
+
+**Files:**
+- Modify: `apps/web/src/styles/globals.css`
+
+- [ ] Change `.paper-texture` hardcoded `#fff8f4` to `var(--color-background)`
+- [ ] Add `.dark .paper-texture` with dark-appropriate texture URL
+- [ ] Add `--color-surface-variant: #3E3E3E` to `.dark` overrides
+- [ ] Add `--color-on-background: #f5f5f5` to `.dark` overrides
+- [ ] Add `--color-outline: #a0907e` to `.dark` overrides
+- [ ] Commit
+
+---
+
+### Verification (final)
+
+- [ ] Run full test suite: 401/401 passing
