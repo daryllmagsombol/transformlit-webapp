@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useUIStore } from '../../store';
 import { NavItem } from '../ui/nav-item';
 import { SIDEBAR_NAV_ITEMS } from '../../lib/constants';
+import { ThemeToggle } from '../ui/theme-toggle';
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -83,6 +84,7 @@ export function Sidebar() {
             <span className="material-symbols-outlined text-lg">help</span>
             Help
           </Link>
+          <ThemeToggle />
         </div>
       </aside>
     </>

@@ -87,6 +87,11 @@ describe('Sidebar', () => {
       const help = screen.getByText('Help');
       expect(help.closest('a')).toHaveAttribute('href', '/help');
     });
+
+    it('renders theme toggle button', () => {
+      render(<Sidebar />);
+      expect(screen.getByRole('button', { name: /switch/i })).toBeInTheDocument();
+    });
   });
 
   describe('progress widget', () => {
