@@ -40,6 +40,10 @@ jest.mock('../../components/layout/sidebar', () => ({
   Sidebar: () => <div data-testid="sidebar" />,
 }));
 
+jest.mock('../../components/layout/topbar', () => ({
+  TopBar: () => <div data-testid="topbar" />,
+}));
+
 jest.mock('../../components/ui', () => ({
   useToast: () => ({ addToast: mockAddToast }),
   NavItem: ({ label, href, active }: { label: string; href: string; active?: boolean }) => (
