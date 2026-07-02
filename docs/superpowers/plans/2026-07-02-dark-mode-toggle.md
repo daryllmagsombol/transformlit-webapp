@@ -263,3 +263,33 @@ git commit -m "feat: add dark mode toggle to sidebar"
 ### Verification (final)
 
 - [ ] Run full test suite: 401/401 passing
+
+---
+
+## Code Organization Refactor (2026-07-02)
+
+After the dark mode feature landed, applied DRY/separation-of-concerns review:
+
+**Phase 1: Extract `LoadingSpinner`**
+- Created `apps/web/src/components/ui/loading-spinner.tsx` (6 tests)
+- Replaced 4 duplicate spinner JSX blocks (feed, books, groups, auth-redirect)
+
+**Phase 2: Extract `useRequireAuth` hook**
+- Created `apps/web/src/lib/hooks/use-require-auth.ts` (6 tests)
+- Replaced 3 duplicate auth-guard blocks (feed, books, groups)
+- Hook handles: hydration check, token check, redirect to /login
+- Returns `{ isReady: boolean }` — component renders `<LoadingSpinner />` when false
+
+**Phase 3: Replace inline feed topbar with shared `TopBar`**
+- Removed 21-line inline `<header>` block in `feed/feed-client.tsx`
+- Replaced with `<TopBar />` import (already in layout/index.ts)
+
+**Phase 4: Dead code removal**
+- Removed unreachable `if (!token) return null;` in books/groups (already covered by `!isReady` guard)
+- Removed unused imports: `useRouter`, `useAuthStore`, `Link`, `UserAvatar`, `toggleSidebar`, `user`
+
+**Test results:** 416/416 passing (up from 410)
+- 6 new `LoadingSpinner` tests
+- 6 new `useRequireAuth` tests
+- Net: cleaner 3 client files (each shrunk ~15-20 lines)
+- Single source of truth for spinner styling and auth-redirect logic

@@ -2,37 +2,12 @@ import { useUIStore } from './ui';
 
 describe('UI Store', () => {
   beforeEach(() => {
-    useUIStore.setState({
-      theme: 'system',
-      sidebarOpen: false,
-    });
+    useUIStore.setState({ sidebarOpen: false });
   });
 
   describe('initial state', () => {
-    it('has theme set to system', () => {
-      expect(useUIStore.getState().theme).toBe('system');
-    });
-
     it('has sidebarOpen set to false (mobile-first default)', () => {
       expect(useUIStore.getState().sidebarOpen).toBe(false);
-    });
-  });
-
-  describe('setTheme', () => {
-    it('sets theme to light', () => {
-      useUIStore.getState().setTheme('light');
-      expect(useUIStore.getState().theme).toBe('light');
-    });
-
-    it('sets theme to dark', () => {
-      useUIStore.getState().setTheme('dark');
-      expect(useUIStore.getState().theme).toBe('dark');
-    });
-
-    it('sets theme to system', () => {
-      useUIStore.setState({ theme: 'dark' });
-      useUIStore.getState().setTheme('system');
-      expect(useUIStore.getState().theme).toBe('system');
     });
   });
 

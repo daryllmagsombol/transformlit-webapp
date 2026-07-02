@@ -13,13 +13,11 @@ interface AuthStore {
   isHydrated: boolean;
   setAuth: (user: GraphQLUser, token: string, refreshToken?: string) => void;
   clearAuth: () => void;
-  isAuthenticated: () => boolean;
-  setHydrated: (value: boolean) => void;
 }
 
 export const useAuthStore = create<AuthStore>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       user: null,
       token: null,
       isHydrated: false,
@@ -32,8 +30,6 @@ export const useAuthStore = create<AuthStore>()(
         clearAuthStorage();
         set({ user: null, token: null });
       },
-      isAuthenticated: () => !!get().token,
-      setHydrated: (value) => set({ isHydrated: value }),
     }),
     {
       name: 'auth-storage',

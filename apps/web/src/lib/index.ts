@@ -7,7 +7,6 @@ export {
   setRefreshToken,
   removeRefreshToken,
   clearAuth,
-  decodeJwt,
-  getTokenExpiry,
   isTokenExpiringSoon,
 } from './auth';
+export { useRequireAuth } from './hooks/use-require-auth';

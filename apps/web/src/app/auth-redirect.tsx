@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '../store';
+import { LoadingSpinner } from '../components/ui/loading-spinner';
 
 /**
  * Redirects authenticated users away from public pages (home, login, register)
@@ -20,11 +21,7 @@ export default function AuthRedirect({ children }: { children: React.ReactNode }
   }, [isHydrated, token, router]);
 
   if (isHydrated && token) {
-    return (
-      <div className="min-h-dvh flex items-center justify-center bg-surface">
-        <div className="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
-      </div>
-    );
+    return <LoadingSpinner showLabel={false} />;
   }
 
   return <>{children}</>;

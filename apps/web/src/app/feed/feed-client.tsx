@@ -1,15 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { gql } from '@apollo/client';
 import type { GraphQLAnnouncement, GraphQLVerseOfDay, GraphQLGroup } from '@transformlit/shared';
-import { useToast, UserAvatar, SkeletonCard } from '../../components/ui';
-import { Sidebar, BottomNav } from '../../components/layout';
-import { useAuthStore, useUIStore } from '../../store';
+import { useToast, SkeletonCard, LoadingSpinner } from '../../components/ui';
+import { Sidebar, BottomNav, TopBar } from '../../components/layout';
+import { useUIStore } from '../../store';
 import { apolloClient } from '../../lib/apollo-client';
 import { timeAgo } from '../../lib/time-ago';
+import { useRequireAuth } from '../../lib/hooks/use-require-auth';
 import { getCategoryConfig, getGroupMeta, QUICK_TRACK_CHAPTERS } from '../../lib/constants';
 
 // ── GraphQL Queries ──────────────────────────────────────────────────────────
@@ -30,12 +29,8 @@ const GROUPS_QUERY = gql`
 // ── Feed Page ────────────────────────────────────────────────────────────────
 
 export default function FeedClient() {
-  const token = useAuthStore((s) => s.token);
-  const user = useAuthStore((s) => s.user);
-  const isHydrated = useAuthStore((s) => s.isHydrated);
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
-  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
-  const router = useRouter();
+  const { isReady } = useRequireAuth();
   const { addToast } = useToast();
 
   const [announcements, setAnnouncements] = useState<GraphQLAnnouncement[]>([]);
@@ -60,53 +55,16 @@ export default function FeedClient() {
   }, [addToast]);
 
   useEffect(() => {
-    if (!isHydrated) return;
-    if (!token) { router.push('/login'); return; }
-    loadData();
-  }, [token, isHydrated, router, loadData]);
+    if (isReady) loadData();
+  }, [isReady, loadData]);
 
-  if (!isHydrated) {
-    return (
-      <div className="min-h-screen bg-surface flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
-          <span className="text-on-surface-variant font-small">Loading…</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (!token) {
-    router.push('/login');
-    return null;
+  if (!isReady) {
+    return <LoadingSpinner />;
   }
 
   return (
     <>
-      {/* ═══════════════════════════════════════════════════════════
-          TOP NAV BAR
-          ═══════════════════════════════════════════════════════════ */}
-      <header className="flex justify-between items-center h-16 px-4 md:px-5 w-full fixed top-0 bg-surface dark:bg-surface-dark z-50 shadow-sm">
-        <div className="flex items-center gap-4">
-          <button onClick={toggleSidebar} className="material-symbols-outlined text-primary cursor-pointer p-1" aria-label="Toggle sidebar">menu</button>
-          <h1 className="font-display text-headline-h3 font-bold text-primary dark:text-primary-fixed">Transformlit</h1>
-        </div>
-        <div className="hidden md:flex items-center gap-8">
-          <nav className="flex gap-6 items-center">
-            <Link className="text-primary font-bold border-b-2 border-primary py-2 font-display text-headline-h4" href="/feed">Feed</Link>
-            <Link className="text-on-surface-variant font-medium hover:text-primary transition-colors py-2 font-display text-headline-h4" href="/books">Library</Link>
-            <Link className="text-on-surface-variant font-medium hover:text-primary transition-colors py-2 font-display text-headline-h4" href="/groups">Community</Link>
-          </nav>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:flex bg-surface-container-high px-4 py-1.5 rounded-full items-center gap-2 border border-outline-variant">
-            <span className="material-symbols-outlined text-on-surface-variant text-[20px]">search</span>
-            <input className="bg-transparent border-none focus:ring-0 text-small font-small p-0 w-48 placeholder-on-surface-variant/60" placeholder="Search scripture, books..." type="text" />
-          </div>
-          <button className="material-symbols-outlined text-on-surface-variant cursor-pointer p-2 hover:bg-surface-container rounded-full transition-colors">notifications</button>
-          <UserAvatar avatarUrl={user?.avatarUrl} displayName={user?.displayName} />
-        </div>
-      </header>
+      <TopBar />
 
       {/* ═══════════════════════════════════════════════════════════
           SIDE NAV BAR (Desktop) — shared Sidebar component

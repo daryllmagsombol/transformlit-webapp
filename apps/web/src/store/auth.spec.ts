@@ -42,10 +42,6 @@ describe('Auth Store', () => {
     it('has isHydrated false', () => {
       expect(useAuthStore.getState().isHydrated).toBe(false);
     });
-
-    it('isAuthenticated returns false', () => {
-      expect(useAuthStore.getState().isAuthenticated()).toBe(false);
-    });
   });
 
   describe('setAuth', () => {
@@ -70,11 +66,6 @@ describe('Auth Store', () => {
       useAuthStore.getState().setAuth(mockUser as any, 'access-token-123');
       expect(setRefreshToken).not.toHaveBeenCalled();
     });
-
-    it('makes isAuthenticated return true', () => {
-      useAuthStore.getState().setAuth(mockUser as any, 'access-token-123');
-      expect(useAuthStore.getState().isAuthenticated()).toBe(true);
-    });
   });
 
   describe('clearAuth', () => {
@@ -90,25 +81,6 @@ describe('Auth Store', () => {
       useAuthStore.getState().clearAuth();
       expect(clearAuthStorage).toHaveBeenCalled();
     });
-
-    it('makes isAuthenticated return false', () => {
-      useAuthStore.setState({ token: 'some-token' });
-      useAuthStore.getState().clearAuth();
-      expect(useAuthStore.getState().isAuthenticated()).toBe(false);
-    });
-  });
-
-  describe('setHydrated', () => {
-    it('sets isHydrated to true', () => {
-      useAuthStore.getState().setHydrated(true);
-      expect(useAuthStore.getState().isHydrated).toBe(true);
-    });
-
-    it('sets isHydrated to false', () => {
-      useAuthStore.setState({ isHydrated: true });
-      useAuthStore.getState().setHydrated(false);
-      expect(useAuthStore.getState().isHydrated).toBe(false);
-    });
   });
 
   describe('persistence', () => {
@@ -122,7 +94,7 @@ describe('Auth Store', () => {
     });
 
     it('does not persist isHydrated', () => {
-      useAuthStore.getState().setHydrated(true);
+      useAuthStore.setState({ isHydrated: true });
       useAuthStore.getState().setAuth(mockUser as any, 'tok');
       const stored = JSON.parse(localStorage.getItem('auth-storage') || '{}');
       expect(stored.state).not.toHaveProperty('isHydrated');

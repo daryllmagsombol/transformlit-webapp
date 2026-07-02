@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
 import { gql } from '@apollo/client';
 import type { GraphQLBook } from '@transformlit/shared';
 import {
@@ -9,9 +8,10 @@ import {
   BookCard,
   BookCardSkeleton,
   ReadingProgressCard,
+  LoadingSpinner,
 } from '../../components/ui';
-import { useAuthStore } from '../../store';
 import { apolloClient } from '../../lib/apollo-client';
+import { useRequireAuth } from '../../lib/hooks/use-require-auth';
 
 // ── GraphQL Queries ──────────────────────────────────────────────────────────
 
@@ -80,9 +80,7 @@ function formatPrice(book: GraphQLBook): number {
 // ── Books Page ───────────────────────────────────────────────────────────────
 
 export default function BooksClient() {
-  const token = useAuthStore((s) => s.token);
-  const isHydrated = useAuthStore((s) => s.isHydrated);
-  const router = useRouter();
+  const { isReady } = useRequireAuth();
   const { addToast } = useToast();
 
   const [books, setBooks] = useState<GraphQLBook[]>([]);
@@ -103,20 +101,11 @@ export default function BooksClient() {
   }, [addToast]);
 
   useEffect(() => {
-    if (!isHydrated) return;
-    if (!token) { router.push('/login'); return; }
-    loadData();
-  }, [token, isHydrated, router, loadData]);
+    if (isReady) loadData();
+  }, [isReady, loadData]);
 
-  if (!isHydrated || !token) {
-    return (
-      <div className="min-h-screen bg-surface flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
-          <span className="text-on-surface-variant font-small">Loading…</span>
-        </div>
-      </div>
-    );
+  if (!isReady) {
+    return <LoadingSpinner />;
   }
 
   const filteredBooks = useMemo(() => {
@@ -155,8 +144,6 @@ export default function BooksClient() {
       addToast('No more books to load.', 'info');
     }, 600);
   }, [addToast]);
-
-  if (!token) return null;
 
   return (
     <>

@@ -57,6 +57,9 @@ jest.mock('../../components/ui', () => ({
       {description && <span>{description}</span>}
     </div>
   ),
+  LoadingSpinner: ({ showLabel = true }: { showLabel?: boolean }) => (
+    <div data-testid="loading-spinner">{showLabel && 'Loading…'}</div>
+  ),
 }));
 
 jest.mock('../../lib/constants', () => ({

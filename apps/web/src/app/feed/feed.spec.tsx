@@ -3,7 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 const mockPush = jest.fn();
 
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: mockPush }),
+  useRouter: () => ({ push: mockPush, replace: mockPush }),
+  usePathname: () => '/feed',
 }));
 
 jest.mock('next/link', () => {
@@ -55,6 +56,9 @@ jest.mock('../../components/ui', () => ({
   ),
   SkeletonCard: ({ lines }: { lines?: number }) => (
     <div data-testid="skeleton-card" data-lines={lines} />
+  ),
+  LoadingSpinner: ({ showLabel = true }: { showLabel?: boolean }) => (
+    <div data-testid="loading-spinner">{showLabel && 'Loading…'}</div>
   ),
 }));
 

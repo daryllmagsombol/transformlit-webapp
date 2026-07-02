@@ -58,6 +58,9 @@ jest.mock('../../components/ui', () => ({
       <button data-testid="continue-btn" onClick={onContinue}>Continue</button>
     </div>
   ),
+  LoadingSpinner: ({ showLabel = true }: { showLabel?: boolean }) => (
+    <div data-testid="loading-spinner">{showLabel && 'Loading…'}</div>
+  ),
 }));
 
 // BOTTOM_NAV_ITEMS mock removed — now in shared BottomNav (AppShell)
