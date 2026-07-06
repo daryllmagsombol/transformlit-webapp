@@ -36,7 +36,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
         className="absolute inset-0 bg-black/50 dark:bg-black/70"
         onClick={onClose}
       />
-      <div className="relative card max-w-lg w-full mx-4 max-h-[90dvh] overflow-y-auto animate-fade-in">
+      <div className="relative bg-surface border border-outline-variant rounded-xl shadow-lg max-w-lg w-full mx-4 max-h-[90dvh] overflow-y-auto animate-fade-in p-6">
         {title && (
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-h4 font-semibold">{title}</h2>

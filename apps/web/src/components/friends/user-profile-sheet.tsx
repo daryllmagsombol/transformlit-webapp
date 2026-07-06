@@ -189,7 +189,7 @@ export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserP
           </div>
         ) : user ? (
           <>
-            <div className="w-[72px] h-[72px] rounded-full border-4 border-paper bg-surface overflow-hidden shadow-md -mt-16">
+            <div className="w-[72px] h-[72px] rounded-full border-4 border-paper bg-surface overflow-hidden shadow-md mt-4">
               <UserAvatar avatarUrl={user.avatarUrl} displayName={user.displayName} size="md" />
             </div>
             <h3 className="mt-4 font-display text-headline-h2 text-on-surface">{user.displayName}</h3>
