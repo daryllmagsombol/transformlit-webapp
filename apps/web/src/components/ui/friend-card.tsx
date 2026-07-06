@@ -31,7 +31,7 @@ export function FriendCard({ name, bio, avatarUrl, mutualGroups, onPress }: Frie
           </span>
         )}
       </div>
-      <ChevronRightIcon className="w-5 h-5 text-on-surface-variant group-hover:text-primary flex-shrink-0" />
+      <ChevronRightIcon className="w-6 h-6 text-on-surface-variant group-hover:text-primary flex-shrink-0" />
     </button>
   );
 }

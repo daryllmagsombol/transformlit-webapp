@@ -176,7 +176,7 @@ export default function UserProfileClient() {
   });
 
   return (
-    <div className="max-w-4xl mx-auto py-8 space-y-10">
+    <div className="py-8 space-y-10">
       <button
         onClick={() => router.back()}
         className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-high transition-colors"

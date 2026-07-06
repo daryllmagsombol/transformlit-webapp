@@ -12,7 +12,7 @@ interface SuggestedFriendCardProps {
 export function SuggestedFriendCard({ name, tag, avatarUrl, onAdd }: SuggestedFriendCardProps) {
   return (
     <div className="snap-start min-w-[200px] bg-surface-container-low border border-outline-variant p-5 rounded-xl flex flex-col items-center text-center shadow-sm hover:shadow-md transition-shadow">
-      <div className="mb-3 ring-4 ring-white dark:ring-surface-dark shadow-inner rounded-full">
+      <div className="mb-3 ring-4 ring-white shadow-inner rounded-full">
         <UserAvatar avatarUrl={avatarUrl} displayName={name} size="md" />
       </div>
       <p className="font-display font-headline-h4 text-on-surface truncate w-full">{name}</p>

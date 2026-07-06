@@ -162,7 +162,7 @@ export default function FriendsClient() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       {/* Search */}
       <div className="sticky top-16 bg-background/80 backdrop-blur-md z-30 py-4 -mx-4 px-4 md:mx-0 md:px-0">
         <UserSearchInput onSelectUser={handleSelectUser} currentUserId={currentUserId ?? ''} />
@@ -247,8 +247,8 @@ export default function FriendsClient() {
             })}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <span className="material-symbols-outlined text-[120px] text-primary opacity-40">person_search</span>
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <span className="material-symbols-outlined text-[80px] text-primary opacity-40">person_search</span>
             <h3 className="font-display text-headline-h2 text-on-surface-variant mb-2">Finding your circle?</h3>
             <p className="font-body max-w-sm text-on-surface-variant mb-8">
               Your friends list is empty. Search for fellow readers to connect!

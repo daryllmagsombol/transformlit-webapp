@@ -187,8 +187,8 @@ export default function NotificationsClient() {
           ))}
         </div>
       ) : (
-        <div className="py-24 flex flex-col items-center text-center">
-          <span className="material-symbols-outlined text-[120px] text-primary opacity-40 mb-4">
+        <div className="py-16 flex flex-col items-center text-center">
+          <span className="material-symbols-outlined text-[80px] text-primary opacity-40 mb-4">
             notifications_off
           </span>
           <h3 className="font-display font-headline-h3 text-on-surface mb-2">All caught up!</h3>
