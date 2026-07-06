@@ -1,9 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { useUIStore, useAuthStore } from '../../store';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { UserAvatar } from '../ui/user-avatar';
+import { UserAvatar, BellIcon } from '../ui';
 
 const NAV_LINKS = [
   { label: 'Feed', href: '/feed' },
@@ -14,7 +15,10 @@ const NAV_LINKS = [
 export function TopBar() {
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const user = useAuthStore((s) => s.user);
+  const userId = useAuthStore((s) => s.user?.id);
   const pathname = usePathname();
+  const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
+  const handleNotificationClick = () => setNotificationPanelOpen(true);
 
   return (
     <header className="flex justify-between items-center h-16 px-4 md:px-5 w-full fixed top-0 bg-surface dark:bg-surface-dark z-50 shadow-sm">
@@ -67,12 +71,7 @@ export function TopBar() {
         </div>
 
         {/* Notifications */}
-        <button
-          className="material-symbols-outlined text-on-surface-variant cursor-pointer p-2 hover:bg-surface-container rounded-full transition-colors"
-          aria-label="Notifications"
-        >
-          notifications
-        </button>
+        <BellIcon userId={userId ?? ''} onClick={handleNotificationClick} />
 
         {/* User avatar */}
         <UserAvatar avatarUrl={user?.avatarUrl} displayName={user?.displayName} />
