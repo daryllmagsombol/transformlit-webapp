@@ -1,14 +1,268 @@
 'use client';
 
-import { AuthenticatedLayout } from '../../components/layout/authenticated-layout';
+import { useState, useEffect, useCallback } from 'react';
+import { gql } from '@apollo/client';
+import { useRouter } from 'next/navigation';
+import { apolloClient } from '../../lib/apollo-client';
+import { useRequireAuth } from '../../lib/hooks/use-require-auth';
+import { useAuthStore } from '../../store';
+import {
+  useToast,
+  FriendCard,
+  FriendRequestItem,
+  SuggestedFriendCard,
+  UserSearchInput,
+  LoadingSpinner,
+} from '../../components/ui';
+import { UserProfileSheet } from '../../components/friends/user-profile-sheet';
 
-export default function FriendsPage() {
+const FRIENDS_QUERY = gql`
+  query Friends {
+    friends {
+      id
+      requesterId
+      addresseeId
+      requester { id displayName avatarUrl bio }
+      addressee { id displayName avatarUrl bio }
+      status
+    }
+  }
+`;
+
+const REQUESTS_QUERY = gql`
+  query FriendRequests {
+    friendRequests {
+      id
+      requester { id displayName avatarUrl bio }
+      status
+    }
+  }
+`;
+
+const ACCEPT_REQUEST = gql`
+  mutation AcceptFriendRequest($friendshipId: String!) {
+    acceptFriendRequest(friendshipId: $friendshipId) {
+      id
+      status
+    }
+  }
+`;
+
+const REJECT_REQUEST = gql`
+  mutation RejectFriendRequest($friendshipId: String!) {
+    rejectFriendRequest(friendshipId: $friendshipId) {
+      id
+      status
+    }
+  }
+`;
+
+const SEND_REQUEST = gql`
+  mutation SendFriendRequest($addresseeId: String!) {
+    sendFriendRequest(addresseeId: $addresseeId) {
+      id
+      status
+    }
+  }
+`;
+
+const REMOVE_FRIEND = gql`
+  mutation RemoveFriend($friendshipId: String!) {
+    removeFriend(friendshipId: $friendshipId)
+  }
+`;
+
+interface FriendData {
+  id: string;
+  requesterId: string;
+  addresseeId: string;
+  requester: { id: string; displayName: string; avatarUrl?: string | null; bio?: string };
+  addressee: { id: string; displayName: string; avatarUrl?: string | null; bio?: string };
+  status: string;
+}
+
+interface RequestData {
+  id: string;
+  requester: { id: string; displayName: string; avatarUrl?: string | null; bio?: string };
+  status: string;
+}
+
+export default function FriendsClient() {
+  const { isReady } = useRequireAuth();
+  const currentUserId = useAuthStore((s) => s.user?.id);
+  const { addToast } = useToast();
+  const router = useRouter();
+
+  const [friends, setFriends] = useState<FriendData[]>([]);
+  const [requests, setRequests] = useState<RequestData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [requestsOpen, setRequestsOpen] = useState(true);
+  const [profileSheetUserId, setProfileSheetUserId] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      const [friendsResult, requestsResult] = await Promise.all([
+        apolloClient.query({ query: FRIENDS_QUERY }),
+        apolloClient.query({ query: REQUESTS_QUERY }),
+      ]);
+      setFriends(friendsResult.data.friends ?? []);
+      setRequests(requestsResult.data.friendRequests ?? []);
+    } catch {
+      addToast('Failed to load friends.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast]);
+
+  useEffect(() => {
+    if (isReady) loadData();
+  }, [isReady, loadData]);
+
+  const handleAccept = async (friendshipId: string) => {
+    try {
+      await apolloClient.mutate({ mutation: ACCEPT_REQUEST, variables: { friendshipId } });
+      addToast('Friend request accepted!', 'success');
+      loadData();
+    } catch {
+      addToast('Failed to accept request.', 'error');
+    }
+  };
+
+  const handleReject = async (friendshipId: string) => {
+    try {
+      await apolloClient.mutate({ mutation: REJECT_REQUEST, variables: { friendshipId } });
+      addToast('Friend request declined.', 'info');
+      loadData();
+    } catch {
+      addToast('Failed to decline request.', 'error');
+    }
+  };
+
+  const handleSendRequest = async (userId: string) => {
+    try {
+      await apolloClient.mutate({ mutation: SEND_REQUEST, variables: { addresseeId: userId } });
+      addToast('Friend request sent!', 'success');
+    } catch {
+      addToast('Failed to send request.', 'error');
+    }
+  };
+
+  const handleSelectUser = (userId: string) => {
+    setProfileSheetUserId(userId);
+  };
+
+  if (!isReady) return <LoadingSpinner />;
+
+  const getFriendInfo = (f: FriendData) => {
+    if (f.requesterId === currentUserId) return f.addressee;
+    return f.requester;
+  };
+
   return (
-    <AuthenticatedLayout>
-      <div className="space-y-6">
-        <h1 className="text-h2 font-bold">Friends</h1>
-        <p className="text-ink-soft">Friend management coming soon.</p>
+    <div className="space-y-8">
+      {/* Search */}
+      <div className="sticky top-16 bg-background/80 backdrop-blur-md z-30 py-4 -mx-4 px-4">
+        <UserSearchInput onSelectUser={handleSelectUser} currentUserId={currentUserId ?? ''} />
       </div>
-    </AuthenticatedLayout>
+
+      {/* Friend Requests */}
+      {requests.length > 0 && (
+        <section>
+          <button
+            onClick={() => setRequestsOpen(!requestsOpen)}
+            className="flex items-center justify-between w-full mb-4 group"
+          >
+            <h3 className="font-display text-headline-h3 text-on-surface">
+              Friend Requests ({requests.length})
+            </h3>
+            <span
+              className="material-symbols-outlined text-on-surface-variant transition-transform duration-300"
+              style={{ transform: requestsOpen ? 'rotate(0deg)' : 'rotate(180deg)' }}
+            >
+              expand_less
+            </span>
+          </button>
+          {requestsOpen && (
+            <div className="space-y-3">
+              {requests.map((req) => (
+                <FriendRequestItem
+                  key={req.id}
+                  name={req.requester.displayName}
+                  bio={req.requester.bio}
+                  avatarUrl={req.requester.avatarUrl}
+                  onAccept={() => handleAccept(req.id)}
+                  onDecline={() => handleReject(req.id)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Suggested Friends (placeholder — real suggestions come later via group overlap) */}
+      <section>
+        <h3 className="font-display text-headline-h3 text-on-surface mb-4">Suggested Friends</h3>
+        {loading ? (
+          <div className="flex gap-4 overflow-x-auto pb-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="min-w-[200px] h-48 bg-surface-container-high rounded-xl animate-pulse flex-shrink-0" />
+            ))}
+          </div>
+        ) : (
+          <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 snap-x">
+            <SuggestedFriendCard name="Leo T." tag="Classic Literature Fan" onAdd={() => {}} />
+            <SuggestedFriendCard name="Emma G." tag="Sci-Fi Enthusiast" onAdd={() => {}} />
+            <SuggestedFriendCard name="Oliver K." tag="Poetry Lover" onAdd={() => {}} />
+          </div>
+        )}
+      </section>
+
+      {/* Friends List */}
+      <section>
+        <h3 className="font-display text-headline-h3 text-on-surface mb-4">
+          Your Friends ({friends.length})
+        </h3>
+        {loading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-16 bg-surface-container-high rounded-xl animate-pulse" />
+            ))}
+          </div>
+        ) : friends.length > 0 ? (
+          <div className="space-y-3">
+            {friends.map((f) => {
+              const friend = getFriendInfo(f);
+              return (
+                <FriendCard
+                  key={f.id}
+                  name={friend.displayName}
+                  bio={friend.bio}
+                  avatarUrl={friend.avatarUrl}
+                  onPress={() => setProfileSheetUserId(friend.id)}
+                />
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <span className="material-symbols-outlined text-[120px] text-primary opacity-40">person_search</span>
+            <h3 className="font-display text-headline-h2 text-on-surface-variant mb-2">Finding your circle?</h3>
+            <p className="font-body max-w-sm text-on-surface-variant mb-8">
+              Your friends list is empty. Search for fellow readers to connect!
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* User Profile Sheet */}
+      {profileSheetUserId && (
+        <UserProfileSheet
+          userId={profileSheetUserId}
+          open={!!profileSheetUserId}
+          onClose={() => setProfileSheetUserId(null)}
+          currentUserId={currentUserId ?? ''}
+        />
+      )}
+    </div>
   );
 }
