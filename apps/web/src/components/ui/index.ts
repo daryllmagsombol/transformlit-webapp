@@ -7,6 +7,7 @@ export { Modal } from './modal';
 export { ToastProvider, useToast } from './toast';
 export { NavItem } from './nav-item';
 export { UserAvatar } from './user-avatar';
+export { UserSearchInput } from './user-search-input';
 export { SkeletonCard } from './skeleton-card';
 export { LoadingSpinner } from './loading-spinner';
 export { GroupCard } from './group-card';
