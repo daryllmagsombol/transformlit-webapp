@@ -53,4 +53,13 @@ export class FriendsResolver {
   async removeFriend(@Args('friendshipId') friendshipId: string) {
     return this.friendsService.removeFriend(friendshipId);
   }
+
+  @Query(() => Friendship, { name: 'friendshipStatus', nullable: true })
+  @UseGuards(JwtAuthGuard)
+  async friendshipStatus(
+    @CurrentUser() user: { id: string },
+    @Args('otherUserId') otherUserId: string,
+  ) {
+    return this.friendsService.checkFriendship(user.id, otherUserId);
+  }
 }

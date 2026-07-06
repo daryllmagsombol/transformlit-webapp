@@ -23,9 +23,20 @@ const USER_PROFILE_QUERY = gql`
   }
 `;
 
-const SEND_REQUEST = gql`
-  mutation SendFriendRequest($addresseeId: String!) {
-    sendFriendRequest(addresseeId: $addresseeId) { id status }
+const FRIENDSHIP_STATUS_QUERY = gql`
+  query FriendshipStatus($otherUserId: String!) {
+    friendshipStatus(otherUserId: $otherUserId) {
+      id
+      requesterId
+      addresseeId
+      status
+    }
+  }
+`;
+
+const ACCEPT_REQUEST = gql`
+  mutation AcceptFriendRequest($friendshipId: String!) {
+    acceptFriendRequest(friendshipId: $friendshipId) { id status }
   }
 `;
 
@@ -49,16 +60,24 @@ export default function UserProfileClient() {
   const userId = params.id as string;
 
   const [profile, setProfile] = useState<ProfileData['userProfile'] | null>(null);
+  const [friendship, setFriendship] = useState<{ id: string; requesterId: string; addresseeId: string; status: string } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const fetchProfile = useCallback(async () => {
     try {
-      const { data } = await apolloClient.query<ProfileData>({
-        query: USER_PROFILE_QUERY,
-        variables: { id: userId },
-      });
+      const [{ data }, { data: fsData }] = await Promise.all([
+        apolloClient.query<ProfileData>({
+          query: USER_PROFILE_QUERY,
+          variables: { id: userId },
+        }),
+        apolloClient.query<{ friendshipStatus: typeof friendship }>({
+          query: FRIENDSHIP_STATUS_QUERY,
+          variables: { otherUserId: userId },
+        }),
+      ]);
       if (data) setProfile(data.userProfile);
+      setFriendship(fsData?.friendshipStatus ?? null);
     } catch {
       addToast('Failed to load profile.', 'error');
     } finally {
@@ -70,18 +89,44 @@ export default function UserProfileClient() {
     if (isReady) fetchProfile();
   }, [isReady, fetchProfile]);
 
+  const handleAction = async () => {
+    if (!friendship) return handleAddFriend();
+    if (friendship.status === 'PENDING' && friendship.addresseeId === currentUserId) return handleAccept(friendship.id);
+  };
+
   const handleAddFriend = async () => {
-    setSending(true);
+    setActionLoading(true);
     try {
       await apolloClient.mutate({
-        mutation: SEND_REQUEST,
+        mutation: gql`
+          mutation SendFriendRequest($addresseeId: String!) {
+            sendFriendRequest(addresseeId: $addresseeId) { id status }
+          }
+        `,
         variables: { addresseeId: userId },
       });
       addToast('Friend request sent!', 'success');
+      fetchProfile();
     } catch {
       addToast('Failed to send friend request.', 'error');
     } finally {
-      setSending(false);
+      setActionLoading(false);
+    }
+  };
+
+  const handleAccept = async (friendshipId: string) => {
+    setActionLoading(true);
+    try {
+      await apolloClient.mutate({
+        mutation: ACCEPT_REQUEST,
+        variables: { friendshipId },
+      });
+      addToast('Friend request accepted!', 'success');
+      fetchProfile();
+    } catch {
+      addToast('Failed to accept request.', 'error');
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -99,6 +144,26 @@ export default function UserProfileClient() {
 
   const { user } = profile;
   const isOwnProfile = user.id === currentUserId;
+
+  // Derive button state
+  let buttonLabel = 'Add Friend';
+  let buttonDisabled = false;
+  let buttonOnClick = handleAction;
+
+  if (friendship) {
+    if (friendship.status === 'ACCEPTED') {
+      buttonLabel = 'Friends';
+      buttonDisabled = true;
+    } else if (friendship.status === 'PENDING') {
+      if (friendship.requesterId === currentUserId) {
+        buttonLabel = 'Request Sent';
+        buttonDisabled = true;
+      } else {
+        buttonLabel = 'Accept Request';
+        buttonDisabled = false;
+      }
+    }
+  }
 
   const toBookCardBook = (bp: ProfileData['userProfile']['bookProgress'][number]): GraphQLBook => ({
     id: bp.book.id,
@@ -140,12 +205,18 @@ export default function UserProfileClient() {
             )}
             {!isOwnProfile && (
               <button
-                onClick={handleAddFriend}
-                disabled={sending}
-                className="bg-brand-orange-dark text-on-primary font-headline-h4 px-6 h-11 rounded-md flex items-center gap-2 shadow-sm hover:translate-y-[-2px] transition-all active:scale-95 disabled:opacity-50"
+                onClick={buttonOnClick}
+                disabled={buttonDisabled || actionLoading}
+                className={`font-headline-h4 px-6 h-11 rounded-md flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50 ${
+                  buttonDisabled
+                    ? 'bg-surface-container-high text-on-surface-variant cursor-not-allowed'
+                    : 'bg-brand-orange-dark text-on-primary hover:translate-y-[-2px]'
+                }`}
               >
-                <span className="material-symbols-outlined text-[20px]">person_add</span>
-                {sending ? 'Sending...' : 'Add Friend'}
+                <span className="material-symbols-outlined text-[20px]">
+                  {friendship?.status === 'ACCEPTED' ? 'check' : 'person_add'}
+                </span>
+                {actionLoading ? 'Loading...' : buttonLabel}
               </button>
             )}
           </div>

@@ -96,4 +96,21 @@ export class FriendsService {
   async removeFriend(friendshipId: string) {
     return this.prisma.friendship.delete({ where: { id: friendshipId } });
   }
+
+  async checkFriendship(userId: string, otherUserId: string) {
+    if (userId === otherUserId) return null;
+
+    const friendship = await this.prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { requesterId: userId, addresseeId: otherUserId },
+          { requesterId: otherUserId, addresseeId: userId },
+        ],
+        NOT: { status: 'REJECTED' },
+      },
+      include: { requester: true, addressee: true },
+    });
+
+    return friendship;
+  }
 }
