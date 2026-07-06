@@ -119,6 +119,7 @@ export default function NotificationsClient() {
       setNotifications((prev) =>
         prev.map((n) => (n.id === notification.id ? { ...n, readAt: new Date().toISOString() } : n))
       );
+      window.dispatchEvent(new CustomEvent('notifications-cleared'));
     } catch {
       // Silent fail
     }
@@ -132,6 +133,7 @@ export default function NotificationsClient() {
     try {
       await apolloClient.mutate({ mutation: MARK_ALL_READ });
       setNotifications((prev) => prev.map((n) => ({ ...n, readAt: new Date().toISOString() })));
+      window.dispatchEvent(new CustomEvent('notifications-cleared'));
     } catch {
       addToast('Failed to mark all as read.', 'error');
     }

@@ -99,6 +99,7 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
     try {
       await apolloClient.mutate({ mutation: MARK_ALL_READ });
       setNotifications((prev) => prev.map((n) => ({ ...n, readAt: new Date().toISOString() })));
+      window.dispatchEvent(new CustomEvent('notifications-cleared'));
     } catch {
       addToast('Failed to mark all as read.', 'error');
     }

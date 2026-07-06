@@ -31,7 +31,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center" role="dialog" aria-modal="true">
       <div
         className="absolute inset-0 bg-black/50 dark:bg-black/70"
         onClick={onClose}

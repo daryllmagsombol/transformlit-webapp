@@ -13,6 +13,7 @@ import {
   SuggestedFriendCard,
   UserSearchInput,
   LoadingSpinner,
+  Modal,
 } from '../../components/ui';
 import { UserProfileSheet } from '../../components/friends/user-profile-sheet';
 
@@ -98,6 +99,7 @@ export default function FriendsClient() {
   const [loading, setLoading] = useState(true);
   const [requestsOpen, setRequestsOpen] = useState(true);
   const [profileSheetUserId, setProfileSheetUserId] = useState<string | null>(null);
+  const [declineConfirmId, setDeclineConfirmId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -132,6 +134,7 @@ export default function FriendsClient() {
     try {
       await apolloClient.mutate({ mutation: REJECT_REQUEST, variables: { friendshipId } });
       addToast('Friend request declined.', 'info');
+      setDeclineConfirmId(null);
       loadData();
     } catch {
       addToast('Failed to decline request.', 'error');
@@ -191,7 +194,7 @@ export default function FriendsClient() {
                   bio={req.requester.bio}
                   avatarUrl={req.requester.avatarUrl}
                   onAccept={() => handleAccept(req.id)}
-                  onDecline={() => handleReject(req.id)}
+                  onDecline={() => setDeclineConfirmId(req.id)}
                 />
               ))}
             </div>
@@ -210,9 +213,9 @@ export default function FriendsClient() {
           </div>
         ) : (
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 snap-x">
-            <SuggestedFriendCard name="Leo T." tag="Classic Literature Fan" onAdd={() => {}} />
-            <SuggestedFriendCard name="Emma G." tag="Sci-Fi Enthusiast" onAdd={() => {}} />
-            <SuggestedFriendCard name="Oliver K." tag="Poetry Lover" onAdd={() => {}} />
+            <SuggestedFriendCard name="Leo T." tag="Classic Literature Fan" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
+            <SuggestedFriendCard name="Emma G." tag="Sci-Fi Enthusiast" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
+            <SuggestedFriendCard name="Oliver K." tag="Poetry Lover" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
           </div>
         )}
       </section>
@@ -263,6 +266,26 @@ export default function FriendsClient() {
           currentUserId={currentUserId ?? ''}
         />
       )}
+      {/* Decline Confirmation */}
+      <Modal open={!!declineConfirmId} onClose={() => setDeclineConfirmId(null)} title="Decline Request">
+        <p className="font-body text-body text-on-surface mb-6">
+          Are you sure you want to decline this friend request?
+        </p>
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={() => setDeclineConfirmId(null)}
+            className="px-4 py-2 bg-surface-container-highest text-on-surface-variant rounded-lg font-small font-bold hover:bg-outline-variant/20 transition-all"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => declineConfirmId && handleReject(declineConfirmId)}
+            className="px-4 py-2 bg-error text-on-error rounded-lg font-small font-bold hover:opacity-90 transition-all"
+          >
+            Decline
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

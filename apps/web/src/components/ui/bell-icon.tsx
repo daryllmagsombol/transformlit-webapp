@@ -43,6 +43,13 @@ export function BellIcon({ userId, onClick }: BellIconProps) {
     fetchCount();
   }, [fetchCount]);
 
+  // Listen for clear event from notification panel/page
+  useEffect(() => {
+    const handleClear = () => fetchCount();
+    window.addEventListener('notifications-cleared', handleClear);
+    return () => window.removeEventListener('notifications-cleared', handleClear);
+  }, [fetchCount]);
+
   useEffect(() => {
     if (!userId || isSubscribed) return;
 
