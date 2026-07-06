@@ -46,4 +46,57 @@ export class UsersService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  async getProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        displayName: true,
+        avatarUrl: true,
+        bio: true,
+        role: true,
+        status: true,
+        createdAt: true,
+      },
+    });
+
+    if (!user) throw new Error('User not found');
+
+    const [groups, bookProgress, friendCount, groupCount, bookCount] = await Promise.all([
+      this.prisma.groupMember.findMany({
+        where: { userId, status: 'ACTIVE', group: { visibility: 'PUBLIC' } },
+        include: { group: true },
+        take: 20,
+      }),
+      this.prisma.bookProgress.findMany({
+        where: { userId },
+        include: { book: true },
+        orderBy: { lastReadAt: 'desc' },
+        take: 10,
+      }),
+      this.prisma.friendship.count({
+        where: {
+          OR: [{ requesterId: userId }, { addresseeId: userId }],
+          status: 'ACCEPTED',
+        },
+      }),
+      this.prisma.groupMember.count({
+        where: { userId, status: 'ACTIVE' },
+      }),
+      this.prisma.bookProgress.count({
+        where: { userId },
+      }),
+    ]);
+
+    return {
+      user,
+      groups: groups.map((gm) => gm.group),
+      bookProgress,
+      friendCount,
+      groupCount,
+      bookCount,
+    };
+  }
 }
