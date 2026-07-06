@@ -2,6 +2,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotificationsResolver } from './notifications.resolver';
 import { NotificationsService } from './notifications.service';
+import { PubSubService } from './notifications.pubsub.js';
 
 const mockNotification = {
   id: 'notif-1',
@@ -18,6 +19,7 @@ const mockUser = { id: 'user-1' };
 describe('NotificationsResolver', () => {
   let resolver: NotificationsResolver;
   let notificationsService: Record<string, jest.Mock>;
+  let pubSub: Record<string, jest.Mock>;
 
   beforeEach(async () => {
     const mockNotificationsService = {
@@ -27,15 +29,24 @@ describe('NotificationsResolver', () => {
       markAllRead: jest.fn().mockResolvedValue(true),
     };
 
+    const mockPubSub = {
+      asyncIterator: jest.fn(),
+      publish: jest.fn(),
+      onModuleInit: jest.fn(),
+      onModuleDestroy: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         NotificationsResolver,
         { provide: NotificationsService, useValue: mockNotificationsService },
+        { provide: PubSubService, useValue: mockPubSub },
       ],
     }).compile();
 
     resolver = module.get<NotificationsResolver>(NotificationsResolver);
     notificationsService = module.get(NotificationsService) as any;
+    pubSub = module.get(PubSubService) as any;
     jest.clearAllMocks();
   });
 
@@ -81,6 +92,18 @@ describe('NotificationsResolver', () => {
       const result = await resolver.markAllNotificationsRead(mockUser);
       expect(notificationsService.markAllRead).toHaveBeenCalledWith('user-1');
       expect(result).toBe(true);
+    });
+  });
+
+  describe('notificationReceived subscription', () => {
+    it('should return asyncIterator for notificationReceived', () => {
+      const mockIterator = { next: jest.fn(), return: jest.fn(), throw: jest.fn() };
+      pubSub.asyncIterator.mockReturnValue(mockIterator);
+
+      const result = resolver.notificationReceived('user-1');
+
+      expect(pubSub.asyncIterator).toHaveBeenCalledWith('notificationReceived');
+      expect(result).toBe(mockIterator);
     });
   });
 });
