@@ -5,6 +5,7 @@ import { useUIStore, useAuthStore } from '../../store';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { UserAvatar, BellIcon } from '../ui';
+import { NotificationPanel } from '../notifications/notification-panel';
 
 const NAV_LINKS = [
   { label: 'Feed', href: '/feed' },
@@ -21,7 +22,8 @@ export function TopBar() {
   const handleNotificationClick = () => setNotificationPanelOpen(true);
 
   return (
-    <header className="flex justify-between items-center h-16 px-4 md:px-5 w-full fixed top-0 bg-surface dark:bg-surface-dark z-50 shadow-sm">
+    <>
+      <header className="flex justify-between items-center h-16 px-4 md:px-5 w-full fixed top-0 bg-surface dark:bg-surface-dark z-50 shadow-sm">
       {/* Left: hamburger + brand */}
       <div className="flex items-center gap-4">
         <button
@@ -76,6 +78,15 @@ export function TopBar() {
         {/* User avatar */}
         <UserAvatar avatarUrl={user?.avatarUrl} displayName={user?.displayName} />
       </div>
-    </header>
+      </header>
+
+      {notificationPanelOpen && (
+      <NotificationPanel
+        open={notificationPanelOpen}
+        onClose={() => setNotificationPanelOpen(false)}
+        userId={userId ?? ''}
+      />
+      )}
+    </>
   );
 }
