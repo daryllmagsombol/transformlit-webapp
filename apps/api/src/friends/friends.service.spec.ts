@@ -1,6 +1,8 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
 import { FriendsService } from './friends.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PubSubService } from '../chat/pubsub.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 const mockFriendship = {
@@ -26,6 +28,8 @@ const mockUser2 = {
 describe('FriendsService', () => {
   let service: FriendsService;
   let prisma: any;
+  let notificationsService: any;
+  let pubSub: any;
 
   beforeEach(async () => {
     const mockPrisma = {
@@ -38,15 +42,27 @@ describe('FriendsService', () => {
       },
     };
 
+    const mockNotifications = {
+      createNotification: jest.fn().mockResolvedValue({}),
+    };
+
+    const mockPubSub = {
+      publish: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FriendsService,
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: NotificationsService, useValue: mockNotifications },
+        { provide: PubSubService, useValue: mockPubSub },
       ],
     }).compile();
 
     service = module.get<FriendsService>(FriendsService);
     prisma = module.get(PrismaService);
+    notificationsService = module.get(NotificationsService);
+    pubSub = module.get(PubSubService);
     jest.clearAllMocks();
 
     prisma.friendship.findMany.mockResolvedValue([]);
@@ -279,5 +295,121 @@ describe('FriendsService', () => {
       const result = await service.removeFriend('friendship-1');
       expect(result).toEqual(mockFriendship);
     });
+  });
+});
+
+// ── FriendsService - notifications ─────────────────────────────────────────
+
+describe('FriendsService - notifications', () => {
+  let service: FriendsService;
+  let notificationsService: any;
+  let pubSub: any;
+  let prisma: any;
+
+  const mockPrisma = {
+    friendship: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+    notification: {
+      create: jest.fn(),
+    },
+  };
+
+  const mockPubSub = {
+    publish: jest.fn(),
+    asyncIterator: jest.fn(),
+    onModuleInit: jest.fn(),
+    onModuleDestroy: jest.fn(),
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        FriendsService,
+        { provide: PrismaService, useValue: mockPrisma },
+        { provide: NotificationsService, useValue: { createNotification: jest.fn() } },
+        { provide: PubSubService, useValue: mockPubSub },
+      ],
+    }).compile();
+
+    service = module.get<FriendsService>(FriendsService);
+    notificationsService = module.get(NotificationsService);
+    prisma = module.get(PrismaService);
+    pubSub = module.get(PubSubService);
+    jest.clearAllMocks();
+  });
+
+  it('should create a FRIEND_REQUEST notification after sending a request', async () => {
+    const friendship = { id: 'f1', requesterId: 'u1', addresseeId: 'u2', status: 'PENDING' };
+    mockPrisma.friendship.findUnique.mockResolvedValue(null);
+    mockPrisma.friendship.create.mockResolvedValue(friendship);
+    (notificationsService.createNotification as jest.Mock).mockResolvedValue({});
+
+    await service.sendRequest('u1', 'u2');
+
+    expect(notificationsService.createNotification).toHaveBeenCalledWith(
+      'u2', 'FRIEND_REQUEST', { friendshipId: 'f1' }, 'u1'
+    );
+  });
+
+  it('should publish notification after sending a request', async () => {
+    const friendship = { id: 'f1', requesterId: 'u1', addresseeId: 'u2', status: 'PENDING' };
+    const notification = { id: 'notif-1', type: 'FRIEND_REQUEST' };
+    mockPrisma.friendship.findUnique.mockResolvedValue(null);
+    mockPrisma.friendship.create.mockResolvedValue(friendship);
+    (notificationsService.createNotification as jest.Mock).mockResolvedValue(notification);
+
+    await service.sendRequest('u1', 'u2');
+
+    expect(pubSub.publish).toHaveBeenCalledWith('notificationReceived', {
+      notificationReceived: notification,
+      userId: 'u2',
+    });
+  });
+
+  it('should create a FRIEND_ACCEPTED notification after accepting a request', async () => {
+    const friendship = { id: 'f1', requesterId: 'u1', addresseeId: 'u2', status: 'PENDING' };
+    mockPrisma.friendship.findUnique.mockResolvedValue(friendship);
+    mockPrisma.friendship.update.mockResolvedValue({ ...friendship, status: 'ACCEPTED' });
+    (notificationsService.createNotification as jest.Mock).mockResolvedValue({});
+
+    await service.acceptRequest('f1', 'u2');
+
+    expect(notificationsService.createNotification).toHaveBeenCalledWith(
+      'u1', 'FRIEND_ACCEPTED', { friendshipId: 'f1' }, 'u2'
+    );
+  });
+
+  it('should publish notification after accepting a request', async () => {
+    const friendship = { id: 'f1', requesterId: 'u1', addresseeId: 'u2', status: 'PENDING' };
+    const notification = { id: 'notif-2', type: 'FRIEND_ACCEPTED' };
+    mockPrisma.friendship.findUnique.mockResolvedValue(friendship);
+    mockPrisma.friendship.update.mockResolvedValue({ ...friendship, status: 'ACCEPTED' });
+    (notificationsService.createNotification as jest.Mock).mockResolvedValue(notification);
+
+    await service.acceptRequest('f1', 'u2');
+
+    expect(pubSub.publish).toHaveBeenCalledWith('notificationReceived', {
+      notificationReceived: notification,
+      userId: 'u1',
+    });
+  });
+
+  it('should throw on self-friend request before creating notification', async () => {
+    await expect(service.sendRequest('u1', 'u1')).rejects.toThrow('Cannot friend yourself');
+    expect(notificationsService.createNotification).not.toHaveBeenCalled();
+    expect(pubSub.publish).not.toHaveBeenCalled();
+  });
+
+  it('should throw on duplicate friend request before creating notification', async () => {
+    mockPrisma.friendship.findUnique.mockResolvedValue({ id: 'existing' });
+    await expect(service.sendRequest('u1', 'u2')).rejects.toThrow('Friendship already exists');
+    expect(notificationsService.createNotification).not.toHaveBeenCalled();
+    expect(pubSub.publish).not.toHaveBeenCalled();
   });
 });

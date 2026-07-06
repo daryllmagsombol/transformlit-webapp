@@ -30,6 +30,7 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
 
     // camelCase channel name, quoted so Postgres preserves case
     await client.query('LISTEN "messageAdded"');
+    await client.query('LISTEN "notificationReceived"');
 
     // Keep connection open
     client.on('error', () => {});

@@ -1,9 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { PubSubService } from '../notifications/notifications.pubsub.js';
 
 @Injectable()
 export class FriendsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notifications: NotificationsService,
+    private readonly pubSub: PubSubService,
+  ) {}
 
   async listFriends(userId: string) {
     return this.prisma.friendship.findMany({
@@ -31,9 +38,23 @@ export class FriendsService {
     });
     if (existing) throw new Error('Friendship already exists');
 
-    return this.prisma.friendship.create({
+    const friendship = await this.prisma.friendship.create({
       data: { requesterId, addresseeId, status: 'PENDING' },
     });
+
+    const notification = await this.notifications.createNotification(
+      addresseeId,
+      'FRIEND_REQUEST',
+      { friendshipId: friendship.id },
+      requesterId,
+    );
+
+    await this.pubSub.publish('notificationReceived', {
+      notificationReceived: notification,
+      userId: addresseeId,
+    });
+
+    return friendship;
   }
 
   async acceptRequest(friendshipId: string, userId: string) {
@@ -41,10 +62,24 @@ export class FriendsService {
       where: { id: friendshipId },
     });
     if (!friendship || friendship.addresseeId !== userId) throw new Error('Not authorized');
-    return this.prisma.friendship.update({
+    const updated = await this.prisma.friendship.update({
       where: { id: friendshipId },
       data: { status: 'ACCEPTED' },
     });
+
+    const notification = await this.notifications.createNotification(
+      friendship.requesterId,
+      'FRIEND_ACCEPTED',
+      { friendshipId: friendship.id },
+      userId,
+    );
+
+    await this.pubSub.publish('notificationReceived', {
+      notificationReceived: notification,
+      userId: friendship.requesterId,
+    });
+
+    return updated;
   }
 
   async rejectRequest(friendshipId: string, userId: string) {
