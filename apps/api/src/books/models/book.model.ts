@@ -48,6 +48,9 @@ export class BookProgress {
   @Field(() => ID)
   bookId: string;
 
+  @Field(() => Book, { nullable: true })
+  book?: Book;
+
   @Field()
   currentPage: number;
 
