@@ -19,6 +19,7 @@ export { ReadingProgressCard } from './reading-progress-card';
 export { FriendCard } from './friend-card';
 export { FriendRequestItem } from './friend-request-item';
 export { SuggestedFriendCard } from './suggested-friend-card';
+export { NotificationItem } from './notification-item';
 export {
   MailIcon,
   LockIcon,
