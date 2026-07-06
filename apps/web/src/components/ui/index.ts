@@ -15,6 +15,7 @@ export { FeaturedGroupCard } from './featured-group-card';
 export { CompactGroupCard } from './compact-group-card';
 export { BookCard, BookCardSkeleton } from './book-card';
 export { ReadingProgressCard } from './reading-progress-card';
+export { FriendCard } from './friend-card';
 export {
   MailIcon,
   LockIcon,
@@ -26,5 +27,6 @@ export {
   MicrosoftIcon,
   SpinnerIcon,
   AutoStoriesIcon,
+  ChevronRightIcon,
 } from './icons';
 export type { IconProps } from './icons';
