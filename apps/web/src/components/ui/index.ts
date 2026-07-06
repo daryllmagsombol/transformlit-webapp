@@ -17,6 +17,7 @@ export { BookCard, BookCardSkeleton } from './book-card';
 export { ReadingProgressCard } from './reading-progress-card';
 export { FriendCard } from './friend-card';
 export { FriendRequestItem } from './friend-request-item';
+export { SuggestedFriendCard } from './suggested-friend-card';
 export {
   MailIcon,
   LockIcon,
