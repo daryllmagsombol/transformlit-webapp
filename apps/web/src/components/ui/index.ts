@@ -16,6 +16,7 @@ export { CompactGroupCard } from './compact-group-card';
 export { BookCard, BookCardSkeleton } from './book-card';
 export { ReadingProgressCard } from './reading-progress-card';
 export { FriendCard } from './friend-card';
+export { FriendRequestItem } from './friend-request-item';
 export {
   MailIcon,
   LockIcon,
