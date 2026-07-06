@@ -3,13 +3,13 @@ import {
   ApolloLink,
   InMemoryCache,
   createHttpLink,
-  fromPromise,
   split,
 } from '@apollo/client';
 import { setContext } from '@apollo/client/link/context';
 import { onError } from '@apollo/client/link/error';
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
 import { getMainDefinition } from '@apollo/client/utilities';
+import { Observable } from 'rxjs';
 import { createClient } from 'graphql-ws';
 import type { GraphQLUser } from '@transformlit/shared';
 import { useAuthStore } from '../store';
@@ -173,12 +173,17 @@ const proactiveRefreshLink = new ApolloLink((operation, forward) => {
     Date.now() - lastRefreshAttempt > MIN_REFRESH_INTERVAL_MS
   ) {
     lastRefreshAttempt = Date.now();
-    return fromPromise(
-      refreshTokens().then((success) => {
-        if (!success) throw new Error('Session expired');
-        return forward(operation);
-      }),
-    ).flatMap((observable) => observable);
+    return new Observable((subscriber) => {
+      refreshTokens()
+        .then((success) => {
+          if (!success) throw new Error('Session expired');
+          return forward(operation);
+        })
+        .then((observable) => {
+          observable.subscribe(subscriber);
+        })
+        .catch((err) => subscriber.error(err));
+    });
   }
   return forward(operation);
 });
@@ -194,19 +199,24 @@ const errorLink = onError(({ graphQLErrors, networkError, operation, forward }) 
   if (context.authRetry) return;
   operation.setContext({ ...context, authRetry: true });
 
-  return fromPromise(
-    refreshTokens().then((success) => {
-      if (!success) throw new Error('Session expired');
-      const token = getAccessToken();
-      operation.setContext(({ headers = {} }) => ({
-        headers: {
-          ...headers,
-          authorization: token ? `Bearer ${token}` : '',
-        },
-      }));
-      return forward(operation);
-    }),
-  ).flatMap((observable) => observable);
+  return new Observable((subscriber) => {
+    refreshTokens()
+      .then((success) => {
+        if (!success) throw new Error('Session expired');
+        const token = getAccessToken();
+        operation.setContext(({ headers = {} }) => ({
+          headers: {
+            ...headers,
+            authorization: token ? `Bearer ${token}` : '',
+          },
+        }));
+        return forward(operation);
+      })
+      .then((observable) => {
+        observable.subscribe(subscriber);
+      })
+      .catch((err) => subscriber.error(err));
+  });
 });
 
 const wsLink = !isServer
