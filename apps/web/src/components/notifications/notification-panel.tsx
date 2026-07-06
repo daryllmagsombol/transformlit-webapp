@@ -120,7 +120,7 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
     <>
       <div className="fixed inset-0 bg-ink-black/60 backdrop-blur-[2px] z-[60]" onClick={onClose} />
 
-      <div className="fixed top-0 right-0 h-full w-[320px] md:w-[400px] bg-surface shadow-2xl z-[70] border-l border-outline-variant transform transition-transform duration-300 ease-in-out">
+      <div className="fixed bottom-0 left-0 w-full h-[60vh] rounded-t-2xl md:top-0 md:bottom-auto md:left-auto md:right-0 md:h-full md:w-[400px] md:rounded-none bg-surface shadow-2xl z-[70] border-l border-outline-variant transform transition-transform duration-300 ease-in-out">
         <div className="flex flex-col h-full">
           <div className="p-4 border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
             <h2 className="font-display text-headline-h3 font-bold text-primary">Notifications</h2>

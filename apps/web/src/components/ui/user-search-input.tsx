@@ -87,7 +87,7 @@ export function UserSearchInput({ onSelectUser, currentUserId }: UserSearchInput
           value={query}
           onChange={handleChange}
           onFocus={() => results.length > 0 && setOpen(true)}
-          className="w-full pl-12 pr-4 py-3 bg-surface-container-lowest border-outline border rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all font-body"
+          className="w-full pl-12 pr-4 py-3 bg-surface-container-lowest border-outline-variant border rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all font-body"
         />
       </div>
 
@@ -113,7 +113,7 @@ export function UserSearchInput({ onSelectUser, currentUserId }: UserSearchInput
             >
               <UserAvatar avatarUrl={user.avatarUrl} displayName={user.displayName} size="sm" />
               <div className="flex-1 min-w-0">
-                <p className="font-headline-h4 text-on-surface text-sm truncate">{user.displayName}</p>
+                <p className="font-display font-headline-h4 text-on-surface truncate">{user.displayName}</p>
                 {user.bio && (
                   <p className="font-micro text-on-surface-variant truncate">{user.bio}</p>
                 )}

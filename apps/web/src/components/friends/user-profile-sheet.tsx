@@ -176,7 +176,7 @@ export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserP
       <div className="flex flex-col items-center">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 bg-white/20 hover:bg-white/40 p-1 rounded-full text-on-surface transition-colors"
+          className="absolute top-4 right-4 bg-surface-container-lowest/60 hover:bg-surface-container-lowest/80 p-1 rounded-full text-on-surface transition-colors"
         >
           <span className="material-symbols-outlined">close</span>
         </button>
@@ -194,7 +194,7 @@ export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserP
             </div>
             <h3 className="mt-4 font-display text-headline-h2 text-on-surface">{user.displayName}</h3>
             {user.bio && (
-              <p className="font-body text-small text-on-surface-variant mt-2 text-center line-clamp-2">
+              <p className="font-small text-small text-on-surface-variant mt-2 text-center line-clamp-2">
                 {user.bio}
               </p>
             )}

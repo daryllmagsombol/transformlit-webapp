@@ -21,7 +21,7 @@ export function FriendRequestItem({
     <div className="bg-paper-warm p-4 rounded-xl shadow-sm flex flex-col sm:flex-row items-center gap-4 border border-outline-variant/30">
       <UserAvatar avatarUrl={avatarUrl} displayName={name} size="md" />
       <div className="text-center sm:text-left flex-1">
-        <p className="font-headline-h4 text-on-surface">{name}</p>
+        <p className="font-display font-headline-h4 text-on-surface">{name}</p>
         {bio && (
           <p className="font-body-mobile text-on-surface-variant text-sm italic">{bio}</p>
         )}
@@ -29,7 +29,7 @@ export function FriendRequestItem({
       <div className="flex gap-2 w-full sm:w-auto">
         <button
           onClick={onAccept}
-          className="flex-1 sm:flex-none bg-primary text-on-primary px-4 py-2 rounded-lg font-small font-bold hover:brightness-110 active:scale-95 transition-all"
+          className="flex-1 sm:flex-none bg-brand-orange-dark text-on-primary px-4 py-2 rounded-lg font-small font-bold hover:brightness-110 active:scale-95 transition-all"
         >
           Accept
         </button>

@@ -164,7 +164,7 @@ export default function FriendsClient() {
   return (
     <div className="space-y-8">
       {/* Search */}
-      <div className="sticky top-16 bg-background/80 backdrop-blur-md z-30 py-4 -mx-4 px-4">
+      <div className="sticky top-16 bg-background/80 backdrop-blur-md z-30 py-4 -mx-4 px-4 md:mx-0 md:px-0">
         <UserSearchInput onSelectUser={handleSelectUser} currentUserId={currentUserId ?? ''} />
       </div>
 
@@ -175,7 +175,7 @@ export default function FriendsClient() {
             onClick={() => setRequestsOpen(!requestsOpen)}
             className="flex items-center justify-between w-full mb-4 group"
           >
-            <h3 className="font-display text-headline-h3 text-on-surface">
+            <h3 className="font-display text-headline-h2 text-on-surface">
               Friend Requests ({requests.length})
             </h3>
             <span
@@ -204,7 +204,7 @@ export default function FriendsClient() {
 
       {/* Suggested Friends (placeholder — real suggestions come later via group overlap) */}
       <section>
-        <h3 className="font-display text-headline-h3 text-on-surface mb-4">Suggested Friends</h3>
+        <h3 className="font-display text-headline-h2 text-on-surface mb-4">Suggested Friends</h3>
         {loading ? (
           <div className="flex gap-4 overflow-x-auto pb-4">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -212,7 +212,7 @@ export default function FriendsClient() {
             ))}
           </div>
         ) : (
-          <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 snap-x">
+          <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 md:mx-0 md:px-0 snap-x">
             <SuggestedFriendCard name="Leo T." tag="Classic Literature Fan" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
             <SuggestedFriendCard name="Emma G." tag="Sci-Fi Enthusiast" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
             <SuggestedFriendCard name="Oliver K." tag="Poetry Lover" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
@@ -222,7 +222,7 @@ export default function FriendsClient() {
 
       {/* Friends List */}
       <section>
-        <h3 className="font-display text-headline-h3 text-on-surface mb-4">
+        <h3 className="font-display text-headline-h2 text-on-surface mb-4">
           Your Friends ({friends.length})
         </h3>
         {loading ? (

@@ -26,6 +26,7 @@ export function NotificationItem({ type, body, timestamp, read, onPress }: Notif
       tabIndex={0}
       onClick={onPress}
       onKeyDown={(e) => e.key === 'Enter' && onPress()}
+      aria-label={`Notification: ${body}`}
       className={`p-4 rounded-xl hover:bg-surface-container transition-colors cursor-pointer border border-transparent hover:border-outline-variant relative ${
         !read ? 'bg-white' : 'bg-paper'
       }`}

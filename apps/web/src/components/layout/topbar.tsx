@@ -9,6 +9,7 @@ import { NotificationPanel } from '../notifications/notification-panel';
 
 const NAV_LINKS = [
   { label: 'Feed', href: '/feed' },
+  { label: 'Friends', href: '/friends' },
   { label: 'Library', href: '/books' },
   { label: 'Community', href: '/groups' },
 ] as const;

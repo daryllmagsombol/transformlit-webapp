@@ -15,7 +15,7 @@ export function SuggestedFriendCard({ name, tag, avatarUrl, onAdd }: SuggestedFr
       <div className="mb-3 ring-4 ring-white dark:ring-surface-dark shadow-inner rounded-full">
         <UserAvatar avatarUrl={avatarUrl} displayName={name} size="md" />
       </div>
-      <p className="font-headline-h4 text-on-surface truncate w-full">{name}</p>
+      <p className="font-display font-headline-h4 text-on-surface truncate w-full">{name}</p>
       <p className="font-small text-on-surface-variant mb-4 truncate w-full">{tag}</p>
       <button
         onClick={onAdd}

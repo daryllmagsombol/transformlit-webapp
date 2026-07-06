@@ -191,7 +191,7 @@ export default function UserProfileClient() {
           </div>
           <div className="flex-1 text-center md:text-left">
             <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-4 mb-2">
-              <h1 className="font-headline-h1 text-on-surface">{user.displayName}</h1>
+              <h1 className="font-display font-headline-h1 text-on-surface">{user.displayName}</h1>
               {user.role !== 'MEMBER' && (
                 <span className="bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded tracking-widest self-center md:self-auto uppercase">
                   {user.role}
@@ -199,7 +199,7 @@ export default function UserProfileClient() {
               )}
             </div>
             {user.bio && (
-              <p className="font-body italic text-on-surface-variant text-lg max-w-xl mb-6">
+              <p className="font-body text-body italic text-on-surface-variant max-w-xl mb-6">
                 {user.bio}
               </p>
             )}
@@ -207,7 +207,7 @@ export default function UserProfileClient() {
               <button
                 onClick={buttonOnClick}
                 disabled={buttonDisabled || actionLoading}
-                className={`font-headline-h4 px-6 h-11 rounded-md flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50 ${
+                className={`font-display font-headline-h4 px-6 h-11 rounded-md flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50 ${
                   buttonDisabled
                     ? 'bg-surface-container-high text-on-surface-variant cursor-not-allowed'
                     : 'bg-brand-orange-dark text-on-primary hover:translate-y-[-2px]'
@@ -232,7 +232,7 @@ export default function UserProfileClient() {
 
       {profile.bookProgress.length > 0 && (
         <section>
-          <h2 className="font-headline-h2 text-on-surface mb-6">Currently Reading</h2>
+          <h2 className="font-display font-headline-h2 text-on-surface mb-6">Currently Reading</h2>
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 snap-x">
             {profile.bookProgress.map((bp) => (
               <div key={bp.book.id} className="flex-shrink-0 w-[160px] snap-start">
@@ -245,7 +245,7 @@ export default function UserProfileClient() {
 
       {profile.groups.length > 0 && (
         <section>
-          <h2 className="font-headline-h2 text-on-surface mb-6">Active Groups</h2>
+          <h2 className="font-display font-headline-h2 text-on-surface mb-6">Active Groups</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {profile.groups.map((g) => (
               <div
@@ -257,7 +257,7 @@ export default function UserProfileClient() {
                   <span className="material-symbols-outlined text-on-secondary-container">auto_stories</span>
                 </div>
                 <div className="overflow-hidden">
-                  <h4 className="font-headline-h4 text-sm line-clamp-1">{g.name}</h4>
+                  <h4 className="font-display font-headline-h4 line-clamp-1">{g.name}</h4>
                   <p className="font-micro text-xs text-on-surface-variant">{g.memberCount} members</p>
                 </div>
               </div>

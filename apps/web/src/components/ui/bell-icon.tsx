@@ -81,7 +81,7 @@ export function BellIcon({ userId, onClick }: BellIconProps) {
     >
       notifications
       {count > 0 && (
-        <span className="absolute top-1.5 right-1.5 min-w-[16px] h-4 bg-error text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
+        <span className="absolute top-1.5 right-1.5 min-w-[16px] h-4 bg-error text-on-error text-[10px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
           {count > 9 ? '9+' : count}
         </span>
       )}

@@ -147,7 +147,7 @@ export default function NotificationsClient() {
     <div className="max-w-[800px] mx-auto py-8">
       {/* Header */}
       <div className="flex justify-between items-baseline mb-8 border-b border-outline-variant pb-4">
-        <h1 className="font-headline-h1 text-on-surface">Notifications</h1>
+        <h1 className="font-display font-headline-h1 text-on-surface">Notifications</h1>
         {notifications.some((n) => !n.readAt) && (
           <button
             onClick={handleMarkAllRead}
@@ -191,7 +191,7 @@ export default function NotificationsClient() {
           <span className="material-symbols-outlined text-[120px] text-primary opacity-40 mb-4">
             notifications_off
           </span>
-          <h3 className="font-headline-h3 text-on-surface mb-2">All caught up!</h3>
+          <h3 className="font-display font-headline-h3 text-on-surface mb-2">All caught up!</h3>
           <p className="font-body text-on-surface-variant max-w-xs">
             Your inbox is quiet. We&apos;ll let you know when something new happens.
           </p>

@@ -19,7 +19,7 @@ export function FriendCard({ name, bio, avatarUrl, mutualGroups, onPress }: Frie
     >
       <UserAvatar avatarUrl={avatarUrl} displayName={name} size="md" />
       <div className="ml-4 flex-1 min-w-0">
-        <p className="font-headline-h4 text-on-surface group-hover:text-primary transition-colors truncate">
+        <p className="font-display font-headline-h4 text-on-surface group-hover:text-primary transition-colors truncate">
           {name}
         </p>
         {bio && (
