@@ -89,6 +89,9 @@ importers:
       class-validator:
         specifier: ^0.15.1
         version: 0.15.1
+      express:
+        specifier: ^5.2.1
+        version: 5.2.1
       graphql:
         specifier: ^16.14.2
         version: 16.14.2
@@ -141,6 +144,9 @@ importers:
       '@testcontainers/postgresql':
         specifier: ^12.1.0
         version: 12.1.0
+      '@types/express':
+        specifier: ^5.0.6
+        version: 5.0.6
       '@types/jest':
         specifier: ^30.0.0
         version: 30.0.0
