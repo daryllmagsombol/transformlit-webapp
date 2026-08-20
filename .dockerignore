@@ -10,3 +10,4 @@ infra/**/.terraform
 **/coverage
 *.log
 .DS_Store
+*.tsbuildinfo
