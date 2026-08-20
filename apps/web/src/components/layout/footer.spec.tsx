@@ -18,7 +18,7 @@ describe('Footer', () => {
   describe('copyright', () => {
     it('renders copyright text', () => {
       render(<Footer />);
-      expect(screen.getByText(/2024 Transformlit. All rights reserved./)).toBeInTheDocument();
+      expect(screen.getByText(/2025 Transformlit. All rights reserved./)).toBeInTheDocument();
     });
   });
 

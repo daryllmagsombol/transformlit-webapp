@@ -9,9 +9,10 @@ interface FriendCardProps {
   avatarUrl?: string | null;
   mutualGroups?: number;
   onPress: () => void;
+  statusBadge?: React.ReactNode;
 }
 
-export function FriendCard({ name, bio, avatarUrl, mutualGroups, onPress }: FriendCardProps) {
+export function FriendCard({ name, bio, avatarUrl, mutualGroups, onPress, statusBadge }: FriendCardProps) {
   return (
     <button
       onClick={onPress}
@@ -19,9 +20,12 @@ export function FriendCard({ name, bio, avatarUrl, mutualGroups, onPress }: Frie
     >
       <UserAvatar avatarUrl={avatarUrl} displayName={name} size="md" />
       <div className="ml-4 flex-1 min-w-0">
-        <p className="font-display font-headline-h4 text-on-surface group-hover:text-primary transition-colors truncate">
-          {name}
-        </p>
+        <div className="flex items-center gap-2">
+          <p className="font-display font-headline-h4 text-on-surface group-hover:text-primary transition-colors truncate">
+            {name}
+          </p>
+          {statusBadge}
+        </div>
         {bio && (
           <p className="font-body-mobile text-sm text-on-surface-variant line-clamp-1">{bio}</p>
         )}

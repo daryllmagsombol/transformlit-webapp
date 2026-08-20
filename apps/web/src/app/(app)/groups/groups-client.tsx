@@ -3,10 +3,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { gql } from '@apollo/client';
 import type { GraphQLGroup } from '@transformlit/shared';
-import { useToast, GroupCard, CategoryChip, FeaturedGroupCard, CompactGroupCard, LoadingSpinner } from '../../components/ui';
-import { apolloClient } from '../../lib/apollo-client';
-import { useRequireAuth } from '../../lib/hooks/use-require-auth';
-import { GROUP_CATEGORIES } from '../../lib/constants';
+import { useToast, GroupCard, CategoryChip, FeaturedGroupCard, CompactGroupCard, LoadingSpinner } from '../../../components/ui';
+import { apolloClient } from '../../../lib/apollo-client';
+import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
+import { GROUP_CATEGORIES } from '../../../lib/constants';
 
 // ── GraphQL ─────────────────────────────────────────────────────────────────
 
@@ -58,14 +58,14 @@ export default function GroupsClient() {
   const loadData = useCallback(async () => {
     try {
       const [myResult, discoverResult] = await Promise.all([
-        apolloClient.query({ query: MY_GROUPS_QUERY }),
-        apolloClient.query({
+        apolloClient.query<{ myGroups: GraphQLGroup[] }>({ query: MY_GROUPS_QUERY }),
+        apolloClient.query<{ discoverGroups: GraphQLGroup[] }>({
           query: DISCOVER_GROUPS_QUERY,
           variables: { category: selectedCategory || null },
         }),
       ]);
-      setMyGroups(myResult.data.myGroups ?? []);
-      setDiscoverGroups(discoverResult.data.discoverGroups ?? []);
+      setMyGroups(myResult.data?.myGroups ?? []);
+      setDiscoverGroups(discoverResult.data?.discoverGroups ?? []);
     } catch {
       addToast('Failed to load groups.', 'error');
     } finally {
@@ -128,6 +128,12 @@ export default function GroupsClient() {
       <section className="mb-12">
         <div className="flex justify-between items-center mb-6">
           <h2 className="font-display text-headline-h2 text-on-surface">Active Groups</h2>
+          <button
+            onClick={() => addToast('All groups coming soon.', 'info')}
+            className="font-small text-small font-bold text-brand-orange-dark hover:underline"
+          >
+            View All
+          </button>
         </div>
 
         {loading ? (
@@ -198,6 +204,7 @@ export default function GroupsClient() {
                 description={featuredDiscover.description}
                 coverImageUrl={featuredDiscover.coverImageUrl}
                 memberCount={featuredDiscover.memberCount}
+                onDetails={() => addToast('Group details coming soon.', 'info')}
               />
             ) : (
               <div className="md:col-span-8 bg-surface-container-low rounded-2xl p-8 text-center border border-outline-variant">

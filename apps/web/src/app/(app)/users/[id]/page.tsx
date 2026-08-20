@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import { AuthenticatedLayout } from '../../../components/layout/authenticated-layout';
 import UserProfileClient from './user-profile-client';
 
 export const metadata: Metadata = {
@@ -7,9 +6,5 @@ export const metadata: Metadata = {
 };
 
 export default function Route() {
-  return (
-    <AuthenticatedLayout>
-      <UserProfileClient />
-    </AuthenticatedLayout>
-  );
+  return <UserProfileClient />;
 }

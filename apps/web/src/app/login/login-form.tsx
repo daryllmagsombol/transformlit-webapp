@@ -7,6 +7,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuthStore } from '../../store';
+import type { GraphQLUser } from '@transformlit/shared';
 import { setAccessToken, setRefreshToken, removeAccessToken, removeRefreshToken } from '../../lib/auth';
 import { useToast, TextInput, SpinnerIcon, MailIcon, LockIcon, EyeIcon, EyeOffIcon, AutoStoriesIcon, GoogleIcon, FacebookIcon, MicrosoftIcon } from '../../components/ui';
 import { Footer } from '../../components/layout';
@@ -78,13 +79,13 @@ export default function LoginForm() {
         ]);
 
         // Fetch user profile using the freshly stored access token
-        const { data } = await apolloClient.query({
+        const { data } = await apolloClient.query<{ me: GraphQLUser }>({
           query: gql`
             query Me { me { id email displayName avatarUrl } }
           `,
         });
 
-        setAuth(data.me, urlToken, urlRefresh);
+        setAuth(data!.me, urlToken, urlRefresh);
         addToast('Welcome back!', 'success');
         // Replace history so the OAuth tokens do not remain in the
         // browser history entry for /login.
@@ -110,7 +111,7 @@ export default function LoginForm() {
           import('../../lib/apollo-client'),
         ]);
 
-        const result = await apolloClient.mutate({
+        const result = await apolloClient.mutate<{ loginLocal: { user: GraphQLUser; accessToken: string; refreshToken: string | null } }>({
           mutation: gql`
             mutation LoginLocal($input: LoginLocalInput!) {
               loginLocal(input: $input) {
@@ -123,7 +124,7 @@ export default function LoginForm() {
           variables: { input: { email: values.email.trim(), password: values.password } },
         });
 
-        const { user, accessToken, refreshToken } = result.data.loginLocal;
+        const { user, accessToken, refreshToken } = result.data!.loginLocal;
         setAuth(user, accessToken, refreshToken ?? undefined);
 
         addToast('Welcome back!', 'success');

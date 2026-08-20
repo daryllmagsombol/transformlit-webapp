@@ -44,11 +44,11 @@ export function UserSearchInput({ onSelectUser, currentUserId }: UserSearchInput
     }
     setLoading(true);
     try {
-      const { data } = await apolloClient.query({
+      const { data } = await apolloClient.query<{ searchUsers: SearchUser[] }>({
         query: SEARCH_USERS_QUERY,
         variables: { query: q.trim() },
       });
-      const filtered = (data.searchUsers ?? []).filter((u: SearchUser) => u.id !== currentUserId);
+      const filtered = (data!.searchUsers ?? []).filter((u) => u.id !== currentUserId);
       setResults(filtered);
       setOpen(true);
     } catch {

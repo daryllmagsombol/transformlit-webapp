@@ -6,9 +6,10 @@ interface BookCardProps {
   book: GraphQLBook;
   onRead?: () => void;
   onBuy?: () => void;
+  statusPill?: React.ReactNode;
 }
 
-export function BookCard({ book, onRead, onBuy }: BookCardProps) {
+export function BookCard({ book, onRead, onBuy, statusPill }: BookCardProps) {
   const isFree = book.accessLevel === 'FREE';
 
   const priceLabel = isFree
@@ -39,7 +40,7 @@ export function BookCard({ book, onRead, onBuy }: BookCardProps) {
         <span
           className={`absolute top-3 left-3 px-2 py-1 rounded font-micro text-[10px] uppercase tracking-tighter font-bold ${
             isFree
-              ? 'bg-success text-white'
+              ? 'bg-brand-orange-dark text-white'
               : 'bg-ink-black text-ink-white'
           }`}
         >
@@ -55,6 +56,7 @@ export function BookCard({ book, onRead, onBuy }: BookCardProps) {
         <h3 className="font-display text-headline-h4 text-on-surface line-clamp-2 leading-snug mb-1">
           {book.title}
         </h3>
+        {statusPill && <div className="mb-2">{statusPill}</div>}
         {book.author && (
           <p className="font-body text-small text-on-surface-variant line-clamp-1 mb-3">
             {book.author}

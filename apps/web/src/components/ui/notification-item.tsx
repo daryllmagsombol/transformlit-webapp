@@ -15,9 +15,10 @@ interface NotificationItemProps {
   timestamp: string;
   read: boolean;
   onPress: () => void;
+  children?: React.ReactNode;
 }
 
-export function NotificationItem({ type, body, timestamp, read, onPress }: NotificationItemProps) {
+export function NotificationItem({ type, body, timestamp, read, onPress, children }: NotificationItemProps) {
   const config = ICON_MAP[type] ?? { icon: 'notifications', bgClass: 'bg-surface-container', textClass: 'text-on-surface-variant' };
 
   return (
@@ -41,6 +42,7 @@ export function NotificationItem({ type, body, timestamp, read, onPress }: Notif
         <div className="flex-1 min-w-0">
           <p className="font-body text-body text-on-surface leading-snug">{body}</p>
           <p className="font-micro text-micro text-on-surface-variant mt-1">{timestamp}</p>
+          {children}
         </div>
       </div>
     </div>

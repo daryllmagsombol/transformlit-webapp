@@ -3,13 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { gql } from '@apollo/client';
 import type { GraphQLAnnouncement, GraphQLVerseOfDay, GraphQLGroup } from '@transformlit/shared';
-import { useToast, SkeletonCard, LoadingSpinner } from '../../components/ui';
-import { Sidebar, BottomNav, TopBar } from '../../components/layout';
-import { useUIStore } from '../../store';
-import { apolloClient } from '../../lib/apollo-client';
-import { timeAgo } from '../../lib/time-ago';
-import { useRequireAuth } from '../../lib/hooks/use-require-auth';
-import { getCategoryConfig, getGroupMeta, QUICK_TRACK_CHAPTERS } from '../../lib/constants';
+import { useToast, SkeletonCard, LoadingSpinner } from '../../../components/ui';
+import { apolloClient } from '../../../lib/apollo-client';
+import { timeAgo } from '../../../lib/time-ago';
+import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
+import { getCategoryConfig, getGroupMeta, QUICK_TRACK_CHAPTERS } from '../../../lib/constants';
 
 // ── GraphQL Queries ──────────────────────────────────────────────────────────
 
@@ -29,7 +27,6 @@ const GROUPS_QUERY = gql`
 // ── Feed Page ────────────────────────────────────────────────────────────────
 
 export default function FeedClient() {
-  const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const { isReady } = useRequireAuth();
   const { addToast } = useToast();
 
@@ -41,12 +38,12 @@ export default function FeedClient() {
   const loadData = useCallback(async () => {
     try {
       const [feedResult, groupsResult] = await Promise.all([
-        apolloClient.query({ query: FEED_QUERY }),
-        apolloClient.query({ query: GROUPS_QUERY }),
+        apolloClient.query<{ announcements: GraphQLAnnouncement[]; verseOfDay: GraphQLVerseOfDay | null }>({ query: FEED_QUERY }),
+        apolloClient.query<{ groups: GraphQLGroup[] }>({ query: GROUPS_QUERY }),
       ]);
-      setAnnouncements(feedResult.data.announcements ?? []);
-      setVerse(feedResult.data.verseOfDay ?? null);
-      setGroups(groupsResult.data.groups ?? []);
+      setAnnouncements(feedResult.data!.announcements ?? []);
+      setVerse(feedResult.data!.verseOfDay ?? null);
+      setGroups(groupsResult.data!.groups ?? []);
     } catch {
       addToast('Failed to load feed. Please try again.', 'error');
     } finally {
@@ -64,18 +61,10 @@ export default function FeedClient() {
 
   return (
     <>
-      <TopBar />
-
       {/* ═══════════════════════════════════════════════════════════
-          SIDE NAV BAR (Desktop) — shared Sidebar component
+          MAIN CONTENT (shell TopBar/Sidebar/BottomNav live in (app)/layout)
           ═══════════════════════════════════════════════════════════ */}
-      <Sidebar />
-
-      {/* ═══════════════════════════════════════════════════════════
-          MAIN CONTENT
-          ═══════════════════════════════════════════════════════════ */}
-      <main className={`pt-20 pb-24 md:pb-8 min-h-screen transition-all duration-200 ease-out ${sidebarOpen ? 'md:pl-[240px]' : 'md:pl-0'}`}>
-        <div className="max-w-[1200px] mx-auto px-4 md:px-5 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+      <div className="max-w-[1200px] mx-auto px-4 md:px-5 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
 
           {/* Feed Column (8 units) */}
           <div className="lg:col-span-8 flex flex-col gap-8">
@@ -87,6 +76,24 @@ export default function FeedClient() {
                   <div className="max-w-2xl">
                     <blockquote className="font-body text-headline-h2 md:text-display text-on-surface italic leading-relaxed mb-6">{verse.text}</blockquote>
                     <cite className="font-display text-headline-h4 not-italic text-on-surface-variant opacity-80">— {verse.reference} ({verse.version})</cite>
+                    <div className="mt-6 flex items-center justify-center gap-6">
+                      <button
+                        onClick={() => addToast('Share coming soon.', 'info')}
+                        className="flex items-center gap-1.5 text-small text-on-surface-variant hover:text-brand-orange-dark transition-colors"
+                        type="button"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">share</span>
+                        <span>Share</span>
+                      </button>
+                      <button
+                        onClick={() => addToast('Saved to your library.', 'success')}
+                        className="flex items-center gap-1.5 text-small text-on-surface-variant hover:text-brand-orange-dark transition-colors"
+                        type="button"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">bookmark</span>
+                        <span>Save</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -187,9 +194,6 @@ export default function FeedClient() {
             </section>
           </aside>
         </div>
-      </main>
-
-      <BottomNav />
 
       {/* ═══════════════════════════════════════════════════════════
           FAB

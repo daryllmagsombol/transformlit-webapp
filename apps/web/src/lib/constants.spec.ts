@@ -78,7 +78,7 @@ describe('GROUP_CATEGORIES', () => {
 
 describe('QUICK_TRACK_CHAPTERS', () => {
   it('contains the expected chapters', () => {
-    expect(QUICK_TRACK_CHAPTERS).toEqual(['Romans 12', 'Psalms 23', 'Matthew 5']);
+    expect(QUICK_TRACK_CHAPTERS).toEqual(['Romans 12', 'Proverbs 12', 'Matthew 5']);
   });
 });
 

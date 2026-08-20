@@ -3,10 +3,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { gql } from '@apollo/client';
 import { useParams, useRouter } from 'next/navigation';
-import { apolloClient } from '../../../lib/apollo-client';
-import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
-import { useAuthStore } from '../../../store';
-import { useToast, UserAvatar, BookCard, LoadingSpinner } from '../../../components/ui';
+import { apolloClient } from '../../../../lib/apollo-client';
+import { useRequireAuth } from '../../../../lib/hooks/use-require-auth';
+import { useAuthStore } from '../../../../store';
+import { useToast, UserAvatar, BookCard, LoadingSpinner } from '../../../../components/ui';
 import type { GraphQLBook } from '@transformlit/shared';
 
 const USER_PROFILE_QUERY = gql`
@@ -165,6 +165,19 @@ export default function UserProfileClient() {
     }
   }
 
+  const MUTUAL_FRIENDS = [
+    { name: 'Julian R.', initial: 'J' },
+    { name: 'Mia Chen', initial: 'M' },
+    { name: 'Prof. Ao', initial: 'A' },
+    { name: 'Ling W.', initial: 'L' },
+  ];
+
+  const BOOK_STATUS_PILLS: { label: string; colorClass: string }[] = [
+    { label: 'Reading', colorClass: 'bg-success text-white' },
+    { label: 'Queued', colorClass: 'bg-accent-teal-dark text-white' },
+    { label: 'Reprinted', colorClass: 'bg-brand-orange-dark text-white' },
+  ];
+
   const toBookCardBook = (bp: ProfileData['userProfile']['bookProgress'][number]): GraphQLBook => ({
     id: bp.book.id,
     title: bp.book.title,
@@ -204,20 +217,29 @@ export default function UserProfileClient() {
               </p>
             )}
             {!isOwnProfile && (
-              <button
-                onClick={buttonOnClick}
-                disabled={buttonDisabled || actionLoading}
-                className={`font-display font-headline-h4 px-6 h-11 rounded-md flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50 ${
-                  buttonDisabled
-                    ? 'bg-surface-container-high text-on-surface-variant cursor-not-allowed'
-                    : 'bg-brand-orange-dark text-on-primary hover:translate-y-[-2px]'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[20px]">
-                  {friendship?.status === 'ACCEPTED' ? 'check' : 'person_add'}
-                </span>
-                {actionLoading ? 'Loading...' : buttonLabel}
-              </button>
+              <div className="flex items-center justify-center md:justify-start gap-3">
+                <button
+                  onClick={buttonOnClick}
+                  disabled={buttonDisabled || actionLoading}
+                  className={`font-display font-headline-h4 px-6 h-11 rounded-md flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50 ${
+                    buttonDisabled
+                      ? 'bg-surface-container-high text-on-surface-variant cursor-not-allowed'
+                      : 'bg-brand-orange-dark text-on-primary hover:translate-y-[-2px]'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[20px]">
+                    {friendship?.status === 'ACCEPTED' ? 'check' : 'person_add'}
+                  </span>
+                  {actionLoading ? 'Loading...' : buttonLabel}
+                </button>
+                <button
+                  onClick={() => addToast('Messaging coming soon.', 'info')}
+                  className="font-display font-headline-h4 px-6 h-11 rounded-md border border-outline-variant text-on-surface flex items-center gap-2 shadow-sm transition-all active:scale-95 hover:bg-surface-container-high"
+                >
+                  <span className="material-symbols-outlined text-[20px]">chat_bubble</span>
+                  Message
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -230,15 +252,46 @@ export default function UserProfileClient() {
         </div>
       </section>
 
+      {!isOwnProfile && (
+        <section>
+          <h2 className="font-micro text-micro uppercase tracking-widest text-on-surface-variant mb-4 flex items-center gap-2">
+            <span className="material-symbols-outlined text-base">group</span>
+            Mutual Friends
+          </h2>
+          <div className="flex gap-5 overflow-x-auto pb-2 -mx-4 px-4">
+            {MUTUAL_FRIENDS.map((friend) => (
+              <div key={friend.name} className="flex flex-col items-center gap-2 min-w-[64px]">
+                <div className="w-10 h-10 rounded-full bg-primary-fixed border border-primary/20 flex items-center justify-center overflow-hidden">
+                  <span className="text-xs font-bold text-on-primary-container">{friend.initial}</span>
+                </div>
+                <span className="font-micro text-[10px] text-on-surface-variant text-center">{friend.name}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {profile.bookProgress.length > 0 && (
         <section>
           <h2 className="font-display font-headline-h2 text-on-surface mb-6">Currently Reading</h2>
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 snap-x">
-            {profile.bookProgress.map((bp) => (
-              <div key={bp.book.id} className="flex-shrink-0 w-[160px] snap-start">
-                <BookCard book={toBookCardBook(bp)} />
-              </div>
-            ))}
+            {profile.bookProgress.map((bp, index) => {
+              const status = BOOK_STATUS_PILLS[index % BOOK_STATUS_PILLS.length];
+              return (
+                <div key={bp.book.id} className="flex-shrink-0 w-[160px] snap-start">
+                  <BookCard
+                    book={toBookCardBook(bp)}
+                    statusPill={
+                      <span
+                        className={`inline-block rounded-full uppercase text-[10px] font-bold px-2 py-0.5 ${status.colorClass}`}
+                      >
+                        {status.label}
+                      </span>
+                    }
+                  />
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
@@ -247,7 +300,7 @@ export default function UserProfileClient() {
         <section>
           <h2 className="font-display font-headline-h2 text-on-surface mb-6">Active Groups</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {profile.groups.map((g) => (
+            {profile.groups.map((g, idx) => (
               <div
                 key={g.id}
                 onClick={() => router.push(`/groups/${g.slug}`)}
@@ -258,7 +311,9 @@ export default function UserProfileClient() {
                 </div>
                 <div className="overflow-hidden">
                   <h4 className="font-display font-headline-h4 line-clamp-1">{g.name}</h4>
-                  <p className="font-micro text-xs text-on-surface-variant">{g.memberCount} members</p>
+                  <p className="font-micro text-xs text-on-surface-variant">
+                    {g.memberCount} members · {idx < 2 ? 'Active now' : 'Active today'}
+                  </p>
                 </div>
               </div>
             ))}

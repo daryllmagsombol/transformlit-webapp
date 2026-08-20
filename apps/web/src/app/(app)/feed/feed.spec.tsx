@@ -19,7 +19,7 @@ let mockAuthState: Record<string, unknown> = {
   isHydrated: true,
 };
 
-jest.mock('../../store', () => ({
+jest.mock('../../../store', () => ({
   useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector(mockAuthState),
   useUIStore: (selector: (s: Record<string, unknown>) => unknown) => selector({ sidebarOpen: true, toggleSidebar: jest.fn() }),
 }));
@@ -30,7 +30,7 @@ jest.mock('@apollo/client', () => ({
   gql: (strings: TemplateStringsArray) => strings[0],
 }));
 
-jest.mock('../../lib/apollo-client', () => ({
+jest.mock('../../../lib/apollo-client', () => ({
   apolloClient: {
     query: mockQuery,
   },
@@ -38,15 +38,15 @@ jest.mock('../../lib/apollo-client', () => ({
 
 const mockAddToast = jest.fn();
 
-jest.mock('../../components/layout/sidebar', () => ({
+jest.mock('../../../components/layout/sidebar', () => ({
   Sidebar: () => <div data-testid="sidebar" />,
 }));
 
-jest.mock('../../components/layout/bottom-nav', () => ({
+jest.mock('../../../components/layout/bottom-nav', () => ({
   BottomNav: () => <div data-testid="bottom-nav" />,
 }));
 
-jest.mock('../../components/ui', () => ({
+jest.mock('../../../components/ui', () => ({
   useToast: () => ({ addToast: mockAddToast }),
   NavItem: ({ label, href, active }: { label: string; href: string; active?: boolean }) => (
     <a href={href} data-active={active}>{label}</a>
@@ -54,6 +54,7 @@ jest.mock('../../components/ui', () => ({
   UserAvatar: ({ displayName }: { displayName?: string }) => (
     <span data-testid="user-avatar">{displayName}</span>
   ),
+  BellIcon: () => <button data-testid="bell-icon" />,
   SkeletonCard: ({ lines }: { lines?: number }) => (
     <div data-testid="skeleton-card" data-lines={lines} />
   ),
@@ -62,11 +63,11 @@ jest.mock('../../components/ui', () => ({
   ),
 }));
 
-jest.mock('../../lib/time-ago', () => ({
+jest.mock('../../../lib/time-ago', () => ({
   timeAgo: () => '5 minutes ago',
 }));
 
-jest.mock('../../lib/constants', () => ({
+jest.mock('../../../lib/constants', () => ({
   getCategoryConfig: (category?: string) => {
     const configs: Record<string, { icon: string; iconBg: string; label: string; badgeClass: string }> = {
       EVENT: { icon: 'event_available', iconBg: 'bg-secondary', label: 'Event', badgeClass: 'bg-event' },

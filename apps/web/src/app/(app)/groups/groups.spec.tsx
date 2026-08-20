@@ -12,7 +12,7 @@ let mockAuthState: Record<string, unknown> = {
   isHydrated: true,
 };
 
-jest.mock('../../store', () => ({
+jest.mock('../../../store', () => ({
   useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector(mockAuthState),
 }));
 
@@ -23,7 +23,7 @@ jest.mock('@apollo/client', () => ({
 const mockQuery = jest.fn();
 const mockMutate = jest.fn();
 
-jest.mock('../../lib/apollo-client', () => ({
+jest.mock('../../../lib/apollo-client', () => ({
   apolloClient: {
     query: mockQuery,
     mutate: mockMutate,
@@ -32,7 +32,7 @@ jest.mock('../../lib/apollo-client', () => ({
 
 const mockAddToast = jest.fn();
 
-jest.mock('../../components/ui', () => ({
+jest.mock('../../../components/ui', () => ({
   useToast: () => ({ addToast: mockAddToast }),
   GroupCard: ({ name, description, memberCount }: { name: string; description?: string; memberCount: number }) => (
     <div data-testid="group-card">
@@ -62,7 +62,7 @@ jest.mock('../../components/ui', () => ({
   ),
 }));
 
-jest.mock('../../lib/constants', () => ({
+jest.mock('../../../lib/constants', () => ({
   GROUP_CATEGORIES: [
     { key: 'BIBLICAL_STUDIES', label: 'Biblical Studies', icon: 'menu_book' },
     { key: 'MODERN_FICTION', label: 'Modern Fiction', icon: 'auto_stories' },

@@ -1,5 +1,7 @@
 'use client';
 
+import { GROUP_CATEGORIES } from '../../lib/constants';
+
 interface GroupCardProps {
   name: string;
   slug?: string;
@@ -15,11 +17,12 @@ export function GroupCard({
   description,
   coverImageUrl,
   memberCount,
+  category,
 }: GroupCardProps) {
   return (
     <div className="bg-paper-warm rounded-xl shadow-sm border border-outline-variant overflow-hidden flex flex-col group hover:shadow-lg transition-all duration-300">
       {/* Cover image */}
-      <div className="h-32 overflow-hidden">
+      <div className="h-32 overflow-hidden relative">
         {coverImageUrl ? (
           <img
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
@@ -33,6 +36,9 @@ export function GroupCard({
             </span>
           </div>
         )}
+        <span className="absolute bottom-3 left-3 bg-ink-black/80 text-white text-[10px] uppercase px-2 py-0.5 rounded font-micro tracking-tighter">
+          {GROUP_CATEGORIES.find((c) => c.key === category)?.label ?? 'Reading Circle'}
+        </span>
       </div>
 
       {/* Content */}

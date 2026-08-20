@@ -3,9 +3,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { gql } from '@apollo/client';
 import { useRouter } from 'next/navigation';
-import { apolloClient } from '../../lib/apollo-client';
-import { useRequireAuth } from '../../lib/hooks/use-require-auth';
-import { useAuthStore } from '../../store';
+import { apolloClient } from '../../../lib/apollo-client';
+import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
+import { useAuthStore } from '../../../store';
 import {
   useToast,
   FriendCard,
@@ -14,8 +14,8 @@ import {
   UserSearchInput,
   LoadingSpinner,
   Modal,
-} from '../../components/ui';
-import { UserProfileSheet } from '../../components/friends/user-profile-sheet';
+} from '../../../components/ui';
+import { UserProfileSheet } from '../../../components/friends/user-profile-sheet';
 
 const FRIENDS_QUERY = gql`
   query Friends {
@@ -104,11 +104,11 @@ export default function FriendsClient() {
   const loadData = useCallback(async () => {
     try {
       const [friendsResult, requestsResult] = await Promise.all([
-        apolloClient.query({ query: FRIENDS_QUERY }),
-        apolloClient.query({ query: REQUESTS_QUERY }),
+        apolloClient.query<{ friends: FriendData[] }>({ query: FRIENDS_QUERY }),
+        apolloClient.query<{ friendRequests: RequestData[] }>({ query: REQUESTS_QUERY }),
       ]);
-      setFriends(friendsResult.data.friends ?? []);
-      setRequests(requestsResult.data.friendRequests ?? []);
+      setFriends(friendsResult.data?.friends ?? []);
+      setRequests(requestsResult.data?.friendRequests ?? []);
     } catch {
       addToast('Failed to load friends.', 'error');
     } finally {
@@ -214,7 +214,7 @@ export default function FriendsClient() {
         ) : (
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 md:mx-0 md:px-0 snap-x">
             <SuggestedFriendCard name="Leo T." tag="Classic Literature Fan" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
-            <SuggestedFriendCard name="Emma G." tag="Sci-Fi Enthusiast" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
+            <SuggestedFriendCard name="Emma K." tag="Sci-Fi Enthusiast" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
             <SuggestedFriendCard name="Oliver K." tag="Poetry Lover" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
           </div>
         )}
@@ -222,9 +222,17 @@ export default function FriendsClient() {
 
       {/* Friends List */}
       <section>
-        <h3 className="font-display text-headline-h2 text-on-surface mb-4">
-          Your Friends ({friends.length})
-        </h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-display text-headline-h2 text-on-surface">
+            Your Friends ({friends.length})
+          </h3>
+          <button
+            onClick={() => addToast('Manage coming soon.', 'info')}
+            className="text-info font-small font-medium hover:underline transition-colors"
+          >
+            Manage
+          </button>
+        </div>
         {loading ? (
           <div className="space-y-3">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -233,7 +241,7 @@ export default function FriendsClient() {
           </div>
         ) : friends.length > 0 ? (
           <div className="space-y-3">
-            {friends.map((f) => {
+            {friends.map((f, index) => {
               const friend = getFriendInfo(f);
               return (
                 <FriendCard
@@ -242,6 +250,13 @@ export default function FriendsClient() {
                   bio={friend.bio}
                   avatarUrl={friend.avatarUrl}
                   onPress={() => setProfileSheetUserId(friend.id)}
+                  statusBadge={
+                    index < 2 ? (
+                      <span className="inline-flex items-center bg-success text-white text-micro rounded-full px-2 py-0.5 font-small">
+                        ONLINE
+                      </span>
+                    ) : undefined
+                  }
                 />
               );
             })}

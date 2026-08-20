@@ -16,9 +16,9 @@ export const CATEGORY_CONFIG: Record<string, CategoryConfig> = {
   },
   UPDATE: {
     icon: 'campaign',
-    iconBg: 'bg-tertiary-container/30 text-tertiary',
+    iconBg: 'bg-brand-orange-dark/15 text-brand-orange-dark',
     label: 'Update',
-    badgeClass: 'bg-tertiary-fixed text-on-tertiary-fixed',
+    badgeClass: 'bg-brand-orange-dark text-white',
   },
   GENERAL: {
     icon: 'info',
@@ -72,7 +72,7 @@ export function getGroupMeta(slug: string, fallbackTimeLabel: string): GroupMeta
 
 // ── Quick Track Chapters ─────────────────────────────────────────────────────
 
-export const QUICK_TRACK_CHAPTERS = ['Romans 12', 'Psalms 23', 'Matthew 5'];
+export const QUICK_TRACK_CHAPTERS = ['Romans 12', 'Proverbs 12', 'Matthew 5'];
 
 // ── Navigation Items ─────────────────────────────────────────────────────────
 

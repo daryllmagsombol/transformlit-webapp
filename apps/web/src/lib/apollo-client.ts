@@ -7,6 +7,7 @@ import {
 } from '@apollo/client';
 import { setContext } from '@apollo/client/link/context';
 import { onError } from '@apollo/client/link/error';
+import { CombinedGraphQLErrors } from '@apollo/client/errors';
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
 import { getMainDefinition } from '@apollo/client/utilities';
 import { Observable } from 'rxjs';
@@ -118,13 +119,10 @@ export function refreshTokens(): Promise<boolean> {
   return refreshPromise;
 }
 
-function isUnauthorizedError(
-  graphQLErrors: readonly { extensions?: { code?: string }; message?: string }[] | undefined,
-  networkError: unknown,
-): boolean {
-  if (graphQLErrors?.length) {
-    return graphQLErrors.some((err) => {
-      const code = err.extensions?.code;
+function isUnauthorizedError(error: unknown): boolean {
+  if (CombinedGraphQLErrors.is(error)) {
+    return error.errors.some((err) => {
+      const code = (err as { extensions?: { code?: string } }).extensions?.code;
       return (
         code === 'UNAUTHENTICATED' ||
         err.message?.toLowerCase().includes('unauthorized') === true
@@ -132,10 +130,18 @@ function isUnauthorizedError(
     });
   }
   if (
-    networkError &&
-    typeof networkError === 'object' &&
-    'statusCode' in networkError &&
-    (networkError as { statusCode?: number }).statusCode === 401
+    error &&
+    typeof error === 'object' &&
+    'statusCode' in error &&
+    (error as { statusCode?: number }).statusCode === 401
+  ) {
+    return true;
+  }
+  if (
+    error &&
+    typeof error === 'object' &&
+    'message' in error &&
+    String((error as { message?: unknown }).message).toLowerCase().includes('unauthorized')
   ) {
     return true;
   }
@@ -192,8 +198,8 @@ const proactiveRefreshLink = new ApolloLink((operation, forward) => {
  * Intercepts 401/UNAUTHENTICATED responses, performs a rotating refresh,
  * and retries the failed request with the new access token.
  */
-const errorLink = onError(({ graphQLErrors, networkError, operation, forward }) => {
-  if (!isUnauthorizedError(graphQLErrors, networkError)) return;
+const errorLink = onError(({ error, operation, forward }) => {
+  if (!isUnauthorizedError(error)) return;
 
   const context = operation.getContext();
   if (context.authRetry) return;

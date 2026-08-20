@@ -32,8 +32,8 @@ export function BellIcon({ userId, onClick }: BellIconProps) {
 
   const fetchCount = useCallback(async () => {
     try {
-      const { data } = await apolloClient.query({ query: UNREAD_COUNT_QUERY });
-      setCount(data.unreadNotificationCount ?? 0);
+      const { data } = await apolloClient.query<{ unreadNotificationCount: number }>({ query: UNREAD_COUNT_QUERY });
+      setCount(data!.unreadNotificationCount ?? 0);
     } catch {
       // Silently fail - badge just won't show
     }

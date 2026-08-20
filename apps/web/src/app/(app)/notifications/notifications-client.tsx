@@ -3,9 +3,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { gql } from '@apollo/client';
 import { useRouter } from 'next/navigation';
-import { apolloClient } from '../../lib/apollo-client';
-import { useRequireAuth } from '../../lib/hooks/use-require-auth';
-import { useToast, NotificationItem, LoadingSpinner } from '../../components/ui';
+import { apolloClient } from '../../../lib/apollo-client';
+import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
+import { useToast, NotificationItem, LoadingSpinner } from '../../../components/ui';
 
 const NOTIFICATIONS_QUERY = gql`
   query AllNotifications($limit: Int!) {
@@ -28,6 +28,24 @@ const MARK_READ = gql`
 const MARK_ALL_READ = gql`
   mutation MarkAllNotificationsRead {
     markAllNotificationsRead
+  }
+`;
+
+const ACCEPT_FRIEND_REQUEST = gql`
+  mutation AcceptFriendRequest($friendshipId: String!) {
+    acceptFriendRequest(friendshipId: $friendshipId) {
+      id
+      status
+    }
+  }
+`;
+
+const REJECT_FRIEND_REQUEST = gql`
+  mutation RejectFriendRequest($friendshipId: String!) {
+    rejectFriendRequest(friendshipId: $friendshipId) {
+      id
+      status
+    }
   }
 `;
 
@@ -94,11 +112,11 @@ export default function NotificationsClient() {
 
   const fetchNotifications = useCallback(async () => {
     try {
-      const { data } = await apolloClient.query({
+      const { data } = await apolloClient.query<{ notifications: Notification[] }>({
         query: NOTIFICATIONS_QUERY,
         variables: { limit: 50 },
       });
-      setNotifications(data.notifications ?? []);
+      setNotifications(data?.notifications ?? []);
     } catch {
       addToast('Failed to load notifications.', 'error');
     } finally {
@@ -139,6 +157,46 @@ export default function NotificationsClient() {
     }
   };
 
+  const handleAcceptFriendRequest = async (notification: Notification) => {
+    const friendshipId = notification.payload?.friendshipId as string | undefined;
+    if (!friendshipId) {
+      addToast('Missing friend request ID.', 'error');
+      return;
+    }
+
+    try {
+      await apolloClient.mutate({
+        mutation: ACCEPT_FRIEND_REQUEST,
+        variables: { friendshipId },
+      });
+      addToast('Friend request accepted!', 'success');
+      setNotifications((prev) => prev.filter((n) => n.id !== notification.id));
+      window.dispatchEvent(new CustomEvent('notifications-cleared'));
+    } catch {
+      addToast('Failed to accept friend request.', 'error');
+    }
+  };
+
+  const handleRejectFriendRequest = async (notification: Notification) => {
+    const friendshipId = notification.payload?.friendshipId as string | undefined;
+    if (!friendshipId) {
+      addToast('Missing friend request ID.', 'error');
+      return;
+    }
+
+    try {
+      await apolloClient.mutate({
+        mutation: REJECT_FRIEND_REQUEST,
+        variables: { friendshipId },
+      });
+      addToast('Friend request declined.', 'info');
+      setNotifications((prev) => prev.filter((n) => n.id !== notification.id));
+      window.dispatchEvent(new CustomEvent('notifications-cleared'));
+    } catch {
+      addToast('Failed to decline friend request.', 'error');
+    }
+  };
+
   if (!isReady) return <LoadingSpinner />;
 
   const grouped = groupByDate(notifications);
@@ -168,9 +226,16 @@ export default function NotificationsClient() {
         <div className="space-y-10">
           {Array.from(grouped.entries()).map(([group, items]) => (
             <section key={group}>
-              <h2 className="font-display text-headline-h4 text-on-surface-variant mb-4">
-                {group}
-              </h2>
+              <div className="flex items-center gap-2 mb-4">
+                <h2 className="font-display text-headline-h4 text-on-surface-variant">
+                  {group}
+                </h2>
+                {group === 'Today' && (
+                  <span className="inline-flex items-center bg-brand-orange-dark text-white font-small text-micro rounded-full px-2 py-0.5">
+                    {items.length}
+                  </span>
+                )}
+              </div>
               <div className="space-y-3">
                 {items.map((n) => (
                   <NotificationItem
@@ -180,7 +245,30 @@ export default function NotificationsClient() {
                     timestamp={relativeTime(n.createdAt)}
                     read={!!n.readAt}
                     onPress={() => handlePress(n)}
-                  />
+                  >
+                    {n.type === 'FRIEND_REQUEST' && (
+                      <div className="flex items-center gap-2 mt-3">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAcceptFriendRequest(n);
+                          }}
+                          className="px-3 py-1.5 bg-brand-orange-dark text-on-primary text-small font-medium rounded-lg hover:brightness-110 active:scale-95 transition-all"
+                        >
+                          Accept
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRejectFriendRequest(n);
+                          }}
+                          className="px-3 py-1.5 bg-surface-container-highest text-on-surface-variant border border-outline-variant text-small font-medium rounded-lg hover:bg-outline-variant/20 active:scale-95 transition-all"
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    )}
+                  </NotificationItem>
                 ))}
               </div>
             </section>

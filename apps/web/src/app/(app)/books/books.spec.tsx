@@ -12,7 +12,7 @@ let mockAuthState: Record<string, unknown> = {
   isHydrated: true,
 };
 
-jest.mock('../../store', () => ({
+jest.mock('../../../store', () => ({
   useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector(mockAuthState),
 }));
 
@@ -22,7 +22,7 @@ jest.mock('@apollo/client', () => ({
 
 const mockQuery = jest.fn();
 
-jest.mock('../../lib/apollo-client', () => ({
+jest.mock('../../../lib/apollo-client', () => ({
   apolloClient: {
     query: mockQuery,
   },
@@ -30,7 +30,7 @@ jest.mock('../../lib/apollo-client', () => ({
 
 const mockAddToast = jest.fn();
 
-jest.mock('../../components/ui', () => ({
+jest.mock('../../../components/ui', () => ({
   useToast: () => ({ addToast: mockAddToast }),
   NavItem: ({ label, href, active }: { label: string; href: string; active?: boolean }) => (
     <a href={href} data-active={active}>{label}</a>
@@ -115,7 +115,7 @@ describe('BooksClient', () => {
       render(<BooksClient />);
 
       await waitFor(() => {
-        expect(screen.getByText('Currently Reading')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Currently Reading' })).toBeInTheDocument();
       });
 
       const cards = screen.getAllByTestId('reading-progress-card');
@@ -221,7 +221,7 @@ describe('BooksClient', () => {
       render(<BooksClient />);
 
       await waitFor(() => {
-        expect(screen.getByText('2 Titles')).toBeInTheDocument();
+        expect(screen.getByText('View Library Stats →')).toBeInTheDocument();
       });
     });
   });

@@ -13,7 +13,7 @@ export function CategoryChip({ label, icon, active = false, onClick }: CategoryC
       onClick={onClick}
       className={`flex items-center gap-2 px-6 py-3 rounded-full font-display text-headline-h4 whitespace-nowrap active:scale-95 transition-all ${
         active
-          ? 'bg-secondary-container text-on-secondary-container'
+          ? 'bg-brand-orange-dark text-white'
           : 'bg-paper-warm text-on-surface-variant border border-outline-variant hover:bg-surface-container'
       }`}
     >

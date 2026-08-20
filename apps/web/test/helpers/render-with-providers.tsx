@@ -1,6 +1,7 @@
 import { ReactElement, ReactNode } from 'react';
-import { render, RenderOptions } from '@testing-library/react';
-import { MockedProvider, MockedResponse } from '@apollo/client/testing';
+import { render, type RenderOptions, type RenderResult } from '@testing-library/react';
+import { MockedProvider } from '@apollo/client/testing/react';
+import type { MockedResponse } from '@apollo/client/testing';
 import { ThemeProvider } from 'next-themes';
 
 interface WrapperOptions {
@@ -10,7 +11,7 @@ interface WrapperOptions {
 function createWrapper({ mocks = [] }: WrapperOptions = {}) {
   return function Wrapper({ children }: { children: ReactNode }) {
     return (
-      <MockedProvider mocks={mocks} addTypename={false}>
+      <MockedProvider mocks={mocks}>
         <ThemeProvider
           attribute="class"
           defaultTheme="light"
@@ -27,7 +28,7 @@ function createWrapper({ mocks = [] }: WrapperOptions = {}) {
 export function renderWithProviders(
   ui: ReactElement,
   options?: RenderOptions & WrapperOptions,
-) {
+): RenderResult {
   const { mocks, ...renderOptions } = options ?? {};
   return render(ui, {
     wrapper: createWrapper({ mocks }),

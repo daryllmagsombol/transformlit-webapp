@@ -7,6 +7,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuthStore } from '../../store';
+import type { GraphQLUser } from '@transformlit/shared';
 import { useToast, TextInput, SpinnerIcon, PersonIcon, MailIcon, LockIcon, EyeIcon, EyeOffIcon, GoogleIcon, FacebookIcon, MicrosoftIcon } from '../../components/ui';
 import { Footer } from '../../components/layout';
 import { API_BASE } from '../../lib/constants';
@@ -65,7 +66,7 @@ export default function RegisterForm() {
           import('../../lib/apollo-client'),
         ]);
 
-        const result = await apolloClient.mutate({
+        const result = await apolloClient.mutate<{ registerLocal: { user: GraphQLUser; accessToken: string; refreshToken: string | null } }>({
           mutation: gql`
             mutation RegisterLocal($input: RegisterLocalInput!) {
               registerLocal(input: $input) {
@@ -84,7 +85,7 @@ export default function RegisterForm() {
           },
         });
 
-        const { user, accessToken, refreshToken } = result.data.registerLocal;
+        const { user, accessToken, refreshToken } = result.data!.registerLocal;
         setAuth(user, accessToken, refreshToken ?? undefined);
 
         addToast('Account created! Welcome to Transformlit.', 'success');

@@ -14,7 +14,7 @@ export function Footer() {
             Transformlit
           </span>
           <span className="text-sm text-ink-soft">
-            &copy; 2024 Transformlit. All rights reserved.
+            &copy; 2025 Transformlit. All rights reserved.
           </span>
         </div>
 

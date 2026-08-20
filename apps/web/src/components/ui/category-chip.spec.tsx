@@ -27,8 +27,8 @@ describe('CategoryChip', () => {
   it('applies active styling when active', () => {
     const { container } = render(<CategoryChip label="Fiction" icon="book" active />);
     const button = container.firstChild as HTMLElement;
-    expect(button).toHaveClass('bg-secondary-container');
-    expect(button).toHaveClass('text-on-secondary-container');
+    expect(button).toHaveClass('bg-brand-orange-dark');
+    expect(button).toHaveClass('text-white');
   });
 
   it('applies inactive styling when not active', () => {
@@ -41,6 +41,6 @@ describe('CategoryChip', () => {
   it('defaults to inactive when active prop is not provided', () => {
     const { container } = render(<CategoryChip label="Fiction" icon="book" />);
     const button = container.firstChild as HTMLElement;
-    expect(button).not.toHaveClass('bg-secondary-container');
+    expect(button).not.toHaveClass('bg-brand-orange-dark');
   });
 });

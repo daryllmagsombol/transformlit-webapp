@@ -25,6 +25,24 @@ const MARK_ALL_READ = gql`
   }
 `;
 
+const ACCEPT_FRIEND_REQUEST = gql`
+  mutation AcceptFriendRequest($friendshipId: String!) {
+    acceptFriendRequest(friendshipId: $friendshipId) {
+      id
+      status
+    }
+  }
+`;
+
+const REJECT_FRIEND_REQUEST = gql`
+  mutation RejectFriendRequest($friendshipId: String!) {
+    rejectFriendRequest(friendshipId: $friendshipId) {
+      id
+      status
+    }
+  }
+`;
+
 interface Notification {
   id: string;
   type: string;
@@ -79,11 +97,11 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
   const fetchNotifications = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await apolloClient.query({
+      const { data } = await apolloClient.query<{ notifications: Notification[] }>({
         query: NOTIFICATIONS_QUERY,
         variables: { limit: 5 },
       });
-      setNotifications((data as { notifications: Notification[] }).notifications ?? []);
+      setNotifications(data?.notifications ?? []);
     } catch {
       addToast('Failed to load notifications.', 'error');
     } finally {
@@ -111,6 +129,46 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
       router.push('/friends');
     } else {
       router.push('/notifications');
+    }
+  };
+
+  const handleAcceptFriendRequest = async (notification: Notification) => {
+    const friendshipId = notification.payload?.friendshipId as string | undefined;
+    if (!friendshipId) {
+      addToast('Missing friend request ID.', 'error');
+      return;
+    }
+
+    try {
+      await apolloClient.mutate({
+        mutation: ACCEPT_FRIEND_REQUEST,
+        variables: { friendshipId },
+      });
+      addToast('Friend request accepted!', 'success');
+      setNotifications((prev) => prev.filter((n) => n.id !== notification.id));
+      window.dispatchEvent(new CustomEvent('notifications-cleared'));
+    } catch {
+      addToast('Failed to accept friend request.', 'error');
+    }
+  };
+
+  const handleRejectFriendRequest = async (notification: Notification) => {
+    const friendshipId = notification.payload?.friendshipId as string | undefined;
+    if (!friendshipId) {
+      addToast('Missing friend request ID.', 'error');
+      return;
+    }
+
+    try {
+      await apolloClient.mutate({
+        mutation: REJECT_FRIEND_REQUEST,
+        variables: { friendshipId },
+      });
+      addToast('Friend request declined.', 'info');
+      setNotifications((prev) => prev.filter((n) => n.id !== notification.id));
+      window.dispatchEvent(new CustomEvent('notifications-cleared'));
+    } catch {
+      addToast('Failed to decline friend request.', 'error');
     }
   };
 
@@ -154,7 +212,30 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
                   timestamp={relativeTime(n.createdAt)}
                   read={!!n.readAt}
                   onPress={() => handleNotificationPress(n)}
-                />
+                >
+                  {n.type === 'FRIEND_REQUEST' && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAcceptFriendRequest(n);
+                        }}
+                        className="px-2.5 py-1 bg-brand-orange-dark text-on-primary text-small font-medium rounded-lg hover:brightness-110 active:scale-95 transition-all"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRejectFriendRequest(n);
+                        }}
+                        className="px-2.5 py-1 bg-surface-container-highest text-on-surface-variant border border-outline-variant text-small font-medium rounded-lg hover:bg-outline-variant/20 active:scale-95 transition-all"
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  )}
+                </NotificationItem>
               ))
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-on-surface-variant">

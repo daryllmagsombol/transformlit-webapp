@@ -9,9 +9,9 @@ import {
   BookCardSkeleton,
   ReadingProgressCard,
   LoadingSpinner,
-} from '../../components/ui';
-import { apolloClient } from '../../lib/apollo-client';
-import { useRequireAuth } from '../../lib/hooks/use-require-auth';
+} from '../../../components/ui';
+import { apolloClient } from '../../../lib/apollo-client';
+import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
 
 // ── GraphQL Queries ──────────────────────────────────────────────────────────
 
@@ -91,8 +91,8 @@ export default function BooksClient() {
 
   const loadData = useCallback(async () => {
     try {
-      const result = await apolloClient.query({ query: BOOKS_QUERY });
-      setBooks(result.data.books ?? []);
+      const result = await apolloClient.query<{ books: GraphQLBook[] }>({ query: BOOKS_QUERY });
+      setBooks(result.data?.books ?? []);
     } catch {
       addToast('Failed to load books. Please try again.', 'error');
     } finally {
@@ -151,13 +151,21 @@ export default function BooksClient() {
           HERO: CURRENTLY READING
           ═══════════════════════════════════════════════════════════ */}
       <section className="mb-10">
-        <div className="flex items-center justify-between mb-5">
-          <h1 className="font-display text-display-mobile md:text-display text-on-surface">
-            Library
-          </h1>
-          <span className="font-micro text-micro uppercase tracking-wider text-on-surface-variant hidden sm:inline">
-            {books.length} Title{books.length !== 1 ? 's' : ''}
-          </span>
+        <div className="flex items-start sm:items-end justify-between mb-5">
+          <div>
+            <span className="font-micro text-xs uppercase tracking-[0.2em] text-brand-orange-dark mb-1 block">
+              Currently Reading
+            </span>
+            <h1 className="font-display text-display-mobile md:text-display text-on-surface">
+              My Reading List
+            </h1>
+          </div>
+          <button
+            onClick={() => addToast('Stats coming soon.', 'info')}
+            className="font-small text-small font-medium text-brand-orange-dark hover:underline hidden sm:block"
+          >
+            View Library Stats &rarr;
+          </button>
         </div>
 
         <div className="relative overflow-hidden rounded-xl bg-paper-warm border border-outline-variant shadow-sm p-5 md:p-6">
