@@ -15,6 +15,7 @@ export {
   BookStatus,
   AnnouncementStatus,
   AnnouncementCategory,
+  GroupCategory,
   NotificationType,
 } from './enums.js';
 export type {
