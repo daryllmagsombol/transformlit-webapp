@@ -1,13 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { motion, useReducedMotion } from 'motion/react';
+import { useTheme } from 'next-themes';
 import { NAV_LINKS } from './content';
 
 export function HomeNav() {
   const [open, setOpen] = useState(false);
   const reduce = useReducedMotion();
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const isDark = mounted && resolvedTheme === 'dark';
 
   return (
     <header className="sticky top-0 z-50 bg-surface/95 backdrop-blur border-b border-outline-variant">
@@ -35,15 +40,24 @@ export function HomeNav() {
           ))}
         </div>
 
-        {/* col 3: CTA (desktop) + mobile toggle, right */}
+        {/* col 3: theme toggle + CTA (desktop) + mobile toggle, right */}
         <div className="justify-self-end flex items-center gap-2">
+          <motion.button
+            type="button"
+            aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            onClick={() => setTheme(isDark ? 'light' : 'dark')}
+            className="btn-ghost"
+            whileTap={reduce ? undefined : { scale: 0.97 }}
+          >
+            <span className="material-symbols-outlined">{mounted ? (isDark ? 'light_mode' : 'dark_mode') : 'dark_mode'}</span>
+          </motion.button>
           <div className="hidden lg:block">
             <motion.span
               className="inline-block"
               whileTap={reduce ? undefined : { scale: 0.97 }}
             >
-              <Link href="#partner-with-us" className="btn-primary">
-                Partner With Us
+              <Link href="/login" className="btn-primary">
+                Login
               </Link>
             </motion.span>
           </div>
@@ -79,11 +93,11 @@ export function HomeNav() {
             </Link>
           ))}
           <Link
-            href="#partner-with-us"
+            href="/login"
             onClick={() => setOpen(false)}
             className="btn-primary mt-2"
           >
-            Partner With Us
+            Login
           </Link>
         </div>
       )}

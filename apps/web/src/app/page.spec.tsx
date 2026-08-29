@@ -1,5 +1,9 @@
 import { render, screen } from '@testing-library/react';
 
+jest.mock('next-themes', () => ({
+  useTheme: () => ({ theme: 'light', resolvedTheme: 'light', setTheme: jest.fn() }),
+}));
+
 jest.mock('./auth-redirect', () => {
   return function MockAuthRedirect({ children }: { children: React.ReactNode }) {
     return <div data-testid="auth-redirect">{children}</div>;
