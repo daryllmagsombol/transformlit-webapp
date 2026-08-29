@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Only ONE new dependency: `motion@^13.1.1` (install in Task 12 via `pnpm add motion`; import from `"motion/react"`). No other new dependencies. No new CSS tokens — use tokens/classes already in `apps/web/src/styles/globals.css` (`--color-*`, `text-display`, `text-headline-h2`, `font-display`, `font-body`, `text-body`, `text-small`, `text-micro`, `btn-primary`, `btn-secondary`, `card`, `material-symbols-outlined`).
+- Only ONE new dependency: `motion@^13.1.1` (install in Task 11 via `pnpm add motion`; import from `"motion/react"`). No other new dependencies. No new CSS tokens — use tokens/classes already in `apps/web/src/styles/globals.css` (`--color-*`, `text-display`, `text-headline-h2`, `font-display`, `font-body`, `text-body`, `text-small`, `text-micro`, `btn-primary`, `btn-secondary`, `card`, `material-symbols-outlined`).
 - All copy must match the spec Section 5 (org definition wording).
 - Touch targets ≥ 44px (already enforced globally by `globals.css`).
 - Keep `AuthRedirect` wrapping the homepage — do not change auth behavior.
