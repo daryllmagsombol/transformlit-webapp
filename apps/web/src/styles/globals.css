@@ -314,7 +314,7 @@ button, a, input, select, textarea {
   .btn-ghost:hover { color: var(--color-ink-black); text-decoration: underline; }
 
   .card {
-    background: var(--color-surface-raised);
+    background: var(--color-paper-warm);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-soft);

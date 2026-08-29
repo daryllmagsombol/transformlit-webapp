@@ -24,7 +24,7 @@ export function HomeNav() {
             <Link
               key={link.label}
               href={link.href}
-              className="group relative font-small text-small text-on-surface-variant hover:text-ink-black transition-colors"
+              className="group relative inline-flex items-center font-small text-small text-on-surface-variant hover:text-ink-black transition-colors"
             >
               {link.label}
               <span
@@ -73,7 +73,7 @@ export function HomeNav() {
               key={link.label}
               href={link.href}
               onClick={() => setOpen(false)}
-              className="font-small text-small text-on-surface-variant py-2"
+              className="font-small text-small text-on-surface-variant py-2 inline-flex items-center"
             >
               {link.label}
             </Link>

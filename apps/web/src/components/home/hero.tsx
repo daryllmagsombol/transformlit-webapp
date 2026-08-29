@@ -23,7 +23,7 @@ export function Hero() {
             initial={animate ? { opacity: 0, y: 20 } : false}
             animate={animate ? { opacity: 1, y: 0 } : false}
             transition={animate ? { duration: 0.5, ease: 'easeOut', delay: 0 } : undefined}
-            className="font-micro text-micro uppercase tracking-[0.15em] text-brand-orange-dark"
+            className="inline-flex items-center rounded-full border border-outline-variant bg-surface-container-low px-4 py-1.5 font-micro text-micro uppercase tracking-[0.15em] text-brand-orange-dark w-fit"
           >
             Turning Pages, Turning Hearts.
           </motion.p>
