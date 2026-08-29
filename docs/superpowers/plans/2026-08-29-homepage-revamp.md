@@ -4,15 +4,15 @@
 
 **Goal:** Replace the placeholder `apps/web/src/app/page.tsx` with a full marketing homepage for transformlit.com — partner-focused hero, mission pillars, MOVE 4-book journey, partnership CTA, Community Hub gateway, announcements, partners strip, and footer — matching the approved Stitch design.
 
-**Architecture:** Static, server-rendered section components under `apps/web/src/components/home/`, driven by a typed static-content module. `page.tsx` (server) composes sections inside the existing `AuthRedirect` wrapper so authenticated users keep redirecting to `/feed`. Styled entirely with the existing Tailwind v4 design tokens and `.btn-*`/`.card` component classes in `globals.css` — no new dependencies, no new tokens.
+**Architecture:** Static, server-rendered section components under `apps/web/src/components/home/`, driven by a typed static-content module. `page.tsx` (server) composes sections inside the existing `AuthRedirect` wrapper so authenticated users keep redirecting to `/feed`. Styled entirely with the existing Tailwind v4 design tokens and `.btn-*`/`.card` component classes in `globals.css`. Animations via `motion` (motion.dev) in small `"use client"` wrappers/leaf components.
 
-**Tech Stack:** Next.js 16 (App Router), React 19, Tailwind v4, TypeScript, jest + @testing-library/react (existing conventions, co-located `*.spec.tsx`).
+**Tech Stack:** Next.js 16 (App Router), React 19, Tailwind v4, TypeScript, jest + @testing-library/react (existing conventions, co-located `*.spec.tsx`), **`motion@^13.1.1`** (import from `"motion/react"`).
 
 **Spec:** `docs/superpowers/specs/2026-08-29-homepage-revamp-design.md`
 
 ## Global Constraints
 
-- No new dependencies. No new CSS tokens. Use tokens/classes already in `apps/web/src/styles/globals.css` (`--color-*`, `text-display`, `text-headline-h2`, `font-display`, `font-body`, `text-body`, `text-small`, `text-micro`, `btn-primary`, `btn-secondary`, `card`, `material-symbols-outlined`).
+- Only ONE new dependency: `motion@^13.1.1` (install in Task 12 via `pnpm add motion`; import from `"motion/react"`). No other new dependencies. No new CSS tokens — use tokens/classes already in `apps/web/src/styles/globals.css` (`--color-*`, `text-display`, `text-headline-h2`, `font-display`, `font-body`, `text-body`, `text-small`, `text-micro`, `btn-primary`, `btn-secondary`, `card`, `material-symbols-outlined`).
 - All copy must match the spec Section 5 (org definition wording).
 - Touch targets ≥ 44px (already enforced globally by `globals.css`).
 - Keep `AuthRedirect` wrapping the homepage — do not change auth behavior.
@@ -20,6 +20,7 @@
 - Nav anchor IDs: `#who-we-are`, `#move-system`, `#partner-with-us`, `#beyond-the-books`, `#announcements`, `#footer`.
 - All tests run: `pnpm --filter @transformlit/web test -- <spec-path>` from repo root.
 - Verify with `pnpm --filter @transformlit/web build` before completing.
+- Motion rules (spec §11): hero animates on **mount** (`initial`/`animate`), never `whileInView` opacity-0 on above-the-fold content; scroll reveals use `whileInView` + `viewport={{ once: true, margin: '-80px' }}`; MOVE uses `variants` + `stagger()` (not deprecated `staggerChildren`); every motion component file has `"use client"`; NO Motion providers/LazyMotion in `layout.tsx`; `useReducedMotion()` guards all motion.
 
 ---
 
@@ -1363,4 +1364,495 @@ Check against the Stitch "Transform Lit Homepage" screen: section order, hero gr
 ```bash
 git add apps/web/src/app/page.tsx apps/web/src/app/layout.tsx apps/web/src/app/page.spec.tsx
 git commit -m "feat(web): compose revamped transformlit homepage"
+```
+
+---
+
+### Task 11: Stats band (count-up section)
+
+**Files:**
+- Modify: `apps/web/src/components/home/content.ts` (add `STATS`), `apps/web/src/components/home/content.spec.ts`
+- Create: `apps/web/src/components/home/stats-band.tsx`, `apps/web/src/components/home/stats-band.spec.tsx`
+- Modify: `apps/web/src/app/page.tsx` (render `<StatsBand />` between `<Hero />` and `<WhoWeAre />`)
+
+**Interfaces:**
+- Produces: `STATS` (`{ value: number; label: string }[]`) from `./content`; `StatsBand` client component with count-up.
+- Consumes: `STATS`.
+
+- [ ] **Step 1: Add `STATS` to content and its test**
+
+In `apps/web/src/components/home/content.ts`, add the type and export after `PARTNERS`:
+
+```ts
+export interface Stat {
+  value: number;
+  label: string;
+}
+
+export const STATS: Stat[] = [
+  { value: 2, label: 'Year discipleship journey' },
+  { value: 4, label: 'Books in the MOVE System' },
+  { value: 7, label: 'Theologets volumes' },
+];
+```
+
+Add this test to `apps/web/src/components/home/content.spec.ts` (import `STATS`):
+
+```ts
+it('has the three stats with values 2, 4, 7', () => {
+  expect(STATS.map((s) => s.value)).toEqual([2, 4, 7]);
+  expect(STATS.map((s) => s.label)).toContain('Theologets volumes');
+});
+```
+
+- [ ] **Step 2: Write the failing StatsBand test**
+
+Create `apps/web/src/components/home/stats-band.spec.tsx`:
+
+```tsx
+import { render, screen } from '@testing-library/react';
+
+// jsdom lacks browser APIs that motion/react touches
+class MockIntersectionObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords() {
+    return [];
+  }
+}
+(global as unknown as { IntersectionObserver: unknown }).IntersectionObserver = MockIntersectionObserver;
+
+(global as unknown as { matchMedia: unknown }).matchMedia = (query: string) => ({
+  matches: false,
+  media: query,
+  onchange: null,
+  addListener: () => {},
+  removeListener: () => {},
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  dispatchEvent: () => false,
+});
+
+import { StatsBand } from './stats-band';
+
+describe('StatsBand', () => {
+  it('renders the three stat labels', () => {
+    render(<StatsBand />);
+    expect(screen.getByText('Year discipleship journey')).toBeInTheDocument();
+    expect(screen.getByText('Books in the MOVE System')).toBeInTheDocument();
+    expect(screen.getByText('Theologets volumes')).toBeInTheDocument();
+  });
+
+  it('renders a value element per stat', () => {
+    render(<StatsBand />);
+    expect(screen.getAllByTestId('stat-value')).toHaveLength(3);
+  });
+});
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `pnpm --filter @transformlit/web test -- src/components/home/stats-band.spec.tsx`
+Expected: FAIL — cannot find module `./stats-band`.
+
+- [ ] **Step 4: Create `stats-band.tsx`**
+
+```tsx
+'use client';
+
+import { animate, useInView, useReducedMotion } from 'motion/react';
+import { useEffect, useRef, useState } from 'react';
+import { STATS } from './content';
+
+export function StatsBand() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true, margin: '-80px' });
+
+  return (
+    <section aria-label="Transform Lit by the numbers" className="mx-auto max-w-[1200px] px-6">
+      <div ref={ref} className="card bg-paper-warm grid grid-cols-1 sm:grid-cols-3 gap-8 py-10">
+        {STATS.map((stat) => (
+          <StatItem key={stat.label} stat={stat} active={inView} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StatItem({ stat, active }: { stat: { value: number; label: string }; active: boolean }) {
+  const reduce = useReducedMotion();
+  const [display, setDisplay] = useState(reduce ? stat.value : 0);
+
+  useEffect(() => {
+    if (!active) return;
+    if (reduce) {
+      setDisplay(stat.value);
+      return;
+    }
+    const controls = animate(0, stat.value, {
+      duration: 1.2,
+      ease: 'easeOut',
+      onUpdate: (v) => setDisplay(Math.round(v)),
+    });
+    return () => controls.stop();
+  }, [active, reduce, stat.value]);
+
+  return (
+    <div className="text-center space-y-1">
+      <p data-testid="stat-value" className="font-display text-display text-primary">
+        {display}
+      </p>
+      <p className="font-small text-small text-on-surface-variant">{stat.label}</p>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `pnpm --filter @transformlit/web test -- src/components/home/stats-band.spec.tsx`
+Expected: PASS (2 tests). Also run content test: `pnpm --filter @transformlit/web test -- src/components/home/content.spec.ts` — PASS.
+
+- [ ] **Step 6: Render StatsBand in the homepage**
+
+In `apps/web/src/app/page.tsx`, add the import and render between Hero and WhoWeAre:
+
+```tsx
+import { Hero } from '../components/home/hero';
+import { StatsBand } from '../components/home/stats-band';
+import { WhoWeAre } from '../components/home/who-we-are';
+```
+
+```tsx
+        <Hero />
+        <StatsBand />
+        <WhoWeAre />
+```
+
+- [ ] **Step 7: Run page test + full suite**
+
+Run: `pnpm --filter @transformlit/web test -- src/app/page.spec.tsx`
+Expected: PASS. Add an assertion to `page.spec.tsx` if desired: `expect(screen.getByText('Year discipleship journey')).toBeInTheDocument();`
+
+Run full suite: `pnpm --filter @transformlit/web test` — all PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add apps/web/src/components/home/content.ts apps/web/src/components/home/content.spec.ts apps/web/src/components/home/stats-band.tsx apps/web/src/components/home/stats-band.spec.tsx apps/web/src/app/page.tsx apps/web/src/app/page.spec.tsx
+git commit -m "feat(web): homepage stats band with count-up"
+```
+
+---
+
+### Task 12: Motion animation pass (entrances, micro-interactions, float)
+
+**Files:**
+- Modify: `apps/web/package.json` (add `motion`)
+- Create: `apps/web/src/components/home/motion-reveal.tsx`, `apps/web/src/components/home/motion-reveal.spec.tsx`
+- Modify: `apps/web/src/components/home/home-nav.tsx`, `hero.tsx`, `who-we-are.tsx`, `move-system.tsx`, `partner-cta.tsx`, `community-gateway.tsx`, `announcements.tsx`, `partners-strip.tsx` (+ their specs where assertions change)
+- Test: `pnpm --filter @transformlit/web test`, `pnpm --filter @transformlit/web build`
+
+**Interfaces:**
+- Produces: `Reveal` client wrapper (`{ children, delay?, className? }`) from `./motion-reveal` — used by every section for scroll reveals.
+- Consumes: nothing new from other tasks.
+
+Motion rules (spec §11): hero on mount (`initial`/`animate`), sections via `Reveal` (`whileInView`, once, margin -80px), MOVE via `variants` + `stagger()`, `useReducedMotion()` guards everywhere.
+
+- [ ] **Step 1: Install motion**
+
+Run (from repo root): `pnpm --filter @transformlit/web add motion@^13.1.1`
+Expected: `motion@^13.1.1` added to `apps/web/package.json` dependencies and lockfile updated.
+
+- [ ] **Step 2: Write the failing Reveal test**
+
+Create `apps/web/src/components/home/motion-reveal.spec.tsx`:
+
+```tsx
+import { render, screen } from '@testing-library/react';
+
+class MockIntersectionObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords() {
+    return [];
+  }
+}
+(global as unknown as { IntersectionObserver: unknown }).IntersectionObserver = MockIntersectionObserver;
+
+(global as unknown as { matchMedia: unknown }).matchMedia = (query: string) => ({
+  matches: false,
+  media: query,
+  onchange: null,
+  addListener: () => {},
+  removeListener: () => {},
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  dispatchEvent: () => false,
+});
+
+import { Reveal } from './motion-reveal';
+
+describe('Reveal', () => {
+  it('renders its children', () => {
+    render(<Reveal>Hello Reveal</Reveal>);
+    expect(screen.getByText('Hello Reveal')).toBeInTheDocument();
+  });
+
+  it('accepts a className', () => {
+    render(
+      <Reveal className="test-class">
+        <span>Content</span>
+      </Reveal>,
+    );
+    expect(document.querySelector('.test-class')).toBeInTheDocument();
+  });
+});
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `pnpm --filter @transformlit/web test -- src/components/home/motion-reveal.spec.tsx`
+Expected: FAIL — cannot find module `./motion-reveal`.
+
+- [ ] **Step 4: Create `motion-reveal.tsx`**
+
+```tsx
+'use client';
+
+import { motion, useReducedMotion } from 'motion/react';
+import type { ReactNode } from 'react';
+
+export function Reveal({
+  children,
+  delay = 0,
+  className,
+}: {
+  children: ReactNode;
+  delay?: number;
+  className?: string;
+}) {
+  const reduce = useReducedMotion();
+
+  return (
+    <motion.div
+      className={className}
+      initial={reduce ? false : { opacity: 0, y: 24 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: '-80px' }}
+      transition={{ duration: 0.5, ease: 'easeOut', delay }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+```
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `pnpm --filter @transformlit/web test -- src/components/home/motion-reveal.spec.tsx`
+Expected: PASS (2 tests).
+
+- [ ] **Step 6: Hero — mount stagger + illustration float**
+
+Convert `apps/web/src/components/home/hero.tsx` to a client component. Keep all existing JSX; add the motion props:
+
+```tsx
+'use client';
+
+import { motion, useReducedMotion } from 'motion/react';
+import Link from 'next/link';
+
+export function Hero() {
+  const reduce = useReducedMotion();
+  const fade = reduce
+    ? {}
+    : { initial: { opacity: 0, y: 16 }, animate: { opacity: 1, y: 0 } };
+  const step = reduce ? {} : { transition: { duration: 0.22, ease: 'easeOut' as const } };
+
+  return (
+    <section className="relative bg-gradient-to-b from-paper to-paper-warm">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            'radial-gradient(60% 60% at 10% 10%, rgba(244,161,28,0.18), transparent 60%)',
+        }}
+      />
+      <div className="relative mx-auto max-w-[1200px] px-6 py-20 lg:py-28 grid lg:grid-cols-[1.2fr_0.8fr] gap-12 items-center">
+        <div className="space-y-6">
+          <motion.p {...fade} {...step} transition={{ ...step.transition, delay: 0 }} className="font-micro text-micro uppercase tracking-[0.15em] text-brand-orange-dark">
+            Turning Pages, Turning Hearts.
+          </motion.p>
+          <motion.h1 {...fade} {...step} transition={{ ...step.transition, delay: 0.08 }} className="font-display text-display-mobile lg:text-display text-ink-black">
+            Raising transformed followers who raise{' '}
+            <span className="text-primary">transformed followers</span>.
+          </motion.h1>
+          <motion.p {...fade} {...step} transition={{ ...step.transition, delay: 0.16 }} className="font-body text-body text-on-surface-variant max-w-xl">
+            Transform Lit prepares the next generation through servant-leadership
+            trainings, moral-recovery-centered literature, and mental-health
+            empowerment through life coaching and community groups.
+          </motion.p>
+          <motion.div {...fade} {...step} transition={{ ...step.transition, delay: 0.24 }} className="flex flex-col sm:flex-row gap-4 pt-2">
+            <Link href="#partner-with-us" className="btn-primary">
+              Partner With Us
+            </Link>
+            <Link href="#move-system" className="btn-secondary">
+              Explore the MOVE System
+            </Link>
+          </motion.div>
+        </div>
+
+        {!reduce && (
+          <motion.div
+            animate={{ y: [0, -10, 0] }}
+            transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
+            className="hidden lg:block"
+          >
+            <HeroArtwork />
+          </motion.div>
+        )}
+        {reduce && (
+          <div className="hidden lg:block">
+            <HeroArtwork />
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function HeroArtwork() {
+  return (
+    <div aria-hidden className="hidden lg:block" data-testid="hero-artwork">
+      <svg viewBox="0 0 400 320" className="w-full max-w-[420px]">
+        <rect x="40" y="80" width="320" height="200" rx="16" fill="#FFE8C7" stroke="#111111" strokeWidth="2" />
+        <rect x="70" y="60" width="140" height="200" rx="12" fill="#F4A11C" stroke="#111111" strokeWidth="2" transform="rotate(-8 70 60)" />
+        <rect x="190" y="60" width="140" height="200" rx="12" fill="#FFF6E8" stroke="#111111" strokeWidth="2" transform="rotate(8 190 60)" />
+        <circle cx="320" cy="200" r="36" fill="#1F7A6D" />
+        <circle cx="120" cy="220" r="24" fill="#2ABFFF" />
+        <path d="M40 96h320" stroke="#111111" strokeWidth="2" />
+      </svg>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 7: Run hero test**
+
+Run: `pnpm --filter @transformlit/web test -- src/components/home/hero.spec.tsx`
+Expected: PASS (existing assertions unchanged — content still rendered).
+
+- [ ] **Step 8: MOVE system — variants + stagger + connector draw**
+
+In `apps/web/src/components/home/move-system.tsx`: add `'use client';`, import `{ motion, useReducedMotion } from 'motion/react'`. Wrap the book-card grid:
+
+```tsx
+const reduce = useReducedMotion();
+
+const gridVariants = {
+  hidden: {},
+  visible: { transition: { when: 'beforeChildren' as const, delayChildren: stagger(0.1) } },
+};
+const cardVariants = reduce
+  ? {}
+  : {
+      hidden: { opacity: 0, y: 24 },
+      visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' as const } },
+    };
+```
+
+Replace the grid `<div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 mt-12">` with:
+
+```tsx
+<motion.div
+  className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 mt-12"
+  initial={reduce ? false : 'hidden'}
+  whileInView="visible"
+  viewport={{ once: true, margin: '-80px' }}
+  variants={gridVariants}
+>
+```
+
+Replace each `<article key={book.title} className="card ...">` with a `motion.article` carrying `variants={cardVariants}`. Add the connector draw under the grid (before the resource note):
+
+```tsx
+<motion.div
+  aria-hidden
+  className="mt-10 h-1 rounded-full bg-primary-fixed-dim"
+  initial={reduce ? false : { scaleX: 0 }}
+  whileInView={{ scaleX: 1 }}
+  viewport={{ once: true }}
+  transition={{ duration: 0.8, ease: 'easeOut' }}
+  style={{ transformOrigin: 'left' }}
+/>
+```
+
+Import `stagger` alongside `motion`: `import { motion, stagger, useReducedMotion } from 'motion/react';`
+
+- [ ] **Step 9: Run MOVE test**
+
+Run: `pnpm --filter @transformlit/web test -- src/components/home/move-system.spec.tsx`
+Expected: PASS (existing assertions unchanged).
+
+- [ ] **Step 10: Nav — tap/underline micro-interactions**
+
+In `apps/web/src/components/home/home-nav.tsx` (already `'use client'`), add `import { motion, useReducedMotion } from 'motion/react';`. Convert the desktop nav links to slide their underline:
+
+```tsx
+{NAV_LINKS.map((link) => (
+  <Link
+    key={link.label}
+    href={link.href}
+    className="relative font-small text-small text-on-surface-variant hover:text-ink-black transition-colors"
+  >
+    {link.label}
+    <motion.span
+      aria-hidden
+      className="absolute left-0 -bottom-0.5 h-0.5 w-full rounded-full bg-brand"
+      style={{ scaleX: 0, transformOrigin: 'left' }}
+      whileHover={{ scaleX: 1 }}
+      transition={{ duration: 0.15, ease: 'easeOut' }}
+    />
+  </Link>
+))}
+```
+
+Add `whileTap={{ scale: 0.97 }}` to the desktop CTA link and the mobile menu toggle button (wrap the `<Link className="btn-primary">` in a `motion.span` with `whileTap={{ scale: 0.97 }}` and `className="inline-block"`).
+
+- [ ] **Step 11: Remaining sections — wrap in Reveal**
+
+In each file below, add `'use client';`, import `{ Reveal } from './motion-reveal'`, and wrap the section's inner content (the `max-w-[1200px]` container) with `<Reveal>...</Reveal>` so heading + cards reveal together on scroll. Keep every existing class and element unchanged inside the wrapper:
+
+- `who-we-are.tsx` — wrap `<div className="mx-auto max-w-[1200px] px-6 py-20">` content.
+- `partner-cta.tsx` — wrap `<div className="grid lg:grid-cols-2 gap-12 items-start">` content.
+- `community-gateway.tsx` — wrap `<div className="mx-auto max-w-[1200px] px-6 py-20">` content.
+- `announcements.tsx` — wrap `<div className="grid md:grid-cols-2 gap-6 mt-10">` + heading together.
+- `partners-strip.tsx` — wrap the `<div className="mx-auto max-w-[1200px] px-6">` content.
+- `stats-band.tsx` — already client; no Reveal needed (uses its own `useInView`).
+
+- [ ] **Step 12: Run full test suite**
+
+Run: `pnpm --filter @transformlit/web test`
+Expected: All suites PASS. If any spec fails because content is now inside `motion` elements, the fix is to add the jsdom `IntersectionObserver` + `matchMedia` mocks shown in Steps 2/5 to that spec — the assertions themselves do not change (elements remain in the DOM).
+
+- [ ] **Step 13: Verify the production build**
+
+Run: `pnpm --filter @transformlit/web build`
+Expected: Build succeeds with no type errors.
+
+- [ ] **Step 14: Manual visual check**
+
+Run: `pnpm --filter @transformlit/web dev` (port 3000). Verify: hero staggers in on load; illustration floats; sections reveal once on scroll; MOVE cards stagger + connector draws; stats count 2/4/7 on scroll; hover on nav links slides underline; Shopee pill presses. Toggle OS `prefers-reduced-motion` (or devtools emulate) — all motion disabled, content fully visible. Toggle dark mode — still readable.
+
+- [ ] **Step 15: Commit**
+
+```bash
+git add apps/web/package.json pnpm-lock.yaml
+git add apps/web/src/components/home
+git add apps/web/src/app/page.spec.tsx
+git commit -m "feat(web): homepage motion animations (motion.dev)"
 ```

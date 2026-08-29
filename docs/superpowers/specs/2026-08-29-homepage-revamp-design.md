@@ -73,12 +73,15 @@ components), server-rendered.
    (Manrope uppercase). Headline: *"Raising transformed followers who raise
    transformed followers."* Sub-copy covering the three pillars. CTAs:
    **Partner With Us** (primary orange) + **Explore the MOVE System** (secondary
-   outline, anchors to section 4). Optional right-side warm-toned open-book /
+   outline, anchors to the MOVE section). Optional right-side warm-toned open-book /
    small-group illustration (SVG, brand palette; static asset, not a photo).
-3. **Who We Are** — H2 + short mission paragraph. Three pillar cards:
+3. **Stats band** — Warm card band directly below the hero. Three stats with
+   count-up on scroll: **2** (Year discipleship journey) · **4** (Books in the
+   MOVE System) · **7** (Theologets volumes).
+4. **Who We Are** — H2 + short mission paragraph. Three pillar cards:
    (a) Servant-Leadership Trainings; (b) Moral-Recovery Literature;
    (c) Mental Health Empowerment. Each: icon in orange circle, title, one line.
-4. **MOVE Discipleship System** — H2 "The MOVE Discipleship System" + sub-line
+5. **MOVE Discipleship System** — H2 "The MOVE Discipleship System" + sub-line
    "A 2-year journey of transformation". Horizontal 4-step path (numbered cards
    with connector arrows): **Usbong** (Salvation), **Usad** (Spiritual
    Disciplines), **Unlad** (Servant-Leadership), **Ugnay** (Systematic Theology —
@@ -87,22 +90,22 @@ components), server-rendered.
    (books are sold in the TransformLit Shopee store). Below: resource note —
    leaders' guide, presentations, video supplements for online or face-to-face
    small groups.
-5. **Partner With Us** — Alternate warm surface. Copy on partnership (churches,
+6. **Partner With Us** — Alternate warm surface. Copy on partnership (churches,
    leaders, para-church orgs; books/curriculums/systems; donations fund operations
    & self-publication). Right: CTA card — "Start a partnership conversation" +
    **Partner With Us** button + contact (phone 0927-412-2292, email).
-6. **Beyond the Books** (Community Hub gateway) — H2 + one line. Three spotlight
+7. **Beyond the Books** (Community Hub gateway) — H2 + one line. Three spotlight
    cards: **Tahanan Campus Community Group** (real program), **Community Groups**,
    **Books & Library**. Below: dark (ink/surface-dark) banner card with white
    headline "Join the TransformLit Community" + orange **Join the Community**
    button → `/register` + secondary outline **Get the App** button → Google Play
    (TransformLit App).
-7. **Announcements** — H2 "Announcements". Two cards (date label, title, excerpt)
+8. **Announcements** — H2 "Announcements". Two cards (date label, title, excerpt)
    from a static data array, using real content: **Tahanan Registration — Open**
    and **Book 4: Ugnay Now Available**.
-8. **Partners strip** — quiet row of sponsor/church placeholder marks (low-opacity
+9. **Partners strip** — quiet row of sponsor/church placeholder marks (low-opacity
    SVG shapes).
-9. **Footer** — brand + tagline "Turning Pages, Turning Hearts.", social row
+10. **Footer** — brand + tagline "Turning Pages, Turning Hearts.", social row
    (Facebook → facebook.com/transformlit, Instagram, Google Play, Shopee), link
    columns (About / Books / Partners), contact (phone, email), "© 2026 Transform
    Lit. All rights reserved."
@@ -209,3 +212,37 @@ bible studies"). All six were approved for the Stitch design and the plan:
    "Friends" spotlight card in Beyond the Books.
 6. **Real announcements** → "Tahanan Registration — Open" (Jul 2026) and
    "Book 4: Ugnay Now Available" (Aug 2026).
+
+## 11. Motion & animation (approved 2026-08-29)
+
+**Library:** `motion@^13.1.1` (motion.dev; `framer-motion` is deprecated).
+Import from `"motion/react"`. Officially supports React 19 + Next.js 16 App
+Router; no config changes. Adds ~34–44 KB gzip; acceptable for the marketing
+homepage. Every motion component lives in a `"use client"` file; keep client
+boundaries small — **never put Motion providers/LazyMotion in `layout.tsx`**
+(known Next 16 edge case with `_global-error` prerender).
+
+**Motion language (respects `prefers-reduced-motion` via `useReducedMotion()`;**
+**all durations/easings follow the design-system motion table):**
+
+1. **Hero entrance (mount, NOT whileInView):** eyebrow → headline → body → CTAs
+   stagger up on mount (`initial`/`animate`, 220ms ease-out, 40ms stagger).
+   *Never use `whileInView` opacity-0 on above-the-fold content — it flashes or
+   stays hidden until JS hydrates.* Illustration gets a slow ambient float
+   (repeat, 6s ease-in-out, ±10px).
+2. **Section reveals:** heading + content fade-up 12–24px on scroll
+   (`whileInView` + `viewport={{ once: true, margin: '-80px' }}`, 0.5s ease-out).
+   One-shot — no re-trigger on scroll back up.
+3. **MOVE path:** 4 book cards stagger in left→right via `variants` +
+   `stagger()` (deprecated `staggerChildren` is not used); connector line draws
+   across (scaleX) as cards enter.
+4. **Micro-interactions (hover/tap):** book-card lift + cover tilt + shadow
+   (`whileHover`), Shopee pill press (`whileTap` scale 0.97), nav-link underline
+   slide-in.
+5. **Stats band count-up:** counts 2 / 4 / 7 when the band scrolls into view
+   (`useInView` + `animate`, 1.2s easeOut); `useReducedMotion()` skips to the
+   final value.
+
+**Interaction table (per design system):** page/section 220ms ease-out · stagger
+40ms gaps · hover/active 120ms · float 6s ease-in-out · count-up 1.2s easeOut.
+All disabled under `prefers-reduced-motion`.
