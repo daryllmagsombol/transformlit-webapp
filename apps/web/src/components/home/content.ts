@@ -36,6 +36,8 @@ export interface SocialLink {
 
 export const TAGLINE = 'Turning Pages, Turning Hearts.';
 
+export const CONTACT = { email: 'hello@transformlit.com', phone: '0927-412-2292' };
+
 export const FOOTER_SOCIALS: SocialLink[] = [
   { label: 'Facebook', href: 'https://facebook.com/transformlit', icon: 'facebook' },
   { label: 'Instagram', href: 'https://instagram.com/transformlit', icon: 'photo_camera' },

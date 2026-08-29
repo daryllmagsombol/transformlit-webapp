@@ -1,17 +1,21 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { motion, stagger, useReducedMotion, type Variants } from 'motion/react';
 import { BOOKS } from './content';
 
 export function MoveSystem() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const reduce = useReducedMotion();
+  const hiddenInitial = mounted && !reduce;
 
   const gridVariants = {
     hidden: {},
     visible: { transition: { when: 'beforeChildren' as const, delayChildren: stagger(0.1) } },
   };
-  const cardVariants: Variants = reduce
+  const cardVariants: Variants = !hiddenInitial
     ? {}
     : {
         hidden: { opacity: 0, y: 24 },
@@ -32,14 +36,14 @@ export function MoveSystem() {
 
         <motion.div
           className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 mt-12"
-          initial={reduce ? false : 'hidden'}
+          initial={hiddenInitial ? 'hidden' : false}
           whileInView="visible"
           viewport={{ once: true, margin: '-80px' }}
           variants={gridVariants}
         >
           {BOOKS.map((book) => (
             <motion.article key={book.title} className="card space-y-4 flex flex-col" variants={cardVariants}>
-              <div className={`h-40 rounded-md ${book.coverClass} border-2 border-ink-black flex items-center justify-center`}>
+              <div aria-hidden className={`h-40 rounded-md ${book.coverClass} border-2 border-ink-black flex items-center justify-center`}>
                 <span className="font-display text-headline-h3 text-ink-black">{book.title}</span>
               </div>
               <div className="space-y-2">
@@ -63,7 +67,7 @@ export function MoveSystem() {
         <motion.div
           aria-hidden
           className="mt-10 h-1 rounded-full bg-primary-fixed-dim"
-          initial={reduce ? false : { scaleX: 0 }}
+          initial={hiddenInitial ? { scaleX: 0 } : false}
           whileInView={{ scaleX: 1 }}
           viewport={{ once: true }}
           transition={{ duration: 0.8, ease: 'easeOut' }}

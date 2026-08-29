@@ -12,7 +12,7 @@ export function HomeNav() {
   return (
     <header className="sticky top-0 z-50 bg-surface/95 backdrop-blur border-b border-outline-variant">
       <nav className="mx-auto max-w-[1200px] px-6 h-16 flex items-center justify-between gap-4">
-        <Link href="#top" className="font-display text-headline-h3 font-bold text-ink-black inline-flex items-center gap-2">
+        <Link href="/" className="font-display text-headline-h3 font-bold text-ink-black inline-flex items-center gap-2">
           <span aria-hidden className="inline-block h-4 w-4 rounded-sm bg-brand" />
           Transform Lit
         </Link>
@@ -22,15 +22,12 @@ export function HomeNav() {
             <Link
               key={link.label}
               href={link.href}
-              className="relative font-small text-small text-on-surface-variant hover:text-ink-black transition-colors"
+              className="group relative font-small text-small text-on-surface-variant hover:text-ink-black transition-colors"
             >
               {link.label}
-              <motion.span
+              <span
                 aria-hidden
-                className="absolute left-0 -bottom-0.5 h-0.5 w-full rounded-full bg-brand"
-                style={{ scaleX: 0, transformOrigin: 'left' }}
-                whileHover={reduce ? undefined : { scaleX: 1 }}
-                transition={{ duration: 0.15, ease: 'easeOut' }}
+                className="absolute left-0 -bottom-0.5 h-0.5 w-full rounded-full bg-brand origin-left scale-x-0 transition-transform duration-150 group-hover:scale-x-100"
               />
             </Link>
           ))}
@@ -51,6 +48,7 @@ export function HomeNav() {
           type="button"
           aria-label="Toggle menu"
           aria-expanded={open}
+          aria-controls="mobile-menu"
           onClick={() => setOpen((v) => !v)}
           className="lg:hidden btn-ghost"
           whileTap={reduce ? undefined : { scale: 0.97 }}
@@ -60,7 +58,12 @@ export function HomeNav() {
       </nav>
 
       {open && (
-        <div className="lg:hidden border-t border-outline-variant bg-surface px-6 py-4 flex flex-col gap-2">
+        <div
+          id="mobile-menu"
+          role="navigation"
+          aria-label="Mobile navigation"
+          className="lg:hidden border-t border-outline-variant bg-surface px-6 py-4 flex flex-col gap-2"
+        >
           {NAV_LINKS.map((link) => (
             <Link
               key={link.label}

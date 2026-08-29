@@ -8,6 +8,16 @@ export const metadata: Metadata = {
   title: 'Transform Lit',
   description:
     'A non-profit organization reaching and preparing the next generation through servant-leadership trainings, moral-recovery-centered literature, and mental-health empowerment.',
+  metadataBase: new URL('https://transformlit.com'),
+  openGraph: {
+    title: 'Transform Lit',
+    description:
+      'A non-profit organization reaching and preparing the next generation through servant-leadership trainings, moral-recovery-centered literature, and mental-health empowerment.',
+    type: 'website',
+    siteName: 'Transform Lit',
+  },
+  twitter: { card: 'summary' },
+  alternates: { canonical: 'https://transformlit.com' },
 };
 
 const spaceGrotesk = Space_Grotesk({

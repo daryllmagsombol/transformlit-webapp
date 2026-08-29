@@ -2,8 +2,7 @@
 
 import Link from 'next/link';
 import { Reveal } from './motion-reveal';
-
-const CONTACT_EMAIL = 'hello@transformlit.com';
+import { CONTACT } from './content';
 
 export function PartnerCta() {
   return (
@@ -45,17 +44,17 @@ export function PartnerCta() {
               Tell us about your church or ministry. We&apos;ll respond with how the
               MOVE system can fit your context.
             </p>
-            <Link href={`mailto:${CONTACT_EMAIL}`} className="btn-primary w-full sm:w-auto">
+            <Link href={`mailto:${CONTACT.email}`} className="btn-primary w-full sm:w-auto">
               Partner With Us
             </Link>
             <div className="pt-2 space-y-1 font-small text-small text-on-surface-variant">
               <p>
                 <span aria-hidden className="material-symbols-outlined align-middle text-primary">call</span>{' '}
-                0927-412-2292
+                {CONTACT.phone}
               </p>
               <p>
                 <span aria-hidden className="material-symbols-outlined align-middle text-primary">mail</span>{' '}
-                {CONTACT_EMAIL}
+                {CONTACT.email}
               </p>
             </div>
           </aside>

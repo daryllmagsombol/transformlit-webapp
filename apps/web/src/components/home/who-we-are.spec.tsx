@@ -1,26 +1,5 @@
 import { render, screen } from '@testing-library/react';
 
-class MockIntersectionObserver {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-  takeRecords() {
-    return [];
-  }
-}
-(global as unknown as { IntersectionObserver: unknown }).IntersectionObserver = MockIntersectionObserver;
-
-(global as unknown as { matchMedia: unknown }).matchMedia = (query: string) => ({
-  matches: false,
-  media: query,
-  onchange: null,
-  addListener: () => {},
-  removeListener: () => {},
-  addEventListener: () => {},
-  removeEventListener: () => {},
-  dispatchEvent: () => false,
-});
-
 import { WhoWeAre } from './who-we-are';
 
 describe('WhoWeAre', () => {

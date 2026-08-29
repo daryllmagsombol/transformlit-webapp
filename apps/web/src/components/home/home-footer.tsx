@@ -1,7 +1,5 @@
 import Link from 'next/link';
-import { TAGLINE, FOOTER_SOCIALS } from './content';
-
-const CONTACT_EMAIL = 'hello@transformlit.com';
+import { TAGLINE, FOOTER_SOCIALS, CONTACT } from './content';
 
 export function HomeFooter() {
   return (
@@ -55,9 +53,9 @@ export function HomeFooter() {
           <p>© 2026 Transform Lit. All rights reserved.</p>
           <p>
             <span aria-hidden className="material-symbols-outlined align-middle">call</span>{' '}
-            0927-412-2292
+            {CONTACT.phone}
             <span aria-hidden className="material-symbols-outlined align-middle ml-4">mail</span>{' '}
-            <span>{CONTACT_EMAIL}</span>
+            <span>{CONTACT.email}</span>
           </p>
         </div>
       </div>

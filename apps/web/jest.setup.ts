@@ -14,3 +14,17 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: jest.fn(),
   }),
 });
+
+// Mock IntersectionObserver for motion's whileInView (jsdom lacks it)
+class MockIntersectionObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords() {
+    return [];
+  }
+}
+Object.defineProperty(globalThis, 'IntersectionObserver', {
+  writable: true,
+  value: MockIntersectionObserver,
+});

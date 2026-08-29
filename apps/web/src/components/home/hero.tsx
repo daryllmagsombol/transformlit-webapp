@@ -1,14 +1,19 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import Link from 'next/link';
 
 export function Hero() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const reduce = useReducedMotion();
-  const fade = reduce
-    ? {}
-    : { initial: { opacity: 0, y: 16 }, animate: { opacity: 1, y: 0 } };
-  const step = reduce ? {} : { transition: { duration: 0.22, ease: 'easeOut' as const } };
+  const fade =
+    mounted && !reduce
+      ? { initial: { opacity: 0, y: 16 }, animate: { opacity: 1, y: 0 } }
+      : {};
+  const step =
+    mounted && !reduce ? { transition: { duration: 0.22, ease: 'easeOut' as const } } : {};
 
   return (
     <section className="relative bg-gradient-to-b from-paper to-paper-warm">
@@ -48,13 +53,12 @@ export function Hero() {
           <motion.div
             animate={{ y: [0, -10, 0] }}
             transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
-            className="hidden lg:block"
           >
             <HeroArtwork />
           </motion.div>
         )}
         {reduce && (
-          <div className="hidden lg:block">
+          <div>
             <HeroArtwork />
           </div>
         )}
