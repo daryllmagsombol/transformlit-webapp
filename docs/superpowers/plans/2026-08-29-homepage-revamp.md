@@ -942,12 +942,12 @@ export function CommunityGateway() {
           ))}
         </div>
 
-        <div className="mt-12 rounded-md bg-surface-dark text-ink-white p-8 lg:p-12 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+        <div className="mt-12 rounded-md bg-paper-warm text-ink-black border border-ink-black/10 p-8 lg:p-12 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
           <div className="space-y-2">
-            <h3 className="font-display text-headline-h2 text-ink-white">
+            <h3 className="font-display text-headline-h2 text-ink-black">
               Join the TransformLit Community
             </h3>
-            <p className="font-body text-body text-ink-white/80 max-w-xl">
+            <p className="font-body text-body text-on-surface-variant max-w-xl">
               Sign up free and start reading, joining groups, and growing alongside
               transformed followers.
             </p>
@@ -958,7 +958,7 @@ export function CommunityGateway() {
             </Link>
             <Link
               href={APP_PLAY_URL}
-              className="btn-ghost text-ink-white border border-ink-white/40 whitespace-nowrap"
+              className="btn-ghost text-ink-black border border-ink-black/40 whitespace-nowrap"
             >
               Get the App
             </Link>
@@ -1368,185 +1368,7 @@ git commit -m "feat(web): compose revamped transformlit homepage"
 
 ---
 
-### Task 11: Stats band (count-up section)
-
-**Files:**
-- Modify: `apps/web/src/components/home/content.ts` (add `STATS`), `apps/web/src/components/home/content.spec.ts`
-- Create: `apps/web/src/components/home/stats-band.tsx`, `apps/web/src/components/home/stats-band.spec.tsx`
-- Modify: `apps/web/src/app/page.tsx` (render `<StatsBand />` between `<Hero />` and `<WhoWeAre />`)
-
-**Interfaces:**
-- Produces: `STATS` (`{ value: number; label: string }[]`) from `./content`; `StatsBand` client component with count-up.
-- Consumes: `STATS`.
-
-- [ ] **Step 1: Add `STATS` to content and its test**
-
-In `apps/web/src/components/home/content.ts`, add the type and export after `PARTNERS`:
-
-```ts
-export interface Stat {
-  value: number;
-  label: string;
-}
-
-export const STATS: Stat[] = [
-  { value: 2, label: 'Year discipleship journey' },
-  { value: 4, label: 'Books in the MOVE System' },
-  { value: 7, label: 'Theologets volumes' },
-];
-```
-
-Add this test to `apps/web/src/components/home/content.spec.ts` (import `STATS`):
-
-```ts
-it('has the three stats with values 2, 4, 7', () => {
-  expect(STATS.map((s) => s.value)).toEqual([2, 4, 7]);
-  expect(STATS.map((s) => s.label)).toContain('Theologets volumes');
-});
-```
-
-- [ ] **Step 2: Write the failing StatsBand test**
-
-Create `apps/web/src/components/home/stats-band.spec.tsx`:
-
-```tsx
-import { render, screen } from '@testing-library/react';
-
-// jsdom lacks browser APIs that motion/react touches
-class MockIntersectionObserver {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-  takeRecords() {
-    return [];
-  }
-}
-(global as unknown as { IntersectionObserver: unknown }).IntersectionObserver = MockIntersectionObserver;
-
-(global as unknown as { matchMedia: unknown }).matchMedia = (query: string) => ({
-  matches: false,
-  media: query,
-  onchange: null,
-  addListener: () => {},
-  removeListener: () => {},
-  addEventListener: () => {},
-  removeEventListener: () => {},
-  dispatchEvent: () => false,
-});
-
-import { StatsBand } from './stats-band';
-
-describe('StatsBand', () => {
-  it('renders the three stat labels', () => {
-    render(<StatsBand />);
-    expect(screen.getByText('Year discipleship journey')).toBeInTheDocument();
-    expect(screen.getByText('Books in the MOVE System')).toBeInTheDocument();
-    expect(screen.getByText('Theologets volumes')).toBeInTheDocument();
-  });
-
-  it('renders a value element per stat', () => {
-    render(<StatsBand />);
-    expect(screen.getAllByTestId('stat-value')).toHaveLength(3);
-  });
-});
-```
-
-- [ ] **Step 3: Run test to verify it fails**
-
-Run: `pnpm --filter @transformlit/web test -- src/components/home/stats-band.spec.tsx`
-Expected: FAIL — cannot find module `./stats-band`.
-
-- [ ] **Step 4: Create `stats-band.tsx`**
-
-```tsx
-'use client';
-
-import { animate, useInView, useReducedMotion } from 'motion/react';
-import { useEffect, useRef, useState } from 'react';
-import { STATS } from './content';
-
-export function StatsBand() {
-  const ref = useRef<HTMLDivElement>(null);
-  const inView = useInView(ref, { once: true, margin: '-80px' });
-
-  return (
-    <section aria-label="Transform Lit by the numbers" className="mx-auto max-w-[1200px] px-6">
-      <div ref={ref} className="card bg-paper-warm grid grid-cols-1 sm:grid-cols-3 gap-8 py-10">
-        {STATS.map((stat) => (
-          <StatItem key={stat.label} stat={stat} active={inView} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function StatItem({ stat, active }: { stat: { value: number; label: string }; active: boolean }) {
-  const reduce = useReducedMotion();
-  const [display, setDisplay] = useState(reduce ? stat.value : 0);
-
-  useEffect(() => {
-    if (!active) return;
-    if (reduce) {
-      setDisplay(stat.value);
-      return;
-    }
-    const controls = animate(0, stat.value, {
-      duration: 1.2,
-      ease: 'easeOut',
-      onUpdate: (v) => setDisplay(Math.round(v)),
-    });
-    return () => controls.stop();
-  }, [active, reduce, stat.value]);
-
-  return (
-    <div className="text-center space-y-1">
-      <p data-testid="stat-value" className="font-display text-display text-primary">
-        {display}
-      </p>
-      <p className="font-small text-small text-on-surface-variant">{stat.label}</p>
-    </div>
-  );
-}
-```
-
-- [ ] **Step 5: Run test to verify it passes**
-
-Run: `pnpm --filter @transformlit/web test -- src/components/home/stats-band.spec.tsx`
-Expected: PASS (2 tests). Also run content test: `pnpm --filter @transformlit/web test -- src/components/home/content.spec.ts` — PASS.
-
-- [ ] **Step 6: Render StatsBand in the homepage**
-
-In `apps/web/src/app/page.tsx`, add the import and render between Hero and WhoWeAre:
-
-```tsx
-import { Hero } from '../components/home/hero';
-import { StatsBand } from '../components/home/stats-band';
-import { WhoWeAre } from '../components/home/who-we-are';
-```
-
-```tsx
-        <Hero />
-        <StatsBand />
-        <WhoWeAre />
-```
-
-- [ ] **Step 7: Run page test + full suite**
-
-Run: `pnpm --filter @transformlit/web test -- src/app/page.spec.tsx`
-Expected: PASS. Add an assertion to `page.spec.tsx` if desired: `expect(screen.getByText('Year discipleship journey')).toBeInTheDocument();`
-
-Run full suite: `pnpm --filter @transformlit/web test` — all PASS.
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add apps/web/src/components/home/content.ts apps/web/src/components/home/content.spec.ts apps/web/src/components/home/stats-band.tsx apps/web/src/components/home/stats-band.spec.tsx apps/web/src/app/page.tsx apps/web/src/app/page.spec.tsx
-git commit -m "feat(web): homepage stats band with count-up"
-```
-
----
-
-### Task 12: Motion animation pass (entrances, micro-interactions, float)
+### Task 11: Motion animation pass (entrances, micro-interactions, float)
 
 **Files:**
 - Modify: `apps/web/package.json` (add `motion`)
@@ -1832,7 +1654,6 @@ In each file below, add `'use client';`, import `{ Reveal } from './motion-revea
 - `community-gateway.tsx` — wrap `<div className="mx-auto max-w-[1200px] px-6 py-20">` content.
 - `announcements.tsx` — wrap `<div className="grid md:grid-cols-2 gap-6 mt-10">` + heading together.
 - `partners-strip.tsx` — wrap the `<div className="mx-auto max-w-[1200px] px-6">` content.
-- `stats-band.tsx` — already client; no Reveal needed (uses its own `useInView`).
 
 - [ ] **Step 12: Run full test suite**
 
@@ -1846,7 +1667,7 @@ Expected: Build succeeds with no type errors.
 
 - [ ] **Step 14: Manual visual check**
 
-Run: `pnpm --filter @transformlit/web dev` (port 3000). Verify: hero staggers in on load; illustration floats; sections reveal once on scroll; MOVE cards stagger + connector draws; stats count 2/4/7 on scroll; hover on nav links slides underline; Shopee pill presses. Toggle OS `prefers-reduced-motion` (or devtools emulate) — all motion disabled, content fully visible. Toggle dark mode — still readable.
+Run: `pnpm --filter @transformlit/web dev` (port 3000). Verify: hero staggers in on load; illustration floats; sections reveal once on scroll; MOVE cards stagger + connector draws; hover on nav links slides underline; Shopee pill presses. Toggle OS `prefers-reduced-motion` (or devtools emulate) — all motion disabled, content fully visible. Toggle dark mode — still readable.
 
 - [ ] **Step 15: Commit**
 

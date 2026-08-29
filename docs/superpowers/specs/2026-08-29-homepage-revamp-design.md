@@ -75,13 +75,10 @@ components), server-rendered.
    **Partner With Us** (primary orange) + **Explore the MOVE System** (secondary
    outline, anchors to the MOVE section). Optional right-side warm-toned open-book /
    small-group illustration (SVG, brand palette; static asset, not a photo).
-3. **Stats band** — Warm card band directly below the hero. Three stats with
-   count-up on scroll: **2** (Year discipleship journey) · **4** (Books in the
-   MOVE System) · **7** (Theologets volumes).
-4. **Who We Are** — H2 + short mission paragraph. Three pillar cards:
+3. **Who We Are** — H2 + short mission paragraph. Three pillar cards:
    (a) Servant-Leadership Trainings; (b) Moral-Recovery Literature;
    (c) Mental Health Empowerment. Each: icon in orange circle, title, one line.
-5. **MOVE Discipleship System** — H2 "The MOVE Discipleship System" + sub-line
+4. **MOVE Discipleship System** — H2 "The MOVE Discipleship System" + sub-line
    "A 2-year journey of transformation". Horizontal 4-step path (numbered cards
    with connector arrows): **Usbong** (Salvation), **Usad** (Spiritual
    Disciplines), **Unlad** (Servant-Leadership), **Ugnay** (Systematic Theology —
@@ -90,22 +87,22 @@ components), server-rendered.
    (books are sold in the TransformLit Shopee store). Below: resource note —
    leaders' guide, presentations, video supplements for online or face-to-face
    small groups.
-6. **Partner With Us** — Alternate warm surface. Copy on partnership (churches,
+5. **Partner With Us** — Alternate warm surface. Copy on partnership (churches,
    leaders, para-church orgs; books/curriculums/systems; donations fund operations
    & self-publication). Right: CTA card — "Start a partnership conversation" +
    **Partner With Us** button + contact (phone 0927-412-2292, email).
-7. **Beyond the Books** (Community Hub gateway) — H2 + one line. Three spotlight
+6. **Beyond the Books** (Community Hub gateway) — H2 + one line. Three spotlight
    cards: **Tahanan Campus Community Group** (real program), **Community Groups**,
-   **Books & Library**. Below: dark (ink/surface-dark) banner card with white
+   **Books & Library**. Below: **light warm (paper-warm) banner card** with dark
    headline "Join the TransformLit Community" + orange **Join the Community**
-   button → `/register` + secondary outline **Get the App** button → Google Play
-   (TransformLit App).
-8. **Announcements** — H2 "Announcements". Two cards (date label, title, excerpt)
+   button → `/register` + secondary dark-outline **Get the App** button → Google
+   Play (TransformLit App).
+7. **Announcements** — H2 "Announcements". Two cards (date label, title, excerpt)
    from a static data array, using real content: **Tahanan Registration — Open**
    and **Book 4: Ugnay Now Available**.
-9. **Partners strip** — quiet row of sponsor/church placeholder marks (low-opacity
+8. **Partners strip** — quiet row of sponsor/church placeholder marks (low-opacity
    SVG shapes).
-10. **Footer** — brand + tagline "Turning Pages, Turning Hearts.", social row
+9. **Footer** — brand + tagline "Turning Pages, Turning Hearts.", social row
    (Facebook → facebook.com/transformlit, Instagram, Google Play, Shopee), link
    columns (About / Books / Partners), contact (phone, email), "© 2026 Transform
    Lit. All rights reserved."
@@ -239,10 +236,7 @@ boundaries small — **never put Motion providers/LazyMotion in `layout.tsx`**
 4. **Micro-interactions (hover/tap):** book-card lift + cover tilt + shadow
    (`whileHover`), Shopee pill press (`whileTap` scale 0.97), nav-link underline
    slide-in.
-5. **Stats band count-up:** counts 2 / 4 / 7 when the band scrolls into view
-   (`useInView` + `animate`, 1.2s easeOut); `useReducedMotion()` skips to the
-   final value.
 
 **Interaction table (per design system):** page/section 220ms ease-out · stagger
-40ms gaps · hover/active 120ms · float 6s ease-in-out · count-up 1.2s easeOut.
-All disabled under `prefers-reduced-motion`.
+40ms gaps · hover/active 120ms · float 6s ease-in-out. All disabled under
+`prefers-reduced-motion`.
