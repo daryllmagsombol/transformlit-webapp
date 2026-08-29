@@ -1,6 +1,15 @@
+'use client';
+
+import { motion, useReducedMotion } from 'motion/react';
 import Link from 'next/link';
 
 export function Hero() {
+  const reduce = useReducedMotion();
+  const fade = reduce
+    ? {}
+    : { initial: { opacity: 0, y: 16 }, animate: { opacity: 1, y: 0 } };
+  const step = reduce ? {} : { transition: { duration: 0.22, ease: 'easeOut' as const } };
+
   return (
     <section className="relative bg-gradient-to-b from-paper to-paper-warm">
       <div
@@ -13,29 +22,42 @@ export function Hero() {
       />
       <div className="relative mx-auto max-w-[1200px] px-6 py-20 lg:py-28 grid lg:grid-cols-[1.2fr_0.8fr] gap-12 items-center">
         <div className="space-y-6">
-          <p className="font-micro text-micro uppercase tracking-[0.15em] text-brand-orange-dark">
+          <motion.p {...fade} {...step} transition={{ ...step.transition, delay: 0 }} className="font-micro text-micro uppercase tracking-[0.15em] text-brand-orange-dark">
             Turning Pages, Turning Hearts.
-          </p>
-          <h1 className="font-display text-display-mobile lg:text-display text-ink-black">
+          </motion.p>
+          <motion.h1 {...fade} {...step} transition={{ ...step.transition, delay: 0.08 }} className="font-display text-display-mobile lg:text-display text-ink-black">
             Raising transformed followers who raise{' '}
             <span className="text-primary">transformed followers</span>.
-          </h1>
-          <p className="font-body text-body text-on-surface-variant max-w-xl">
+          </motion.h1>
+          <motion.p {...fade} {...step} transition={{ ...step.transition, delay: 0.16 }} className="font-body text-body text-on-surface-variant max-w-xl">
             Transform Lit prepares the next generation through servant-leadership
             trainings, moral-recovery-centered literature, and mental-health
             empowerment through life coaching and community groups.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4 pt-2">
+          </motion.p>
+          <motion.div {...fade} {...step} transition={{ ...step.transition, delay: 0.24 }} className="flex flex-col sm:flex-row gap-4 pt-2">
             <Link href="#partner-with-us" className="btn-primary">
               Partner With Us
             </Link>
             <Link href="#move-system" className="btn-secondary">
               Explore the MOVE System
             </Link>
-          </div>
+          </motion.div>
         </div>
 
-        <HeroArtwork />
+        {!reduce && (
+          <motion.div
+            animate={{ y: [0, -10, 0] }}
+            transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
+            className="hidden lg:block"
+          >
+            <HeroArtwork />
+          </motion.div>
+        )}
+        {reduce && (
+          <div className="hidden lg:block">
+            <HeroArtwork />
+          </div>
+        )}
       </div>
     </section>
   );

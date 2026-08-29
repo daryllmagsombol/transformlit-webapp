@@ -1,7 +1,23 @@
+'use client';
+
 import Link from 'next/link';
+import { motion, stagger, useReducedMotion, type Variants } from 'motion/react';
 import { BOOKS } from './content';
 
 export function MoveSystem() {
+  const reduce = useReducedMotion();
+
+  const gridVariants = {
+    hidden: {},
+    visible: { transition: { when: 'beforeChildren' as const, delayChildren: stagger(0.1) } },
+  };
+  const cardVariants: Variants = reduce
+    ? {}
+    : {
+        hidden: { opacity: 0, y: 24 },
+        visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' as const } },
+      };
+
   return (
     <section id="move-system" className="bg-surface-container-low">
       <div className="mx-auto max-w-[1200px] px-6 py-20">
@@ -14,9 +30,15 @@ export function MoveSystem() {
           </h2>
         </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 mt-12">
+        <motion.div
+          className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 mt-12"
+          initial={reduce ? false : 'hidden'}
+          whileInView="visible"
+          viewport={{ once: true, margin: '-80px' }}
+          variants={gridVariants}
+        >
           {BOOKS.map((book) => (
-            <article key={book.title} className="card space-y-4 flex flex-col">
+            <motion.article key={book.title} className="card space-y-4 flex flex-col" variants={cardVariants}>
               <div className={`h-40 rounded-md ${book.coverClass} border-2 border-ink-black flex items-center justify-center`}>
                 <span className="font-display text-headline-h3 text-ink-black">{book.title}</span>
               </div>
@@ -34,9 +56,19 @@ export function MoveSystem() {
                   Buy on Shopee
                 </Link>
               </div>
-            </article>
+            </motion.article>
           ))}
-        </div>
+        </motion.div>
+
+        <motion.div
+          aria-hidden
+          className="mt-10 h-1 rounded-full bg-primary-fixed-dim"
+          initial={reduce ? false : { scaleX: 0 }}
+          whileInView={{ scaleX: 1 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.8, ease: 'easeOut' }}
+          style={{ transformOrigin: 'left' }}
+        />
 
         <p className="font-small text-small text-on-surface-variant mt-10 max-w-3xl">
           Complete resources included — leaders&apos; guide, presentations, and video

@@ -2,10 +2,12 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { motion, useReducedMotion } from 'motion/react';
 import { NAV_LINKS } from './content';
 
 export function HomeNav() {
   const [open, setOpen] = useState(false);
+  const reduce = useReducedMotion();
 
   return (
     <header className="sticky top-0 z-50 bg-surface/95 backdrop-blur border-b border-outline-variant">
@@ -20,28 +22,41 @@ export function HomeNav() {
             <Link
               key={link.label}
               href={link.href}
-              className="font-small text-small text-on-surface-variant hover:text-ink-black transition-colors"
+              className="relative font-small text-small text-on-surface-variant hover:text-ink-black transition-colors"
             >
               {link.label}
+              <motion.span
+                aria-hidden
+                className="absolute left-0 -bottom-0.5 h-0.5 w-full rounded-full bg-brand"
+                style={{ scaleX: 0, transformOrigin: 'left' }}
+                whileHover={reduce ? undefined : { scaleX: 1 }}
+                transition={{ duration: 0.15, ease: 'easeOut' }}
+              />
             </Link>
           ))}
         </div>
 
         <div className="hidden lg:block">
-          <Link href="#partner-with-us" className="btn-primary">
-            Partner With Us
-          </Link>
+          <motion.span
+            className="inline-block"
+            whileTap={reduce ? undefined : { scale: 0.97 }}
+          >
+            <Link href="#partner-with-us" className="btn-primary">
+              Partner With Us
+            </Link>
+          </motion.span>
         </div>
 
-        <button
+        <motion.button
           type="button"
           aria-label="Toggle menu"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
           className="lg:hidden btn-ghost"
+          whileTap={reduce ? undefined : { scale: 0.97 }}
         >
           <span className="material-symbols-outlined">{open ? 'close' : 'menu'}</span>
-        </button>
+        </motion.button>
       </nav>
 
       {open && (
