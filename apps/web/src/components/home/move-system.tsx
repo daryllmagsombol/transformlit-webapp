@@ -1,15 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { motion, stagger, useReducedMotion, type Variants } from 'motion/react';
 import { BOOKS } from './content';
 
 export function MoveSystem() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
   const reduce = useReducedMotion();
-  const hiddenInitial = mounted && !reduce;
+  const hiddenInitial = !reduce;
 
   const gridVariants = {
     hidden: {},

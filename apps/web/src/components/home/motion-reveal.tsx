@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import type { ReactNode } from 'react';
 
@@ -13,14 +12,12 @@ export function Reveal({
   delay?: number;
   className?: string;
 }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
   const reduce = useReducedMotion();
 
   return (
     <motion.div
       className={className}
-      initial={mounted && !reduce ? { opacity: 0, y: 24 } : false}
+      initial={reduce ? false : { opacity: 0, y: 24 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: '-80px' }}
       transition={{ duration: 0.5, ease: 'easeOut', delay }}

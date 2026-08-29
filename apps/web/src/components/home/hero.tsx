@@ -1,14 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import Link from 'next/link';
 
 export function Hero() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
   const reduce = useReducedMotion();
-  const animate = mounted && !reduce;
+  const animate = !reduce;
 
   return (
     <section className="relative bg-gradient-to-b from-paper to-paper-warm">

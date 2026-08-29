@@ -58,6 +58,14 @@ export default function RootLayout({
             font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
           }
         `}</style>
+        <style>{`
+          @media (prefers-reduced-motion: reduce) {
+            [style*="opacity"] { opacity: 1 !important; transform: none !important; }
+          }
+        `}</style>
+        <noscript>
+          <style>{`[style*="opacity"] { opacity: 1 !important; transform: none !important; }`}</style>
+        </noscript>
       </head>
       <body className={`${spaceGrotesk.variable} ${newsreader.variable} ${jetbrainsMono.variable} bg-background text-on-surface font-body overflow-x-hidden paper-texture`}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
