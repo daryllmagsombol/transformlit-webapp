@@ -5,8 +5,9 @@ import { ToastProvider } from '../components/ui';
 import '../styles/globals.css';
 
 export const metadata: Metadata = {
-  title: 'Transformlit',
-  description: 'A community-driven platform for reading groups, book sharing, and literary engagement.',
+  title: 'Transform Lit',
+  description:
+    'A non-profit organization reaching and preparing the next generation through servant-leadership trainings, moral-recovery-centered literature, and mental-health empowerment.',
 };
 
 const spaceGrotesk = Space_Grotesk({
