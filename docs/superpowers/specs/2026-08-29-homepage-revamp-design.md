@@ -69,12 +69,12 @@ components), server-rendered.
    border. Mobile: hamburger → slide-over/sheet (reuse existing drawer pattern if
    present; otherwise a simple disclosure).
 2. **Hero** — Paper gradient (`--color-paper` → `--color-paper-warm`) + radial
-   orange accent wash. Eyebrow: "A non-profit serving the next generation".
-   Headline: *"Raising transformed followers who raise transformed followers."*
-   Sub-copy covering the three pillars. CTAs: **Partner With Us** (primary orange)
-   + **Explore the MOVE System** (secondary outline, anchors to section 4).
-   Optional right-side warm-toned open-book / small-group illustration
-   (SVG, brand palette; static asset, not a photo).
+   orange accent wash. Eyebrow (tagline): **"Turning Pages, Turning Hearts"**
+   (Manrope uppercase). Headline: *"Raising transformed followers who raise
+   transformed followers."* Sub-copy covering the three pillars. CTAs:
+   **Partner With Us** (primary orange) + **Explore the MOVE System** (secondary
+   outline, anchors to section 4). Optional right-side warm-toned open-book /
+   small-group illustration (SVG, brand palette; static asset, not a photo).
 3. **Who We Are** — H2 + short mission paragraph. Three pillar cards:
    (a) Servant-Leadership Trainings; (b) Moral-Recovery Literature;
    (c) Mental Health Empowerment. Each: icon in orange circle, title, one line.
@@ -82,22 +82,28 @@ components), server-rendered.
    "A 2-year journey of transformation". Horizontal 4-step path (numbered cards
    with connector arrows): **Usbong** (Salvation), **Usad** (Spiritual
    Disciplines), **Unlad** (Servant-Leadership), **Ugnay** (Systematic Theology —
-   Theologets Series). Book-cover placeholder art (SVG typographic covers).
-   Below: resource note — leaders' guide, presentations, video supplements for
-   online or face-to-face small groups.
+   Theologets Series). Book-cover art (SVG typographic covers, consistent flat
+   illustrated style). Each card gets a small orange **Buy on Shopee** pill
+   (books are sold in the TransformLit Shopee store). Below: resource note —
+   leaders' guide, presentations, video supplements for online or face-to-face
+   small groups.
 5. **Partner With Us** — Alternate warm surface. Copy on partnership (churches,
    leaders, para-church orgs; books/curriculums/systems; donations fund operations
    & self-publication). Right: CTA card — "Start a partnership conversation" +
    **Partner With Us** button + contact (phone 0927-412-2292, email).
 6. **Beyond the Books** (Community Hub gateway) — H2 + one line. Three spotlight
-   cards: **Community Groups**, **Books & Library**, **Friends**. Below: dark
-   (ink/surface-dark) banner card with white headline "Join the TransformLit
-   Community" + orange **Join the Community** button → `/register`.
-7. **Announcements** — H2 "Announcements". 1–2 cards (date label, title, excerpt)
-   from a static data array.
+   cards: **Tahanan Campus Community Group** (real program), **Community Groups**,
+   **Books & Library**. Below: dark (ink/surface-dark) banner card with white
+   headline "Join the TransformLit Community" + orange **Join the Community**
+   button → `/register` + secondary outline **Get the App** button → Google Play
+   (TransformLit App).
+7. **Announcements** — H2 "Announcements". Two cards (date label, title, excerpt)
+   from a static data array, using real content: **Tahanan Registration — Open**
+   and **Book 4: Ugnay Now Available**.
 8. **Partners strip** — quiet row of sponsor/church placeholder marks (low-opacity
    SVG shapes).
-9. **Footer** — brand + tagline, Facebook link (facebook.com/transformlit), link
+9. **Footer** — brand + tagline "Turning Pages, Turning Hearts.", social row
+   (Facebook → facebook.com/transformlit, Instagram, Google Play, Shopee), link
    columns (About / Books / Partners), contact (phone, email), "© 2026 Transform
    Lit. All rights reserved."
 
@@ -140,6 +146,8 @@ apps/web/src/components/home/content.ts      # typed static data (books, pillars
 
 All copy derives from the approved org definition:
 
+- **Tagline:** Turning Pages, Turning Hearts. (hero eyebrow + footer tagline;
+  sourced from linktr.ee/transformlit)
 - **Mission line:** reach and prepare the next generation through servant-leadership
   trainings, moral-recovery-centered literature, and mental-health empowerment
   through life coaching and community groups.
@@ -184,3 +192,20 @@ approval.
 - CMS or API-driven announcements/partners.
 - Donations/payment.
 - These become separate specs after this homepage ships.
+
+## 10. Refinements from Linktree content (2026-08-29)
+
+Approved refinements sourced from https://linktr.ee/transformlit and the
+TransformLit Google Play listing (app `com.transformlit.app`, "Tracking tool for
+bible studies"). All six were approved for the Stitch design and the plan:
+
+1. **Tagline** "Turning Pages, Turning Hearts" → hero eyebrow + footer tagline.
+2. **Shopee storefront** → each MOVE book card gets a "Buy on Shopee" action;
+   books sold via shopee.ph/transformlit.
+3. **Expanded footer socials** → Facebook, Instagram, Google Play, Shopee.
+4. **App gateway** → dark Join banner gains a secondary "Get the App" CTA to
+   Google Play, alongside "Join the Community" → `/register`.
+5. **Feature Tahanan** → Tahanan Campus Community Group replaces the generic
+   "Friends" spotlight card in Beyond the Books.
+6. **Real announcements** → "Tahanan Registration — Open" (Jul 2026) and
+   "Book 4: Ugnay Now Available" (Aug 2026).

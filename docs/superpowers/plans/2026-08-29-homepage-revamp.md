@@ -35,12 +35,16 @@
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-import { NAV_LINKS, PILLARS, BOOKS, ANNOUNCEMENTS, PARTNERS } from './content';
+import { NAV_LINKS, PILLARS, BOOKS, ANNOUNCEMENTS, PARTNERS, TAGLINE, FOOTER_SOCIALS } from './content';
 
 describe('homepage content', () => {
   it('nav has 5 links including the partner target', () => {
     expect(NAV_LINKS).toHaveLength(5);
     expect(NAV_LINKS.map((l) => l.href)).toContain('#partner-with-us');
+  });
+
+  it('exports the brand tagline', () => {
+    expect(TAGLINE).toBe('Turning Pages, Turning Hearts.');
   });
 
   it('has 3 pillars each with icon, title, description', () => {
@@ -52,13 +56,24 @@ describe('homepage content', () => {
     }
   });
 
-  it('has the 4 MOVE books in order Usbong, Usad, Unlad, Ugnay', () => {
+  it('has the 4 MOVE books in order Usbong, Usad, Unlad, Ugnay, each with a Shopee link', () => {
     expect(BOOKS.map((b) => b.title)).toEqual(['Usbong', 'Usad', 'Unlad', 'Ugnay']);
     expect(BOOKS.map((b) => b.step)).toEqual([1, 2, 3, 4]);
+    for (const book of BOOKS) {
+      expect(book.shopeeUrl).toMatch(/^https:\/\/shopee\.ph\//);
+    }
   });
 
-  it('has at least one announcement and one partner', () => {
-    expect(ANNOUNCEMENTS.length).toBeGreaterThanOrEqual(1);
+  it('has 4 footer socials including Google Play', () => {
+    expect(FOOTER_SOCIALS).toHaveLength(4);
+    expect(FOOTER_SOCIALS.map((s) => s.label)).toEqual(
+      expect.arrayContaining(['Facebook', 'Instagram', 'Google Play', 'Shopee']),
+    );
+  });
+
+  it('has real announcements and at least one partner', () => {
+    expect(ANNOUNCEMENTS.map((a) => a.title)).toContain('Tahanan Registration — Open');
+    expect(ANNOUNCEMENTS.map((a) => a.title)).toContain('Book 4: Ugnay Now Available');
     expect(PARTNERS.length).toBeGreaterThanOrEqual(1);
   });
 });
@@ -89,6 +104,7 @@ export interface Book {
   phase: string;
   description: string;
   coverClass: string;
+  shopeeUrl: string;
 }
 
 export interface Announcement {
@@ -100,6 +116,25 @@ export interface Announcement {
 export interface Partner {
   name: string;
 }
+
+export interface SocialLink {
+  label: string;
+  href: string;
+  icon: string;
+}
+
+export const TAGLINE = 'Turning Pages, Turning Hearts.';
+
+export const FOOTER_SOCIALS: SocialLink[] = [
+  { label: 'Facebook', href: 'https://facebook.com/transformlit', icon: 'facebook' },
+  { label: 'Instagram', href: 'https://instagram.com/transformlit', icon: 'photo_camera' },
+  {
+    label: 'Google Play',
+    href: 'https://play.google.com/store/apps/details?id=com.transformlit.app',
+    icon: 'smartphone',
+  },
+  { label: 'Shopee', href: 'https://shopee.ph/transformlit', icon: 'shopping_bag' },
+];
 
 export const NAV_LINKS: NavLink[] = [
   { label: 'About', href: '#who-we-are' },
@@ -137,6 +172,7 @@ export const BOOKS: Book[] = [
     phase: 'Salvation',
     description: 'The beginning of new life in Christ.',
     coverClass: 'bg-primary-container',
+    shopeeUrl: 'https://shopee.ph/product/70500775/13258169131',
   },
   {
     step: 2,
@@ -144,6 +180,7 @@ export const BOOKS: Book[] = [
     phase: 'Spiritual Disciplines',
     description: 'Growing daily through the means of grace.',
     coverClass: 'bg-secondary-container',
+    shopeeUrl: 'https://shopee.ph/product/70500775/14513651211',
   },
   {
     step: 3,
@@ -151,6 +188,7 @@ export const BOOKS: Book[] = [
     phase: 'Servant-Leadership',
     description: 'Leading others the way Christ leads.',
     coverClass: 'bg-primary-fixed-dim',
+    shopeeUrl: 'https://shopee.ph/product/70500775/14857337751',
   },
   {
     step: 4,
@@ -158,21 +196,22 @@ export const BOOKS: Book[] = [
     phase: 'Systematic Theology',
     description: 'Knowing God deeply — the Theologets Series.',
     coverClass: 'bg-tertiary-container',
+    shopeeUrl: 'https://shopee.ph/product/70500775/21237049435',
   },
 ];
 
 export const ANNOUNCEMENTS: Announcement[] = [
   {
-    date: 'August 2026',
-    title: 'MOVE Discipleship Cohort Opening',
+    date: 'July 2026',
+    title: 'Tahanan Registration — Open',
     excerpt:
-      'New online small-group cohorts start this month. Partner churches, contact us to enroll your leaders.',
+      'Campus community registration is open. Partner campuses and students, sign up and join the journey.',
   },
   {
     date: 'August 2026',
-    title: 'Theologets Series — New Volume',
+    title: 'Book 4: Ugnay Now Available',
     excerpt:
-      'The next volume of the Ugnay series is in print. Watch the announcements for release details.',
+      'The Theologets Series continues. Order Ugnay — and the full MOVE set — from the TransformLit Shopee store.',
   },
 ];
 
@@ -361,9 +400,10 @@ jest.mock('next/link', () => {
 import { Hero } from './hero';
 
 describe('Hero', () => {
-  it('renders headline and sub-copy', () => {
+  it('renders headline, tagline eyebrow and sub-copy', () => {
     render(<Hero />);
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Raising transformed followers');
+    expect(screen.getByText('Turning Pages, Turning Hearts.')).toBeInTheDocument();
   });
 
   it('renders both CTAs with correct anchors', () => {
@@ -400,7 +440,7 @@ export function Hero() {
       <div className="relative mx-auto max-w-[1200px] px-6 py-20 lg:py-28 grid lg:grid-cols-[1.2fr_0.8fr] gap-12 items-center">
         <div className="space-y-6">
           <p className="font-micro text-micro uppercase tracking-[0.15em] text-brand-orange-dark">
-            A non-profit serving the next generation
+            Turning Pages, Turning Hearts.
           </p>
           <h1 className="font-display text-display-mobile lg:text-display text-ink-black">
             Raising transformed followers who raise{' '}
@@ -561,6 +601,12 @@ git commit -m "feat(web): homepage who-we-are section"
 ```tsx
 import { render, screen } from '@testing-library/react';
 
+jest.mock('next/link', () => {
+  return function MockLink({ children, href, className }: Record<string, unknown>) {
+    return <a href={href as string} className={className as string}>{children}</a>;
+  };
+});
+
 import { MoveSystem } from './move-system';
 
 describe('MoveSystem', () => {
@@ -581,6 +627,15 @@ describe('MoveSystem', () => {
     expect(screen.getByText('Systematic Theology')).toBeInTheDocument();
   });
 
+  it('links every book to its Shopee product', () => {
+    render(<MoveSystem />);
+    const shopeeLinks = screen.getAllByText('Buy on Shopee');
+    expect(shopeeLinks).toHaveLength(4);
+    for (const link of shopeeLinks) {
+      expect(link).toHaveAttribute('href', expect.stringMatching(/^https:\/\/shopee\.ph\//));
+    }
+  });
+
   it('renders the resources note', () => {
     render(<MoveSystem />);
     expect(screen.getByText(/leaders. guide, presentations, and video supplements/i)).toBeInTheDocument();
@@ -596,6 +651,7 @@ Expected: FAIL — cannot find module `./move-system`.
 - [ ] **Step 3: Create `move-system.tsx`**
 
 ```tsx
+import Link from 'next/link';
 import { BOOKS } from './content';
 
 export function MoveSystem() {
@@ -617,13 +673,19 @@ export function MoveSystem() {
               <div className={`h-40 rounded-md ${book.coverClass} border-2 border-ink-black flex items-center justify-center`}>
                 <span className="font-display text-headline-h3 text-ink-black">{book.title}</span>
               </div>
-              <div>
+              <div className="space-y-2">
                 <p className="font-micro text-micro uppercase tracking-[0.1em] text-brand-orange-dark">
                   Book {book.step}
                 </p>
-                <h3 className="font-display text-headline-h3 text-ink-black mt-1">{book.title}</h3>
-                <p className="font-small text-small text-secondary mt-0.5">{book.phase}</p>
-                <p className="font-body text-body text-on-surface-variant mt-2">{book.description}</p>
+                <h3 className="font-display text-headline-h3 text-ink-black">{book.title}</h3>
+                <p className="font-small text-small text-secondary">{book.phase}</p>
+                <p className="font-body text-body text-on-surface-variant">{book.description}</p>
+                <Link
+                  href={book.shopeeUrl}
+                  className="inline-block mt-2 px-4 py-2 rounded-sm bg-brand text-ink-black font-small text-small font-semibold border-2 border-ink-black hover:bg-brand-orange-dark transition-colors"
+                >
+                  Buy on Shopee
+                </Link>
               </div>
             </article>
           ))}
@@ -803,17 +865,21 @@ jest.mock('next/link', () => {
 import { CommunityGateway } from './community-gateway';
 
 describe('CommunityGateway', () => {
-  it('renders the three spotlight cards', () => {
+  it('renders the three spotlight cards including Tahanan', () => {
     render(<CommunityGateway />);
     expect(screen.getByText('Community Groups')).toBeInTheDocument();
     expect(screen.getByText('Books & Library')).toBeInTheDocument();
-    expect(screen.getByText('Friends')).toBeInTheDocument();
+    expect(screen.getByText('Tahanan Campus Community Group')).toBeInTheDocument();
   });
 
-  it('renders the join banner linking to /register', () => {
+  it('renders the join banner linking to /register and the app to Google Play', () => {
     render(<CommunityGateway />);
     expect(screen.getByText('Join the TransformLit Community')).toBeInTheDocument();
     expect(screen.getByText('Join the Community')).toHaveAttribute('href', '/register');
+    expect(screen.getByText('Get the App')).toHaveAttribute(
+      'href',
+      'https://play.google.com/store/apps/details?id=com.transformlit.app',
+    );
   });
 });
 ```
@@ -828,7 +894,14 @@ Expected: FAIL — cannot find module `./community-gateway`.
 ```tsx
 import Link from 'next/link';
 
+const APP_PLAY_URL = 'https://play.google.com/store/apps/details?id=com.transformlit.app';
+
 const SPOTLIGHTS = [
+  {
+    icon: 'home_work',
+    title: 'Tahanan Campus Community Group',
+    description: 'A campus community where students walk the discipleship journey together.',
+  },
   {
     icon: 'groups',
     title: 'Community Groups',
@@ -838,11 +911,6 @@ const SPOTLIGHTS = [
     icon: 'auto_stories',
     title: 'Books & Library',
     description: 'Read, buy, and download our publications.',
-  },
-  {
-    icon: 'person_add',
-    title: 'Friends',
-    description: 'Grow alongside fellow disciples.',
   },
 ];
 
@@ -883,9 +951,17 @@ export function CommunityGateway() {
               transformed followers.
             </p>
           </div>
-          <Link href="/register" className="btn-primary whitespace-nowrap">
-            Join the Community
-          </Link>
+          <div className="flex flex-wrap gap-4">
+            <Link href="/register" className="btn-primary whitespace-nowrap">
+              Join the Community
+            </Link>
+            <Link
+              href={APP_PLAY_URL}
+              className="btn-ghost text-ink-white border border-ink-white/40 whitespace-nowrap"
+            >
+              Get the App
+            </Link>
+          </div>
         </div>
       </div>
     </section>
@@ -929,7 +1005,7 @@ describe('Announcements', () => {
   it('renders announcement cards', () => {
     render(<Announcements />);
     expect(screen.getByRole('heading', { name: 'Announcements' })).toBeInTheDocument();
-    expect(screen.getByText('MOVE Discipleship Cohort Opening')).toBeInTheDocument();
+    expect(screen.getByText('Tahanan Registration — Open')).toBeInTheDocument();
   });
 });
 
@@ -1034,16 +1110,22 @@ jest.mock('next/link', () => {
 import { HomeFooter } from './home-footer';
 
 describe('HomeFooter', () => {
-  it('renders brand, copyright and contact', () => {
+  it('renders brand, tagline, copyright and contact', () => {
     render(<HomeFooter />);
+    expect(screen.getByText('Turning Pages, Turning Hearts.')).toBeInTheDocument();
     expect(screen.getByText(/© 2026 Transform Lit/)).toBeInTheDocument();
     expect(screen.getByText('0927-412-2292')).toBeInTheDocument();
   });
 
-  it('links to the Facebook page', () => {
+  it('renders all four social links', () => {
     render(<HomeFooter />);
-    const fb = screen.getByText('Facebook');
-    expect(fb).toHaveAttribute('href', 'https://facebook.com/transformlit');
+    expect(screen.getByText('Facebook')).toHaveAttribute('href', 'https://facebook.com/transformlit');
+    expect(screen.getByText('Instagram')).toHaveAttribute('href', 'https://instagram.com/transformlit');
+    expect(screen.getByText('Google Play')).toHaveAttribute(
+      'href',
+      'https://play.google.com/store/apps/details?id=com.transformlit.app',
+    );
+    expect(screen.getByText('Shopee')).toHaveAttribute('href', 'https://shopee.ph/transformlit');
   });
 });
 ```
@@ -1057,6 +1139,7 @@ Expected: FAIL — cannot find module `./home-footer`.
 
 ```tsx
 import Link from 'next/link';
+import { TAGLINE, FOOTER_SOCIALS } from './content';
 
 const CONTACT_EMAIL = 'hello@transformlit.com';
 
@@ -1069,16 +1152,19 @@ export function HomeFooter() {
             <span aria-hidden className="inline-block h-4 w-4 rounded-sm bg-brand" />
             Transform Lit
           </p>
-          <p className="font-body text-body text-on-surface-variant max-w-xs">
-            Raising transformed followers who raise transformed followers.
-          </p>
-          <Link
-            href="https://facebook.com/transformlit"
-            className="font-small text-small text-on-surface-variant hover:text-primary inline-flex items-center gap-2"
-          >
-            <span aria-hidden className="material-symbols-outlined">facebook</span>
-            Facebook
-          </Link>
+          <p className="font-body text-body text-on-surface-variant max-w-xs">{TAGLINE}</p>
+          <div className="flex flex-wrap gap-4 pt-1">
+            {FOOTER_SOCIALS.map((social) => (
+              <Link
+                key={social.label}
+                href={social.href}
+                className="font-small text-small text-on-surface-variant hover:text-primary inline-flex items-center gap-2"
+              >
+                <span aria-hidden className="material-symbols-outlined">{social.icon}</span>
+                {social.label}
+              </Link>
+            ))}
+          </div>
         </div>
 
         <FooterColumn
