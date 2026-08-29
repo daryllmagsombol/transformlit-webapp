@@ -43,9 +43,11 @@ export function MoveSystem() {
         >
           {BOOKS.map((book) => (
             <motion.article key={book.title} className="card space-y-4 flex flex-col" variants={cardVariants}>
-              <div aria-hidden className={`h-40 rounded-md ${book.coverClass} border-2 border-ink-black flex items-center justify-center`}>
-                <span className="font-display text-headline-h3 text-ink-black">{book.title}</span>
-              </div>
+              <img
+                src={book.coverSrc}
+                alt=""
+                className="h-40 w-full object-cover rounded-md border-2 border-ink-black"
+              />
               <div className="space-y-2">
                 <p className="font-micro text-micro uppercase tracking-[0.1em] text-brand-orange-dark">
                   Book {book.step}

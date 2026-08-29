@@ -11,13 +11,15 @@ export function HomeNav() {
 
   return (
     <header className="sticky top-0 z-50 bg-surface/95 backdrop-blur border-b border-outline-variant">
-      <nav className="mx-auto max-w-[1200px] px-6 h-16 flex items-center justify-between gap-4">
-        <Link href="/" className="font-display text-headline-h3 font-bold text-ink-black inline-flex items-center gap-2">
+      <nav className="mx-auto max-w-[1200px] px-6 h-16 grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+        {/* col 1: logo, left */}
+        <Link href="/" className="justify-self-start font-display text-headline-h3 font-bold text-ink-black inline-flex items-center gap-2">
           <span aria-hidden className="inline-block h-4 w-4 rounded-sm bg-brand" />
           Transform Lit
         </Link>
 
-        <div className="hidden lg:flex items-center gap-8">
+        {/* col 2: links, centered */}
+        <div className="hidden lg:flex items-center gap-8 justify-self-center">
           {NAV_LINKS.map((link) => (
             <Link
               key={link.label}
@@ -33,28 +35,30 @@ export function HomeNav() {
           ))}
         </div>
 
-        <div className="hidden lg:block">
-          <motion.span
-            className="inline-block"
+        {/* col 3: CTA (desktop) + mobile toggle, right */}
+        <div className="justify-self-end flex items-center gap-2">
+          <div className="hidden lg:block">
+            <motion.span
+              className="inline-block"
+              whileTap={reduce ? undefined : { scale: 0.97 }}
+            >
+              <Link href="#partner-with-us" className="btn-primary">
+                Partner With Us
+              </Link>
+            </motion.span>
+          </div>
+          <motion.button
+            type="button"
+            aria-label="Toggle menu"
+            aria-expanded={open}
+            aria-controls="mobile-menu"
+            onClick={() => setOpen((v) => !v)}
+            className="lg:hidden btn-ghost"
             whileTap={reduce ? undefined : { scale: 0.97 }}
           >
-            <Link href="#partner-with-us" className="btn-primary">
-              Partner With Us
-            </Link>
-          </motion.span>
+            <span className="material-symbols-outlined">{open ? 'close' : 'menu'}</span>
+          </motion.button>
         </div>
-
-        <motion.button
-          type="button"
-          aria-label="Toggle menu"
-          aria-expanded={open}
-          aria-controls="mobile-menu"
-          onClick={() => setOpen((v) => !v)}
-          className="lg:hidden btn-ghost"
-          whileTap={reduce ? undefined : { scale: 0.97 }}
-        >
-          <span className="material-symbols-outlined">{open ? 'close' : 'menu'}</span>
-        </motion.button>
       </nav>
 
       {open && (

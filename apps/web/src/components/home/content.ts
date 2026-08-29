@@ -14,7 +14,7 @@ export interface Book {
   title: string;
   phase: string;
   description: string;
-  coverClass: string;
+  coverSrc: string;
   shopeeUrl: string;
 }
 
@@ -84,7 +84,7 @@ export const BOOKS: Book[] = [
     title: 'Usbong',
     phase: 'Salvation',
     description: 'The beginning of new life in Christ.',
-    coverClass: 'bg-primary-container',
+    coverSrc: '/images/book-1.jpg',
     shopeeUrl: 'https://shopee.ph/product/70500775/13258169131',
   },
   {
@@ -92,7 +92,7 @@ export const BOOKS: Book[] = [
     title: 'Usad',
     phase: 'Spiritual Disciplines',
     description: 'Growing daily through the means of grace.',
-    coverClass: 'bg-secondary-container',
+    coverSrc: '/images/book-2.jpg',
     shopeeUrl: 'https://shopee.ph/product/70500775/14513651211',
   },
   {
@@ -100,7 +100,7 @@ export const BOOKS: Book[] = [
     title: 'Unlad',
     phase: 'Servant-Leadership',
     description: 'Leading others the way Christ leads.',
-    coverClass: 'bg-primary-fixed-dim',
+    coverSrc: '/images/book-3.jpg',
     shopeeUrl: 'https://shopee.ph/product/70500775/14857337751',
   },
   {
@@ -108,7 +108,7 @@ export const BOOKS: Book[] = [
     title: 'Ugnay',
     phase: 'Systematic Theology',
     description: 'Knowing God deeply — the Theologets Series.',
-    coverClass: 'bg-tertiary-container',
+    coverSrc: '/images/book-4.jpg',
     shopeeUrl: 'https://shopee.ph/product/70500775/21237049435',
   },
 ];
