@@ -9,6 +9,8 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { RolesGuard } from './guards/roles.guard.js';
 import { JwtStrategy } from './strategies/jwt.strategy.js';
 import { GoogleStrategy } from './strategies/google.strategy.js';
+import { FacebookStrategy } from './strategies/facebook.strategy.js';
+import { MicrosoftStrategy } from './strategies/microsoft.strategy.js';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { GoogleStrategy } from './strategies/google.strategy.js';
     RolesGuard,
     JwtStrategy,
     GoogleStrategy,
+    FacebookStrategy,
+    MicrosoftStrategy,
   ],
   exports: [JwtAuthGuard, RolesGuard, AuthService, JwtModule],
 })

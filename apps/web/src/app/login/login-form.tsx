@@ -151,9 +151,9 @@ export default function LoginForm() {
 
   const handleSocialLogin = useCallback(
     (provider: string) => {
-      addToast(`${provider} sign-in coming soon`, 'info');
+      window.location.href = `${API_BASE}/auth/${provider.toLowerCase()}`;
     },
-    [addToast],
+    [],
   );
 
   /* ---------- Render ---------- */

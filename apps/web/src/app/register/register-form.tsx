@@ -112,9 +112,9 @@ export default function RegisterForm() {
 
   const handleSocialLogin = useCallback(
     (provider: string) => {
-      addToast(`${provider} registration coming soon`, 'info');
+      window.location.href = `${API_BASE}/auth/${provider.toLowerCase()}`;
     },
-    [addToast],
+    [],
   );
 
   /* ---------- Render ---------- */
