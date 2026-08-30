@@ -20,8 +20,11 @@ export class FacebookStrategy extends PassportStrategy(Strategy, 'facebook') {
       clientID: clientID || 'placeholder',
       clientSecret: clientSecret || 'placeholder',
       callbackURL: '/auth/facebook/callback',
-      profileFields: ['id', 'displayName', 'emails', 'photos'],
-      scope: ['email'],
+      // passport-facebook defaults to the long-expired v3.2; pin a current
+      // Graph API version or the dialog rejects valid scopes ("Invalid Scopes").
+      graphAPIVersion: 'v26.0',
+      profileFields: ['id', 'displayName', 'photos', 'email'],
+      scope: ['public_profile', 'email'],
     });
 
     if (!clientID) {

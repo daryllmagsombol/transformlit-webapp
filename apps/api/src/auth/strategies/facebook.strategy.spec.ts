@@ -30,12 +30,13 @@ describe('FacebookStrategy', () => {
     expect((strategy as any)._oauth2._clientId).toBe('facebook-client-id');
     expect((strategy as any)._oauth2._clientSecret).toBe('facebook-client-secret');
     expect((strategy as any)._callbackURL).toBe('/auth/facebook/callback');
-    expect((strategy as any)._scope).toEqual(['email']);
+    expect((strategy as any)._scope).toEqual(['public_profile', 'email']);
     expect((strategy as any)._profileFields).toEqual([
       'id',
       'displayName',
-      'emails',
       'photos',
+      'email',
     ]);
+    expect((strategy as any)._oauth2._authorizeUrl).toContain('/v26.0/dialog/oauth');
   });
 });
