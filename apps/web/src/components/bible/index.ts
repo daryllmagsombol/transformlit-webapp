@@ -7,3 +7,5 @@ export { ChapterNav } from './chapter-nav';
 export { StudySheet } from './study-sheet';
 export { CrossRefList } from './cross-ref-list';
 export { WordStudyPopover } from './word-study-popover';
+export { SearchPanel } from './search-panel';
+export { SearchResultItem } from './search-result-item';
