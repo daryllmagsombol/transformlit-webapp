@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useUIStore, useAuthStore } from '../../store';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { UserAvatar, BellIcon } from '../ui';
+import { UserMenu, BellIcon } from '../ui';
 import { NotificationPanel } from '../notifications/notification-panel';
 
 const NAV_LINKS = [
@@ -76,8 +76,8 @@ export function TopBar() {
         {/* Notifications */}
         <BellIcon userId={userId ?? ''} onClick={handleNotificationClick} />
 
-        {/* User avatar */}
-        <UserAvatar avatarUrl={user?.avatarUrl} displayName={user?.displayName} />
+        {/* User menu */}
+        <UserMenu user={user} />
       </div>
       </header>
 

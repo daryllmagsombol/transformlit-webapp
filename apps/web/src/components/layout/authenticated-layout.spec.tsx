@@ -15,6 +15,7 @@ jest.mock('next/link', () => {
 
 jest.mock('next/navigation', () => ({
   usePathname: () => '/feed',
+  useRouter: () => ({ push: jest.fn() }),
 }));
 
 jest.mock('../../store', () => {
