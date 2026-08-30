@@ -106,11 +106,35 @@ export class AuthService {
       return this.generateTokens(identity.userId);
     }
 
+    const emailNormalized = profile.email.toLowerCase().trim();
+
+    // Cross-provider account linking: a user with the same email may already
+    // exist (e.g. signed up via Google/Facebook/Microsoft). Bind the new
+    // provider identity to that account instead of creating a duplicate user.
+    const existingUser = await this.prisma.user.findUnique({
+      where: { emailNormalized },
+    });
+    if (existingUser) {
+      await this.prisma.identity.create({
+        data: {
+          userId: existingUser.id,
+          provider: profile.provider,
+          providerId: profile.providerId,
+          email: profile.email,
+        },
+      });
+      await this.prisma.user.update({
+        where: { id: existingUser.id },
+        data: { lastLoginAt: new Date() },
+      });
+      return this.generateTokens(existingUser.id);
+    }
+
     // Create user + identity
     const user = await this.prisma.user.create({
       data: {
         email: profile.email,
-        emailNormalized: profile.email.toLowerCase().trim(),
+        emailNormalized,
         displayName: profile.displayName,
       },
     });

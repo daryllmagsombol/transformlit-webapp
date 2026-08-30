@@ -380,6 +380,7 @@ describe('AuthService', () => {
 
     it('should create new user + identity when identity not found', async () => {
       prisma.identity.findUnique.mockResolvedValue(null);
+      prisma.user.findUnique.mockResolvedValue(null);
 
       await service.findOrCreateOAuthUser(profile);
 
@@ -406,9 +407,47 @@ describe('AuthService', () => {
 
     it('should return tokens for newly created OAuth user', async () => {
       prisma.identity.findUnique.mockResolvedValue(null);
+      // First lookup (email link check) finds nothing; generateTokens' user
+      // fetch then resolves the created user.
+      prisma.user.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(mockUser);
 
       const result = await service.findOrCreateOAuthUser(profile);
 
+      expect(result).toEqual({
+        accessToken: 'mock-access-token',
+        refreshToken: expect.any(String),
+        user: mockUser,
+      });
+    });
+
+    it('should link new identity to existing user with the same email', async () => {
+      prisma.identity.findUnique.mockResolvedValue(null);
+      prisma.user.findUnique.mockResolvedValue(mockUser);
+
+      const result = await service.findOrCreateOAuthUser(profile);
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { emailNormalized: 'oauth@example.com' },
+      });
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(prisma.identity.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: 'user-1',
+            provider: 'google',
+            providerId: 'google-123',
+            email: 'oauth@example.com',
+          }),
+        }),
+      );
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'user-1' },
+          data: expect.objectContaining({ lastLoginAt: expect.any(Date) }),
+        }),
+      );
       expect(result).toEqual({
         accessToken: 'mock-access-token',
         refreshToken: expect.any(String),
