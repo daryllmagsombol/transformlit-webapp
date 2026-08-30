@@ -87,6 +87,10 @@
   --color-accent-teal-light: #3AAD99;
   --color-accent-teal-dark: #165E55;
 
+  /* ── Bible reader semantic tokens ─────────────────────── */
+  --color-verse-number: #165E55;      /* accent-teal-dark: ≥4.5:1 on paper */
+  --color-footnote-marker: #A05B00;   /* dark orange: ≥4.5:1 on paper */
+
   /* ── Legacy compat (keep existing component references) ──── */
   --color-brand: #F4A11C;
   --color-brand-dark: #D88710;
@@ -202,6 +206,8 @@
   --color-surface-raised: #2C2C2C;
   --color-surface-high: #3E3E3E;
   --color-border: rgba(255, 255, 255, 0.08);
+  --color-verse-number: #3AAD99;      /* accent-teal-light: bright on dark */
+  --color-footnote-marker: #ffb95c;   /* primary-fixed-dim: bright on dark */
   --shadow-soft: 0 2px 12px rgba(0, 0, 0, 0.4);
   --shadow-lift: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
@@ -233,6 +239,10 @@ button, a, input, select, textarea {
 
 /* ── Utilities ────────────────────────────────────────────────── */
 .text-balance { text-wrap: balance; }
+
+/* Opt out of the 44px touch-target min-height for inline elements
+   (superscript verse numbers, footnote markers inside text) */
+.inline-target { min-height: 0; }
 
 /* Hide scrollbar but keep functionality */
 .no-scrollbar {
