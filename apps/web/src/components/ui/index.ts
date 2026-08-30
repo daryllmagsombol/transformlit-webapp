@@ -4,6 +4,7 @@ export { TextInput } from './text-input';
 export type { TextInputProps } from './text-input';
 export { Card } from './card';
 export { Modal } from './modal';
+export { Sheet } from './sheet';
 export { ToastProvider, useToast } from './toast';
 export { NavItem } from './nav-item';
 export { UserAvatar } from './user-avatar';
