@@ -42,7 +42,11 @@ export async function fetchBible<T>(path: string, useCache = true): Promise<T> {
     return data;
   };
 
-  const promise = doFetch();
+  let failed = false;
+  const promise = doFetch().catch((err) => {
+    failed = true;
+    throw err;
+  });
   if (useCache) {
     const prev = cache.get(url) as CacheEntry<T> | undefined;
     cache.set(url, { etag: prev?.etag ?? null, data: prev?.data as T, inflight: promise });
@@ -50,7 +54,14 @@ export async function fetchBible<T>(path: string, useCache = true): Promise<T> {
       return await promise;
     } finally {
       const entry = cache.get(url) as CacheEntry<T> | undefined;
-      if (entry) delete entry.inflight;
+      if (entry) {
+        delete entry.inflight;
+        // A failed first-ever fetch would otherwise leave { etag: null, data: undefined }
+        // behind, poisoning later calls via the `existing && !existing.etag` short-circuit
+        // (they would resolve `undefined` with no fetch). Drop it so retries re-fetch.
+        // A pre-existing valid entry (prev) is preserved and keeps its etag/data.
+        if (!prev && failed) cache.delete(url);
+      }
     }
   }
   return promise;

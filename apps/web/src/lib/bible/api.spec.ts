@@ -39,6 +39,17 @@ describe('fetchBible', () => {
     expect(a).toEqual(b);
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
+
+  it('retries after a failed first fetch instead of returning undefined', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('network blip'));
+    mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }, 200, 'W/"retry"'));
+
+    await expect(fetchBible<{ ok: boolean }>('/api/BSB/books.json')).rejects.toThrow('network blip');
+
+    const second = await fetchBible<{ ok: boolean }>('/api/BSB/books.json');
+    expect(second.ok).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('typed getters', () => {
