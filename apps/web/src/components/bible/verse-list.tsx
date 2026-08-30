@@ -8,10 +8,9 @@ import type {
   ChapterWords,
   FormattedText,
   InlineHeading,
-  InlineLineBreak,
   VerseFootnoteReference,
 } from '../../lib/bible/types';
-import { flattenVerseText, mapWordSpans, type VerseContentItem } from '../../lib/bible/words';
+import { mapWordSpans, type VerseContentItem } from '../../lib/bible/words';
 
 interface VerseListProps {
   content: ChapterContent[];
@@ -41,13 +40,11 @@ function baseAt(content: VerseContentItem[], index: number): number {
 }
 
 function renderInline(
-  item: string | FormattedText | InlineHeading | InlineLineBreak | VerseFootnoteReference,
+  item: InlineHeading | VerseFootnoteReference,
   footnoteCaller: (noteId: number) => string,
   key: number,
   onFootnoteClick?: (note: ChapterFootnote) => void,
 ) {
-  if (typeof item === 'string') return <Fragment key={key}>{item}</Fragment>;
-  if ('lineBreak' in item && item.lineBreak) return <br key={key} />;
   if ('noteId' in item) {
     return (
       <sup key={key}>
@@ -62,21 +59,7 @@ function renderInline(
       </sup>
     );
   }
-  if ('heading' in item) {
-    return <span key={key} className="font-display font-bold">{item.heading}</span>;
-  }
-  const formatted = item as FormattedText;
-  const className = [
-    formatted.poem ? `block ${'pl-' + Math.min(formatted.poem, 4)}` : '',
-    formatted.wordsOfJesus ? 'text-brand-orange-dark dark:text-primary-fixed' : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
-  return (
-    <span key={key} className={className}>
-      {formatted.text}
-    </span>
-  );
+  return <span key={key} className="font-display font-bold">{item.heading}</span>;
 }
 
 export function VerseList({

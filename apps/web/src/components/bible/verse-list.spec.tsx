@@ -65,6 +65,6 @@ describe('VerseList', () => {
       />,
     );
     fireEvent.click(screen.getByText('urge'));
-    expect(onWordClick).toHaveBeenCalled();
+    expect(onWordClick).toHaveBeenCalledWith(1, expect.objectContaining({ strongs: ['G3870'] }));
   });
 });
