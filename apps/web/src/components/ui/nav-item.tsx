@@ -24,7 +24,7 @@ export function NavItem({ label, href, icon, active = false, variant = 'sidebar'
 
   const baseClass = isSidebar
     ? 'px-4 py-3 flex items-center gap-3 transition-all cursor-pointer'
-    : 'flex flex-col items-center justify-center py-2';
+    : 'flex-1 flex flex-col items-center justify-center py-2';
 
   const labelClass = isSidebar
     ? 'font-micro text-micro uppercase tracking-wider'

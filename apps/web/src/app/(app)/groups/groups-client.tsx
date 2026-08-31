@@ -172,7 +172,7 @@ export default function GroupsClient() {
         </div>
 
         {/* Categories */}
-        <div className="flex gap-4 overflow-x-auto pb-6 no-scrollbar -mx-4 px-4 md:mx-0 md:px-0">
+        <div className="relative flex gap-4 overflow-x-auto pb-6 no-scrollbar -mx-4 px-4 md:mx-0 md:px-0">
           {GROUP_CATEGORIES.map((cat) => (
             <CategoryChip
               key={cat.key}
@@ -184,6 +184,10 @@ export default function GroupsClient() {
               }
             />
           ))}
+          <div
+            className="pointer-events-none absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-surface to-transparent md:hidden"
+            aria-hidden="true"
+          />
         </div>
 
         {/* Suggested Groups: Featured + Side cards */}

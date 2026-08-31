@@ -30,7 +30,7 @@ export function TopBar() {
       <div className="flex items-center gap-4">
         <button
           onClick={toggleSidebar}
-          className="material-symbols-outlined text-primary cursor-pointer p-1"
+          className="material-symbols-outlined text-primary min-w-11 min-h-11 flex items-center justify-center rounded-full hover:bg-primary/10 transition-colors"
           aria-label="Toggle sidebar"
         >
           menu

@@ -112,7 +112,7 @@ export function UserMenu({ user }: UserMenuProps) {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? 'user-menu' : undefined}
-        className="cursor-pointer hover:opacity-80 transition-opacity rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        className="min-w-11 min-h-11 flex items-center justify-center rounded-full hover:opacity-80 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
         <UserAvatar avatarUrl={user?.avatarUrl} displayName={user?.displayName} size="md" />
       </button>

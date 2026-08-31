@@ -104,10 +104,6 @@ export default function BooksClient() {
     if (isReady) loadData();
   }, [isReady, loadData]);
 
-  if (!isReady) {
-    return <LoadingSpinner />;
-  }
-
   const filteredBooks = useMemo(() => {
     let next = [...books];
 
@@ -144,6 +140,10 @@ export default function BooksClient() {
       addToast('No more books to load.', 'info');
     }, 600);
   }, [addToast]);
+
+  if (!isReady) {
+    return <LoadingSpinner />;
+  }
 
   return (
     <>
@@ -197,7 +197,7 @@ export default function BooksClient() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
           <h2 className="font-display text-headline-h2 text-on-surface">Browse Books</h2>
 
-          <div className="flex items-center gap-3 overflow-x-auto no-scrollbar">
+          <div className="relative flex items-center gap-3 overflow-x-auto no-scrollbar">
             {/* Filter chips */}
             {FILTERS.map((f) => (
               <button
@@ -228,6 +228,11 @@ export default function BooksClient() {
                 </option>
               ))}
             </select>
+
+            <div
+              className="pointer-events-none absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-surface to-transparent md:hidden"
+              aria-hidden="true"
+            />
           </div>
         </div>
 

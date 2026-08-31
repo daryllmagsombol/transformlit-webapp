@@ -16,7 +16,7 @@ export function SuggestedFriendCard({ name, tag, avatarUrl, onAdd }: SuggestedFr
         <UserAvatar avatarUrl={avatarUrl} displayName={name} size="md" />
       </div>
       <p className="font-display font-headline-h4 text-on-surface truncate w-full">{name}</p>
-      <p className="font-small text-on-surface-variant mb-4 truncate w-full">{tag}</p>
+      <p className="font-small text-on-surface-variant mb-4 line-clamp-2 min-h-[2.625rem]">{tag}</p>
       <button
         onClick={onAdd}
         className="w-full bg-secondary text-on-secondary py-2 rounded-lg font-small font-bold hover:opacity-90 active:scale-95 transition-all"
