@@ -7,7 +7,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "lint": "tsc --noEmit",
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
     "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage"
