@@ -201,6 +201,14 @@ const proactiveRefreshLink = new ApolloLink((operation, forward) => {
 const errorLink = onError(({ error, operation, forward }) => {
   if (!isUnauthorizedError(error)) return;
 
+  // Login/registration hit unauthenticated endpoints: an "Invalid credentials"
+  // (UNAUTHENTICATED) response is a business error, NOT an expired session.
+  // Intercepting it here would try a refresh, find no token, and force a page
+  // reload — destroying the form and any error toast mid-login.
+  if (operation.operationName === 'LoginLocal' || operation.operationName === 'RegisterLocal') return;
+  // No session to refresh — let the original error propagate to the caller.
+  if (!getRefreshToken()) return;
+
   const context = operation.getContext();
   if (context.authRetry) return;
   operation.setContext({ ...context, authRetry: true });
