@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
+import * as argon2 from 'argon2';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -10,34 +11,34 @@ const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 async function main() {
   console.log('Seeding database...');
 
+  // Real hashes (NOT placeholders) so the seeded credentials work for login.
+  const adminPasswordHash = await argon2.hash('Transformlit123!');
+  const testPasswordHash = await argon2.hash('password123');
+
   // ── Admin user ──────────────────────────────────────────────────────────
   const admin = await prisma.user.upsert({
     where: { emailNormalized: 'admin@transformlit.com' },
-    update: {},
+    update: { passwordHash: adminPasswordHash },
     create: {
       email: 'admin@transformlit.com',
       emailNormalized: 'admin@transformlit.com',
       displayName: 'Admin',
       role: 'ADMIN',
-      // password: "Transformlit123!" hashed via argon2
-      passwordHash:
-        '$argon2id$v=19$m=65536,t=3,p=4$placeholder.....' +
-        'REPLACE_WITH_REAL_HASH',
+      // password: "Transformlit123!"
+      passwordHash: adminPasswordHash,
     },
   });
 
   // ── Test user ───────────────────────────────────────────────────────────
   const testUser = await prisma.user.upsert({
     where: { emailNormalized: 'sarah@transformlit.com' },
-    update: {},
+    update: { passwordHash: testPasswordHash },
     create: {
       email: 'sarah@transformlit.com',
       emailNormalized: 'sarah@transformlit.com',
       displayName: 'Sarah M.',
       role: 'MEMBER',
-      passwordHash:
-        '$argon2id$v=19$m=65536,t=3,p=4$placeholder.....' +
-        'REPLACE_WITH_REAL_HASH',
+      passwordHash: testPasswordHash,
     },
   });
 
