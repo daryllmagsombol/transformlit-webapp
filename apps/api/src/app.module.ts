@@ -15,6 +15,7 @@ import { BooksModule } from './books/books.module.js';
 import { FeedModule } from './feed/feed.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { AzureModule } from './azure/azure.module.js';
+import { HealthModule } from './health/health.module.js';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { AzureModule } from './azure/azure.module.js';
     BooksModule,
     FeedModule,
     NotificationsModule,
+    HealthModule,
   ],
 })
 export class AppModule {}
