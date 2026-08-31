@@ -24,8 +24,13 @@ export function useChapter(translation: string, book: string, chapter: number) {
         if (cancelled) return;
         setChapterData(ch);
         if (hasWordAnnotations(ch)) {
-          const w = await getWords(translation, book, chapter);
-          if (!cancelled) setWords(w);
+          try {
+            const w = await getWords(translation, book, chapter);
+            if (!cancelled) setWords(w);
+          } catch {
+            // Word annotations are optional enrichment — a words.json failure
+            // degrades to "no word study" without erroring the chapter.
+          }
         }
       } catch {
         if (!cancelled) setError('Failed to load chapter.');

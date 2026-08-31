@@ -43,6 +43,15 @@ export default function BibleReaderClient({ translation, book, chapter }: Reader
     setLastPosition(translation, { book, chapter });
   }, [translation, book, chapter, setLastPosition]);
 
+  // Reset sheet state on chapter change (App Router preserves the component instance
+  // across router.replace hops within the same dynamic route)
+  useEffect(() => {
+    setStudyVerse(null);
+    setStudyFootnote(null);
+    setActiveWord(null);
+    setHighlighted(null);
+  }, [translation, book, chapter]);
+
   // #v{n} deep link — scroll AFTER content mounts (hash alone can't target async content)
   useEffect(() => {
     if (!data) return;
