@@ -5,6 +5,7 @@ import { useUIStore, useAuthStore } from '../../store';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { UserMenu, BellIcon } from '../ui';
+import { ThemeToggle } from '../ui/theme-toggle';
 import { NotificationPanel } from '../notifications/notification-panel';
 
 const NAV_LINKS = [
@@ -26,15 +27,8 @@ export function TopBar() {
   return (
     <>
       <header className="flex justify-between items-center h-16 px-4 md:px-5 w-full fixed top-0 bg-surface dark:bg-surface-dark z-50 shadow-sm">
-      {/* Left: hamburger + brand */}
-      <div className="flex items-center gap-4">
-        <button
-          onClick={toggleSidebar}
-          className="material-symbols-outlined text-primary min-w-11 min-h-11 flex items-center justify-center rounded-full hover:bg-primary/10 transition-colors"
-          aria-label="Toggle sidebar"
-        >
-          menu
-        </button>
+      {/* Left: brand */}
+      <div className="flex items-center">
         <h1 className="font-display text-headline-h3 font-bold text-primary dark:text-primary-fixed">
           Transformlit
         </h1>
@@ -62,8 +56,8 @@ export function TopBar() {
         </nav>
       </div>
 
-      {/* Right: search + notifications + avatar */}
-      <div className="flex items-center gap-3">
+      {/* Right: search + theme toggle + notifications + avatar + hamburger */}
+      <div className="flex items-center gap-2">
         {/* Search pill */}
         <div className="hidden sm:flex bg-surface-container-high px-4 py-1.5 rounded-full items-center gap-2 border border-outline-variant">
           <span className="material-symbols-outlined text-on-surface-variant text-[20px]">search</span>
@@ -74,11 +68,23 @@ export function TopBar() {
           />
         </div>
 
+        {/* Theme toggle */}
+        <ThemeToggle className="btn-ghost !p-0 min-w-11 min-h-11 justify-center !w-auto !gap-0 text-[0px] text-primary hover:bg-primary/10 transition-colors" />
+
         {/* Notifications */}
         <BellIcon userId={userId ?? ''} onClick={handleNotificationClick} />
 
         {/* User menu */}
         <UserMenu user={user} />
+
+        {/* Hamburger (rightmost) */}
+        <button
+          onClick={toggleSidebar}
+          className="btn-ghost min-w-11 min-h-11 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors"
+          aria-label="Toggle sidebar"
+        >
+          <span className="material-symbols-outlined">menu</span>
+        </button>
       </div>
       </header>
 

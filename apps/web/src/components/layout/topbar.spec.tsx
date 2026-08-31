@@ -14,6 +14,16 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
 
+var mockTheme = 'light';
+
+jest.mock('next-themes', () => ({
+  useTheme: () => ({
+    theme: mockTheme,
+    setTheme: jest.fn(),
+    resolvedTheme: mockTheme,
+  }),
+}));
+
 jest.mock('../../store', () => {
   mockToggleSidebar = jest.fn();
   const state = { sidebarOpen: true, toggleSidebar: mockToggleSidebar, setSidebarOpen: jest.fn() };

@@ -3,6 +3,7 @@
 import { Sidebar } from './sidebar';
 import { TopBar } from './topbar';
 import { BottomNav } from './bottom-nav';
+import { ScrollToTop } from './scroll-to-top';
 import { useUIStore } from '../../store';
 import { ProfileSheetProvider } from '../friends/profile-sheet-provider';
 
@@ -12,6 +13,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <ProfileSheetProvider>
       <div className="min-h-dvh bg-surface dark:bg-surface-dark paper-texture">
+        <ScrollToTop />
         <TopBar />
         <Sidebar />
         <BottomNav />
