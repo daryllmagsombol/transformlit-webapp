@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import BibleClient from './bible-client';
 import * as booksHook from '../../../lib/hooks/use-bible-books';
 import { useBibleStore } from '../../../store/bible-store';
@@ -42,5 +42,6 @@ describe('BibleClient', () => {
     await waitFor(() => expect(screen.getByText('Bible')).toBeInTheDocument());
     expect(screen.getByText('Continue reading')).toBeInTheDocument();
     expect(screen.getByText('Romans 8')).toBeInTheDocument();
+    expect(screen.getByText('Romans 12')).toBeInTheDocument();
   });
 });
