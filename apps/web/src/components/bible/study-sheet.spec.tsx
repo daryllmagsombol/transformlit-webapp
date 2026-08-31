@@ -63,4 +63,47 @@ describe('StudySheet', () => {
     fireEvent.click(screen.getByText('Romans 6:13'));
     expect(onNavigate).toHaveBeenCalledWith('/bible/BSB/ROM/6#v13');
   });
+
+  it('shows the word study popover when a word is active', () => {
+    render(
+      <StudySheet
+        open
+        onClose={() => {}}
+        verse={1}
+        verseText="Therefore I urge you, brothers…"
+        footnotes={footnotes}
+        wordsForVerse={[{ contentIndex: 0, start: 12, end: 16, strongs: ['G3870'], lemma: 'παρακαλέω', morph: 'V-PPA' }]}
+        translation="ENGWEBP"
+        book="ROM"
+        chapter={12}
+        bookName="Romans"
+        onNavigate={() => {}}
+        activeWord={{ contentIndex: 0, start: 12, end: 16, strongs: ['G3870'], lemma: 'παρακαλέω', morph: 'V-PPA' }}
+        activeWordText="urge"
+      />,
+    );
+    expect(screen.getByText('urge')).toBeInTheDocument();
+    expect(screen.getByText('Lemma')).toBeInTheDocument();
+    expect(screen.getByText('G3870')).toBeInTheDocument();
+    expect(screen.getByText('V-PPA')).toBeInTheDocument();
+  });
+
+  it('shows the hint text when words exist but none is active', () => {
+    render(
+      <StudySheet
+        open
+        onClose={() => {}}
+        verse={1}
+        verseText="text"
+        footnotes={footnotes}
+        wordsForVerse={[{ contentIndex: 0, start: 0, end: 4, strongs: ['G1234'], lemma: 'λόγος' }]}
+        translation="ENGWEBP"
+        book="ROM"
+        chapter={12}
+        bookName="Romans"
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.getByText(/Tap a highlighted word/)).toBeInTheDocument();
+  });
 });

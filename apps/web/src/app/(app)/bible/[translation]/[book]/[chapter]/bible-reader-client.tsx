@@ -111,6 +111,20 @@ export default function BibleReaderClient({ translation, book, chapter }: Reader
       ? words.verses[String(studyVerse)]
       : [];
 
+  const activeWordText = useMemo(() => {
+    if (!activeWord || !data) return '';
+    const verseItem = data.chapter.content.find(
+      (c) => c.type === 'verse' && c.number === activeWord.verse,
+    ) as Extract<typeof data.chapter.content[number], { type: 'verse' }> | undefined;
+    if (!verseItem) return '';
+    const piece = verseItem.content[activeWord.word.contentIndex];
+    if (typeof piece === 'string') return piece.slice(activeWord.word.start, activeWord.word.end);
+    if (piece && 'text' in piece && typeof piece.text === 'string') {
+      return piece.text.slice(activeWord.word.start, activeWord.word.end);
+    }
+    return '';
+  }, [activeWord, data]);
+
   if (loading || !isReady) return <LoadingSpinner />;
   if (error || !data) {
     return <p className="text-error text-center py-12">Failed to load this chapter.</p>;
@@ -201,6 +215,8 @@ export default function BibleReaderClient({ translation, book, chapter }: Reader
         chapter={chapter}
         bookName={getBookName(book)}
         onNavigate={navigate}
+        activeWord={activeWord?.word ?? null}
+        activeWordText={activeWordText}
       />
 
       <BookChapterPicker

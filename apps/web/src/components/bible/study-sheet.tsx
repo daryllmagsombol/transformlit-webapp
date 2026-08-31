@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import { Sheet } from '../ui/sheet';
 import { useToast } from '../ui/toast';
 import { CrossRefList } from './cross-ref-list';
@@ -20,6 +20,8 @@ interface StudySheetProps {
   chapter: number;
   bookName: string;
   onNavigate: (href: string) => void;
+  activeWord?: ChapterWord | null;
+  activeWordText?: string;
 }
 
 export function StudySheet({
@@ -34,19 +36,15 @@ export function StudySheet({
   chapter,
   bookName,
   onNavigate,
+  activeWord = null,
+  activeWordText = '',
 }: StudySheetProps) {
   const { addToast } = useToast();
   const { byVerse, load } = useCrossReferences(book, chapter);
-  const [activeWord, setActiveWord] = useState<ChapterWord | null>(null);
-  const [activeWordText, setActiveWordText] = useState('');
 
   useEffect(() => {
     if (open && verse !== null) load();
   }, [open, verse, load]);
-
-  useEffect(() => {
-    setActiveWord(null);
-  }, [verse]);
 
   const crossRefs: CrossRefReference[] = verse !== null ? (byVerse[verse] ?? []) : [];
 
