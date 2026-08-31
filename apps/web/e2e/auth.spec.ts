@@ -7,7 +7,7 @@ test.describe('Authentication', () => {
     await page.goto('/register');
     await page.getByLabel('Full Name').fill('E2E Test User');
     await page.getByLabel('Email Address').fill(uniqueEmail);
-    await page.getByLabel('Password').fill('password123');
+    await page.getByLabel('Password', { exact: true }).fill('password123');
     await page.getByRole('button', { name: /sign up/i }).click();
 
     await expect(page).toHaveURL(/.*\/feed/);
@@ -16,7 +16,7 @@ test.describe('Authentication', () => {
   test('login with existing user and redirect to feed', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel('Email Address').fill('admin@transformlit.com');
-    await page.getByLabel('Password').fill('Transformlit123!');
+    await page.getByLabel('Password', { exact: true }).fill('Transformlit123!');
     await page.getByRole('button', { name: /log in/i }).click();
 
     await expect(page).toHaveURL(/.*\/feed/);
@@ -25,7 +25,7 @@ test.describe('Authentication', () => {
   test('login with invalid credentials shows error', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel('Email Address').fill('nonexistent@example.com');
-    await page.getByLabel('Password').fill('wrongpassword');
+    await page.getByLabel('Password', { exact: true }).fill('wrongpassword');
     await page.getByRole('button', { name: /log in/i }).click();
 
     await expect(page.getByText(/invalid|error|credentials/i)).toBeVisible();
@@ -34,7 +34,7 @@ test.describe('Authentication', () => {
   test('logout redirects to login', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel('Email Address').fill('admin@transformlit.com');
-    await page.getByLabel('Password').fill('Transformlit123!');
+    await page.getByLabel('Password', { exact: true }).fill('Transformlit123!');
     await page.getByRole('button', { name: /log in/i }).click();
     await expect(page).toHaveURL(/.*\/feed/);
 
