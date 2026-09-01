@@ -27,7 +27,7 @@ export const GROUP_BY_SLUG_QUERY = gql`
 `;
 
 export const JOIN_GROUP_MUTATION = gql`
-  mutation JoinGroup($groupId: ID!) {
+  mutation JoinGroup($groupId: String!) {
     joinGroup(groupId: $groupId) {
       id
       status
@@ -36,7 +36,7 @@ export const JOIN_GROUP_MUTATION = gql`
 `;
 
 export const LEAVE_GROUP_MUTATION = gql`
-  mutation LeaveGroup($groupId: ID!) {
+  mutation LeaveGroup($groupId: String!) {
     leaveGroup(groupId: $groupId)
   }
 `;
@@ -73,7 +73,7 @@ export async function uploadImage(file: File): Promise<string> {
 }
 
 export const GROUP_POSTS_QUERY = gql`
-  query GroupPosts($groupId: ID!, $offset: Int!, $limit: Int!) {
+  query GroupPosts($groupId: String!, $offset: Int!, $limit: Int!) {
     groupPosts(groupId: $groupId, offset: $offset, limit: $limit) {
       id
       body
@@ -88,7 +88,7 @@ export const GROUP_POSTS_QUERY = gql`
 `;
 
 export const GROUP_POST_COMMENTS_QUERY = gql`
-  query GroupPostComments($postId: ID!) {
+  query GroupPostComments($postId: String!) {
     groupPostComments(postId: $postId) {
       id
       body
@@ -99,7 +99,7 @@ export const GROUP_POST_COMMENTS_QUERY = gql`
 `;
 
 export const CREATE_GROUP_POST_MUTATION = gql`
-  mutation CreateGroupPost($groupId: ID!, $input: CreateGroupPostInput!) {
+  mutation CreateGroupPost($groupId: String!, $input: CreateGroupPostInput!) {
     createGroupPost(groupId: $groupId, input: $input) {
       id
       body
@@ -114,19 +114,19 @@ export const CREATE_GROUP_POST_MUTATION = gql`
 `;
 
 export const DELETE_GROUP_POST_MUTATION = gql`
-  mutation DeleteGroupPost($postId: ID!) {
+  mutation DeleteGroupPost($postId: String!) {
     deleteGroupPost(postId: $postId)
   }
 `;
 
 export const TOGGLE_GROUP_POST_LIKE_MUTATION = gql`
-  mutation ToggleGroupPostLike($postId: ID!) {
+  mutation ToggleGroupPostLike($postId: String!) {
     toggleGroupPostLike(postId: $postId)
   }
 `;
 
 export const CREATE_GROUP_POST_COMMENT_MUTATION = gql`
-  mutation CreateGroupPostComment($postId: ID!, $body: String!) {
+  mutation CreateGroupPostComment($postId: String!, $body: String!) {
     createGroupPostComment(postId: $postId, body: $body) {
       id
       body
@@ -137,7 +137,7 @@ export const CREATE_GROUP_POST_COMMENT_MUTATION = gql`
 `;
 
 export const DELETE_GROUP_POST_COMMENT_MUTATION = gql`
-  mutation DeleteGroupPostComment($commentId: ID!) {
+  mutation DeleteGroupPostComment($commentId: String!) {
     deleteGroupPostComment(commentId: $commentId)
   }
 `;
@@ -203,7 +203,7 @@ export async function deleteGroupPostComment(commentId: string): Promise<boolean
 }
 
 export const GROUP_MEMBERS_QUERY = gql`
-  query GroupMembers($groupId: ID!) {
+  query GroupMembers($groupId: String!) {
     groupMembers(groupId: $groupId) {
       id
       userId
@@ -216,37 +216,37 @@ export const GROUP_MEMBERS_QUERY = gql`
 `;
 
 export const APPROVE_GROUP_MEMBER_MUTATION = gql`
-  mutation ApproveGroupMember($groupId: ID!, $userId: ID!) {
+  mutation ApproveGroupMember($groupId: String!, $userId: String!) {
     approveGroupMember(groupId: $groupId, userId: $userId) { id status }
   }
 `;
 
 export const REMOVE_GROUP_MEMBER_MUTATION = gql`
-  mutation RemoveGroupMember($groupId: ID!, $userId: ID!) {
+  mutation RemoveGroupMember($groupId: String!, $userId: String!) {
     removeGroupMember(groupId: $groupId, userId: $userId)
   }
 `;
 
 export const BAN_GROUP_MEMBER_MUTATION = gql`
-  mutation BanGroupMember($groupId: ID!, $userId: ID!) {
+  mutation BanGroupMember($groupId: String!, $userId: String!) {
     banGroupMember(groupId: $groupId, userId: $userId) { id status }
   }
 `;
 
 export const UNBAN_GROUP_MEMBER_MUTATION = gql`
-  mutation UnbanGroupMember($groupId: ID!, $userId: ID!) {
+  mutation UnbanGroupMember($groupId: String!, $userId: String!) {
     unbanGroupMember(groupId: $groupId, userId: $userId) { id status }
   }
 `;
 
 export const UPDATE_GROUP_MEMBER_ROLE_MUTATION = gql`
-  mutation UpdateGroupMemberRole($groupId: ID!, $userId: ID!, $role: GroupMemberRole!) {
+  mutation UpdateGroupMemberRole($groupId: String!, $userId: String!, $role: GroupMemberRole!) {
     updateGroupMemberRole(groupId: $groupId, userId: $userId, role: $role) { id role }
   }
 `;
 
 export const UPDATE_GROUP_MUTATION = gql`
-  mutation UpdateGroup($groupId: ID!, $input: UpdateGroupInput!) {
+  mutation UpdateGroup($groupId: String!, $input: UpdateGroupInput!) {
     updateGroup(groupId: $groupId, input: $input) {
       id name slug description visibility category coverImageUrl
     }
@@ -254,7 +254,7 @@ export const UPDATE_GROUP_MUTATION = gql`
 `;
 
 export const DELETE_GROUP_MUTATION = gql`
-  mutation DeleteGroup($groupId: ID!) {
+  mutation DeleteGroup($groupId: String!) {
     deleteGroup(groupId: $groupId) { id }
   }
 `;
