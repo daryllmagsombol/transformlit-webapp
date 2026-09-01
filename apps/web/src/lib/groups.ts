@@ -2,7 +2,12 @@ import { gql } from '@apollo/client';
 import { apolloClient } from './apollo-client';
 import { API_BASE } from './constants';
 import { useAuthStore } from '../store';
-import type { GraphQLGroup, GraphQLGroupPost, GraphQLGroupPostComment } from '@transformlit/shared';
+import type {
+  GraphQLGroup,
+  GraphQLGroupMember,
+  GraphQLGroupPost,
+  GraphQLGroupPostComment,
+} from '@transformlit/shared';
 
 export const GROUP_BY_SLUG_QUERY = gql`
   query GroupBySlug($slug: String!) {
@@ -195,4 +200,133 @@ export async function deleteGroupPostComment(commentId: string): Promise<boolean
     variables: { commentId },
   });
   return data?.deleteGroupPostComment ?? false;
+}
+
+export const GROUP_MEMBERS_QUERY = gql`
+  query GroupMembers($groupId: ID!) {
+    groupMembers(groupId: $groupId) {
+      id
+      userId
+      role
+      status
+      joinedAt
+      user { id displayName avatarUrl }
+    }
+  }
+`;
+
+export const APPROVE_GROUP_MEMBER_MUTATION = gql`
+  mutation ApproveGroupMember($groupId: ID!, $userId: ID!) {
+    approveGroupMember(groupId: $groupId, userId: $userId) { id status }
+  }
+`;
+
+export const REMOVE_GROUP_MEMBER_MUTATION = gql`
+  mutation RemoveGroupMember($groupId: ID!, $userId: ID!) {
+    removeGroupMember(groupId: $groupId, userId: $userId)
+  }
+`;
+
+export const BAN_GROUP_MEMBER_MUTATION = gql`
+  mutation BanGroupMember($groupId: ID!, $userId: ID!) {
+    banGroupMember(groupId: $groupId, userId: $userId) { id status }
+  }
+`;
+
+export const UNBAN_GROUP_MEMBER_MUTATION = gql`
+  mutation UnbanGroupMember($groupId: ID!, $userId: ID!) {
+    unbanGroupMember(groupId: $groupId, userId: $userId) { id status }
+  }
+`;
+
+export const UPDATE_GROUP_MEMBER_ROLE_MUTATION = gql`
+  mutation UpdateGroupMemberRole($groupId: ID!, $userId: ID!, $role: GroupMemberRole!) {
+    updateGroupMemberRole(groupId: $groupId, userId: $userId, role: $role) { id role }
+  }
+`;
+
+export const UPDATE_GROUP_MUTATION = gql`
+  mutation UpdateGroup($groupId: ID!, $input: UpdateGroupInput!) {
+    updateGroup(groupId: $groupId, input: $input) {
+      id name slug description visibility category coverImageUrl
+    }
+  }
+`;
+
+export const DELETE_GROUP_MUTATION = gql`
+  mutation DeleteGroup($groupId: ID!) {
+    deleteGroup(groupId: $groupId) { id }
+  }
+`;
+
+export async function fetchGroupMembers(groupId: string): Promise<GraphQLGroupMember[]> {
+  const { data } = await apolloClient.query<{ groupMembers: GraphQLGroupMember[] }>({
+    query: GROUP_MEMBERS_QUERY,
+    variables: { groupId },
+    fetchPolicy: 'network-only',
+  });
+  return data?.groupMembers ?? [];
+}
+
+export async function approveGroupMember(groupId: string, userId: string): Promise<void> {
+  await apolloClient.mutate({
+    mutation: APPROVE_GROUP_MEMBER_MUTATION,
+    variables: { groupId, userId },
+  });
+}
+
+export async function removeGroupMember(groupId: string, userId: string): Promise<void> {
+  await apolloClient.mutate({
+    mutation: REMOVE_GROUP_MEMBER_MUTATION,
+    variables: { groupId, userId },
+  });
+}
+
+export async function banGroupMember(groupId: string, userId: string): Promise<void> {
+  await apolloClient.mutate({
+    mutation: BAN_GROUP_MEMBER_MUTATION,
+    variables: { groupId, userId },
+  });
+}
+
+export async function unbanGroupMember(groupId: string, userId: string): Promise<void> {
+  await apolloClient.mutate({
+    mutation: UNBAN_GROUP_MEMBER_MUTATION,
+    variables: { groupId, userId },
+  });
+}
+
+export async function updateGroupMemberRole(
+  groupId: string,
+  userId: string,
+  role: 'MEMBER' | 'MODERATOR',
+): Promise<void> {
+  await apolloClient.mutate({
+    mutation: UPDATE_GROUP_MEMBER_ROLE_MUTATION,
+    variables: { groupId, userId, role },
+  });
+}
+
+export interface UpdateGroupInput {
+  name: string;
+  description?: string;
+  visibility: 'PUBLIC' | 'PRIVATE';
+  category: string;
+  coverImageUrl?: string;
+}
+
+export async function updateGroup(groupId: string, input: UpdateGroupInput): Promise<GraphQLGroup> {
+  const { data } = await apolloClient.mutate<{ updateGroup: GraphQLGroup }>({
+    mutation: UPDATE_GROUP_MUTATION,
+    variables: { groupId, input },
+  });
+  if (!data?.updateGroup) throw new Error('Failed to update group');
+  return data.updateGroup;
+}
+
+export async function deleteGroup(groupId: string): Promise<void> {
+  await apolloClient.mutate({
+    mutation: DELETE_GROUP_MUTATION,
+    variables: { groupId },
+  });
 }
