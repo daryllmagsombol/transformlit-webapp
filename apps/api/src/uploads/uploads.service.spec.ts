@@ -37,8 +37,9 @@ describe('UploadsService (local driver)', () => {
     expect(saved).toEqual(Buffer.from([1, 2, 3]));
   });
 
-  it('resolveLocalPath only accepts keys under uploads/', () => {
+  it('resolveLocalPath accepts uploads/ keys and bare names, rejects URLs', () => {
     expect(service.resolveLocalPath('uploads/x.png')).toContain('x.png');
+    expect(service.resolveLocalPath('x.png')).toContain('x.png');
     expect(service.resolveLocalPath('http://evil/x.png')).toBeNull();
   });
 });

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile, existsSync } from 'node:fs';
-import { join, basename, extname } from 'node:path';
+import { join, basename, extname, dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { BlobServiceClient } from '@azure/storage-blob';
 
@@ -16,6 +16,20 @@ const EXT_BY_MIME: Record<string, string> = {
   'image/gif': 'gif',
 };
 
+/** Repo-root uploads dir (found via pnpm-workspace.yaml sentinel), or UPLOAD_DIR env */
+function resolveLocalDir(config: ConfigService): string {
+  const env = config.get<string>('UPLOAD_DIR');
+  if (env) return env;
+  let dir = process.cwd();
+  while (dir !== dirname(dir)) {
+    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) {
+      return join(dir, 'images', 'uploads');
+    }
+    dir = dirname(dir);
+  }
+  return join(process.cwd(), 'images', 'uploads');
+}
+
 @Injectable()
 export class UploadsService {
   private readonly azureClient: BlobServiceClient | null;
@@ -26,9 +40,7 @@ export class UploadsService {
     this.azureClient = connStr
       ? BlobServiceClient.fromConnectionString(connStr)
       : null;
-    this.localDir =
-      this.config.get<string>('UPLOAD_DIR') ??
-      join(process.cwd(), '..', 'images', 'uploads');
+    this.localDir = resolveLocalDir(config);
   }
 
   async saveImage(buffer: Buffer, mimetype: string): Promise<string> {
@@ -51,10 +63,15 @@ export class UploadsService {
     return `uploads/${name}`;
   }
 
-  /** Local-driver path for a key, or null if not a local uploads key */
+  /**
+   * Local-driver path for a key (either `uploads/<name>` from saveImage or a
+   * bare `<name>` from the GET route), or null for URLs / unsafe names.
+   */
   resolveLocalPath(key: string): string | null {
-    if (!key.startsWith('uploads/')) return null;
-    return join(this.localDir, basename(key));
+    if (key.includes('://')) return null; // never resolve URLs to local files
+    const name = basename(key);
+    if (!name || name === '.' || name === '..') return null;
+    return join(this.localDir, name);
   }
 
   localFileExists(key: string): boolean {
