@@ -15,6 +15,7 @@ import { BooksModule } from './books/books.module.js';
 import { FeedModule } from './feed/feed.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { AzureModule } from './azure/azure.module.js';
+import { UploadsModule } from './uploads/uploads.module.js';
 import { HealthModule } from './health/health.module.js';
 
 @Module({
@@ -55,6 +56,7 @@ import { HealthModule } from './health/health.module.js';
 
     PrismaModule,
     AzureModule,
+    UploadsModule,
     AuthModule,
     UsersModule,
     GroupsModule,
