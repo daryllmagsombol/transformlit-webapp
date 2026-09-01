@@ -34,6 +34,9 @@ model User {
   friendshipsAsRequester Friendship[]  @relation("Requester")
   friendshipsAsAddressee Friendship[]  @relation("Addressee")
   groupMemberships   GroupMember[]
+  groupPosts        GroupPost[]
+  groupPostLikes    GroupPostLike[]
+  groupPostComments GroupPostComment[]
   sentMessages       Message[]
   conversationMembers ConversationMember[]
   bookAccess         BookAccess[]
@@ -98,6 +101,7 @@ enum GroupVisibility {
 
 enum GroupMemberRole {
   OWNER
+  MODERATOR
   MEMBER
 }
 
@@ -123,6 +127,7 @@ model Group {
   deletedAt     DateTime?
 
   members       GroupMember[]
+  posts         GroupPost[]
   conversations Conversation[]
 
   @@index([visibility])
@@ -148,6 +153,55 @@ model GroupMember {
   @@index([userId])
   @@index([groupId, status])
   @@map("group_members")
+}
+
+// ── Group Posts ─────────────────────────────────────────────────────────────
+
+model GroupPost {
+  id        String   @id @default(uuid())
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body      String
+  imageKey  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  likes    GroupPostLike[]
+  comments GroupPostComment[]
+
+  @@index([groupId, createdAt])
+  @@index([authorId])
+  @@map("group_posts")
+}
+
+model GroupPostLike {
+  id        String    @id @default(uuid())
+  postId    String
+  post      GroupPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+
+  @@unique([postId, userId])
+  @@map("group_post_likes")
+}
+
+model GroupPostComment {
+  id        String    @id @default(uuid())
+  postId    String
+  post      GroupPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([postId, createdAt])
+  @@map("group_post_comments")
 }
 
 // ── Friends ─────────────────────────────────────────────────────────────────
