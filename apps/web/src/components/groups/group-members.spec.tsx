@@ -111,6 +111,18 @@ describe('GroupMembers', () => {
     });
   });
 
+  it('plain member sees member list but no admin actions', async () => {
+    mockQuery.mockResolvedValueOnce({ data: { groupMembers: [activeMember] } });
+    render(<GroupMembers groupId="g1" canModerate={false} isOwner={false} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('David')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByLabelText('Member options')).not.toBeInTheDocument();
+    expect(screen.queryByText('Pending requests')).not.toBeInTheDocument();
+  });
+
   it('Ban button calls banGroupMember mutation', async () => {
     mockQuery.mockResolvedValueOnce({ data: { groupMembers: [activeMember] } });
     mockMutate.mockResolvedValueOnce({ data: { banGroupMember: { id: 'm2', status: 'BANNED' } } });

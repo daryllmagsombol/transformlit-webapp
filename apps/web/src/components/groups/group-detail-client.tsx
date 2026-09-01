@@ -58,7 +58,7 @@ export function GroupDetailClient({ slug }: { slug: string }) {
             </p>
           </div>
         ))}
-      {tab === 'members' && canModerate && (
+      {tab === 'members' && isActiveMember && (
         <GroupMembers groupId={group.id} canModerate={canModerate} isOwner={isOwner} />
       )}
       {tab === 'settings' && isOwner && (
