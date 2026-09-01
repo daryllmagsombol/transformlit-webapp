@@ -56,6 +56,15 @@ export class GroupsResolver {
     return this.groupsService.findById(id, user.id);
   }
 
+  @Query(() => Group, { name: 'groupBySlug', nullable: true })
+  @UseGuards(JwtAuthGuard)
+  async groupBySlug(
+    @Args('slug') slug: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.groupsService.findBySlug(slug, user.id);
+  }
+
   @Query(() => [Group], { name: 'searchGroups' })
   @UseGuards(JwtAuthGuard)
   async searchGroups(@Args('query') query: string) {

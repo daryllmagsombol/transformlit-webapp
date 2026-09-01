@@ -14,12 +14,13 @@ function groupInclude(userId?: string) {
   } satisfies Prisma.GroupInclude;
 }
 
-/** Map raw Prisma result → Group shape (memberCount from _count, myRole from members) */
+/** Map raw Prisma result → Group shape (memberCount, myRole, myStatus from members) */
 function mapGroup(g: any, userId?: string) {
   return {
     ...g,
     memberCount: g._count?.members ?? 0,
     myRole: g.members?.[0]?.role ?? null,
+    myStatus: g.members?.[0]?.status ?? null,
   };
 }
 
@@ -78,6 +79,15 @@ export class GroupsService {
   async findById(id: string, userId?: string) {
     const g = await this.prisma.group.findUnique({
       where: { id, deletedAt: null },
+      include: groupInclude(userId),
+    });
+    if (!g) return null;
+    return mapGroup(g, userId);
+  }
+
+  async findBySlug(slug: string, userId?: string) {
+    const g = await this.prisma.group.findUnique({
+      where: { slug, deletedAt: null },
       include: groupInclude(userId),
     });
     if (!g) return null;

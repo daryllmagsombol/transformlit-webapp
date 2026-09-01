@@ -12,6 +12,7 @@ import {
   GroupMemberStatus,
   GroupCategory,
 } from '@transformlit/shared';
+import { User } from '../../auth/models/auth.model.js';
 
 registerEnumType(GroupVisibility, { name: 'GroupVisibility' });
 registerEnumType(GroupMemberRole, { name: 'GroupMemberRole' });
@@ -50,6 +51,9 @@ export class Group {
   @Field({ nullable: true })
   myRole?: GroupMemberRole;
 
+  @Field(() => GroupMemberStatus, { nullable: true })
+  myStatus?: GroupMemberStatus;
+
   @Field()
   createdAt: Date;
 }
@@ -70,6 +74,9 @@ export class GroupMember {
 
   @Field()
   joinedAt: Date;
+
+  @Field(() => User, { nullable: true })
+  user?: User;
 }
 
 @InputType()
