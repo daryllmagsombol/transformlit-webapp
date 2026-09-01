@@ -12,7 +12,7 @@ import { GroupsService } from './groups.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Group, GroupMember, CreateGroupInput, UpdateGroupInput } from './models/group.model.js';
-import { GroupCategory } from '@transformlit/shared';
+import { GroupCategory, GroupMemberRole } from '@transformlit/shared';
 
 @Resolver(() => Group)
 export class GroupsResolver {
@@ -119,5 +119,61 @@ export class GroupsResolver {
   @UseGuards(JwtAuthGuard)
   async deleteGroup(@Args('groupId') groupId: string) {
     return this.groupsService.deleteGroup(groupId);
+  }
+
+  @Mutation(() => GroupMember, { name: 'approveGroupMember' })
+  @UseGuards(JwtAuthGuard)
+  async approveGroupMember(
+    @CurrentUser() user: { id: string },
+    @Args('groupId') groupId: string,
+    @Args('userId') userId: string,
+  ) {
+    return this.groupsService.approveMember(groupId, user.id, userId);
+  }
+
+  @Mutation(() => Boolean, { name: 'removeGroupMember' })
+  @UseGuards(JwtAuthGuard)
+  async removeGroupMember(
+    @CurrentUser() user: { id: string },
+    @Args('groupId') groupId: string,
+    @Args('userId') userId: string,
+  ) {
+    return this.groupsService.removeMember(groupId, user.id, userId);
+  }
+
+  @Mutation(() => GroupMember, { name: 'banGroupMember' })
+  @UseGuards(JwtAuthGuard)
+  async banGroupMember(
+    @CurrentUser() user: { id: string },
+    @Args('groupId') groupId: string,
+    @Args('userId') userId: string,
+  ) {
+    return this.groupsService.banMember(groupId, user.id, userId);
+  }
+
+  @Mutation(() => GroupMember, { name: 'unbanGroupMember' })
+  @UseGuards(JwtAuthGuard)
+  async unbanGroupMember(
+    @CurrentUser() user: { id: string },
+    @Args('groupId') groupId: string,
+    @Args('userId') userId: string,
+  ) {
+    return this.groupsService.unbanMember(groupId, user.id, userId);
+  }
+
+  @Mutation(() => GroupMember, { name: 'updateGroupMemberRole' })
+  @UseGuards(JwtAuthGuard)
+  async updateGroupMemberRole(
+    @CurrentUser() user: { id: string },
+    @Args('groupId') groupId: string,
+    @Args('userId') userId: string,
+    @Args('role', { type: () => GroupMemberRole }) role: GroupMemberRole,
+  ) {
+    return this.groupsService.updateMemberRole(
+      groupId,
+      user.id,
+      userId,
+      role === 'MODERATOR' ? 'MODERATOR' : 'MEMBER',
+    );
   }
 }

@@ -1,4 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateGroupInput, UpdateGroupInput } from './models/group.model.js';
 import { GroupCategory } from '@transformlit/shared';
@@ -163,6 +168,104 @@ export class GroupsService {
       where: { groupId },
       include: { user: true },
       orderBy: { joinedAt: 'asc' },
+    });
+  }
+
+  async getMembershipFor(groupId: string, userId: string) {
+    return this.prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+  }
+
+  private async assertCanModerate(groupId: string, actorId: string) {
+    const membership = await this.getMembershipFor(groupId, actorId);
+    if (
+      !membership ||
+      membership.status !== 'ACTIVE' ||
+      (membership.role !== 'OWNER' && membership.role !== 'MODERATOR')
+    ) {
+      throw new ForbiddenException('You need to be an owner or moderator');
+    }
+    return membership;
+  }
+
+  async approveMember(groupId: string, actorId: string, userId: string) {
+    await this.assertCanModerate(groupId, actorId);
+    const target = await this.getMembershipFor(groupId, userId);
+    if (!target) throw new NotFoundException('Member not found');
+    if (target.status !== 'PENDING') {
+      throw new BadRequestException('Only pending members can be approved');
+    }
+    return this.prisma.groupMember.update({
+      where: { id: target.id },
+      data: { status: 'ACTIVE' },
+    });
+  }
+
+  async removeMember(groupId: string, actorId: string, userId: string) {
+    const actor = await this.assertCanModerate(groupId, actorId);
+    const target = await this.getMembershipFor(groupId, userId);
+    if (!target) throw new NotFoundException('Member not found');
+    if (target.role === 'OWNER') {
+      throw new ForbiddenException('Cannot remove the group owner');
+    }
+    if (
+      actor.role === 'MODERATOR' &&
+      target.role === 'MODERATOR'
+    ) {
+      throw new ForbiddenException('Moderators cannot remove other moderators');
+    }
+    await this.prisma.groupMember.delete({ where: { id: target.id } });
+    return true;
+  }
+
+  async banMember(groupId: string, actorId: string, userId: string) {
+    await this.assertCanModerate(groupId, actorId);
+    const target = await this.getMembershipFor(groupId, userId);
+    if (!target) throw new NotFoundException('Member not found');
+    if (target.role === 'OWNER') {
+      throw new ForbiddenException('Cannot ban the group owner');
+    }
+    return this.prisma.groupMember.update({
+      where: { id: target.id },
+      data: { status: 'BANNED' },
+    });
+  }
+
+  async unbanMember(groupId: string, actorId: string, userId: string) {
+    await this.assertCanModerate(groupId, actorId);
+    const target = await this.getMembershipFor(groupId, userId);
+    if (!target) throw new NotFoundException('Member not found');
+    if (target.status !== 'BANNED') {
+      throw new BadRequestException('Member is not banned');
+    }
+    return this.prisma.groupMember.update({
+      where: { id: target.id },
+      data: { status: 'ACTIVE' },
+    });
+  }
+
+  async updateMemberRole(
+    groupId: string,
+    actorId: string,
+    userId: string,
+    role: 'MEMBER' | 'MODERATOR',
+  ) {
+    const actor = await this.assertCanModerate(groupId, actorId);
+    if (actor.role !== 'OWNER') {
+      throw new ForbiddenException('Only the owner can change roles');
+    }
+    const target = await this.getMembershipFor(groupId, userId);
+    if (!target) throw new NotFoundException('Member not found');
+    if (target.role === 'OWNER') {
+      throw new ForbiddenException('Cannot change the owner role');
+    }
+    if (role !== 'MEMBER' && role !== 'MODERATOR') {
+      throw new BadRequestException('Role must be MEMBER or MODERATOR');
+    }
+    return this.prisma.groupMember.update({
+      where: { id: target.id },
+      data: { role },
     });
   }
 }
