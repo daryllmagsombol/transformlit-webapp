@@ -56,6 +56,12 @@ describe('Chat Integration', () => {
   let user1Id: string;
   let user2Id: string;
 
+  async function makeFriends(a: string, b: string) {
+    await prisma.friendship.create({
+      data: { requesterId: a, addresseeId: b, status: 'ACCEPTED' },
+    });
+  }
+
   beforeAll(async () => {
     let databaseUrl: string;
 
@@ -118,6 +124,7 @@ describe('Chat Integration', () => {
     await prisma.message.deleteMany();
     await prisma.conversationMember.deleteMany();
     await prisma.conversation.deleteMany();
+    await prisma.friendship.deleteMany();
     await prisma.refreshToken.deleteMany();
     await prisma.identity.deleteMany();
     await prisma.user.deleteMany();
@@ -135,6 +142,8 @@ describe('Chat Integration', () => {
       displayName: 'User Two',
     });
     user2Id = user2.user.id;
+
+    await makeFriends(user1Id, user2Id);
   });
 
   describe('getOrCreateDirectConversation', () => {
@@ -251,6 +260,25 @@ describe('Chat Integration', () => {
         where: { conversationId: conv.id, userId: user1Id },
       });
       expect(after!.lastReadAt).toBeTruthy();
+    });
+  });
+
+  describe('friends-only DMs', () => {
+    it('rejects starting a conversation with a non-friend', async () => {
+      const stranger = await authService.registerLocal({
+        email: 'stranger@example.com',
+        password: 'password123',
+        displayName: 'Stranger',
+      });
+      await expect(
+        chatService.getOrCreateDirectConversation(user1Id, stranger.user.id),
+      ).rejects.toThrow('You can only message your friends');
+    });
+
+    it('rejects self-chat', async () => {
+      await expect(
+        chatService.getOrCreateDirectConversation(user1Id, user1Id),
+      ).rejects.toThrow('You cannot message yourself');
     });
   });
 });

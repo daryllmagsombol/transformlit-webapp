@@ -29,6 +29,35 @@ export class ChatService {
   }
 
   async getOrCreateDirectConversation(userId: string, otherUserId: string) {
+    if (userId === otherUserId) throw new Error('You cannot message yourself');
+
+    const other = await this.prisma.user.findUnique({
+      where: { id: otherUserId, deletedAt: null },
+    });
+    if (!other) throw new Error('User not found');
+
+    const blocked = await this.prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { requesterId: userId, addresseeId: otherUserId },
+          { requesterId: otherUserId, addresseeId: userId },
+        ],
+        status: 'BLOCKED',
+      },
+    });
+    if (blocked) throw new Error('You cannot message this user');
+
+    const friendship = await this.prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { requesterId: userId, addresseeId: otherUserId },
+          { requesterId: otherUserId, addresseeId: userId },
+        ],
+        status: 'ACCEPTED',
+      },
+    });
+    if (!friendship) throw new Error('You can only message your friends');
+
     // Find existing direct conversation
     const existing = await this.prisma.conversation.findFirst({
       where: {
