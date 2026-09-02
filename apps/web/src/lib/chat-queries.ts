@@ -43,7 +43,7 @@ export const CONVERSATIONS_QUERY = gql`
 `;
 
 export const MESSAGES_QUERY = gql`
-  query Messages($conversationId: String!, $cursor: String, $limit: Int) {
+  query Messages($conversationId: String!, $cursor: String, $limit: Int!) {
     messages(conversationId: $conversationId, cursor: $cursor, limit: $limit) {
       edges { node { id conversationId senderId body createdAt } cursor }
       hasNextPage

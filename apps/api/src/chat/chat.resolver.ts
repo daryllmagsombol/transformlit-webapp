@@ -1,4 +1,4 @@
-import { Resolver, Query, Mutation, Subscription, Args } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Subscription, Args, Int } from '@nestjs/graphql';
 import { UseGuards } from '@nestjs/common';
 import { ChatService } from './chat.service.js';
 import { PubSubService } from './pubsub.service.js';
@@ -35,7 +35,7 @@ export class ChatResolver {
     @CurrentUser() user: { id: string },
     @Args('conversationId') conversationId: string,
     @Args('cursor', { nullable: true }) cursor?: string,
-    @Args('limit', { defaultValue: 25 }) limit?: number,
+    @Args('limit', { type: () => Int, defaultValue: 25 }) limit?: number,
   ) {
     return this.chatService.getMessages(conversationId, cursor, limit, user.id);
   }
