@@ -151,6 +151,7 @@ describe('Chat GraphQL boundary', () => {
     );
     expect(res.status).toBe(200);
     expect(res.body.errors).toBeDefined();
+    expect(res.body.errors[0].message).toContain("You don't have access to this conversation");
   });
 
   it('rejects a non-member sending a message', async () => {
@@ -162,6 +163,7 @@ describe('Chat GraphQL boundary', () => {
     );
     expect(res.status).toBe(200);
     expect(res.body.errors).toBeDefined();
+    expect(res.body.errors[0].message).toContain("You don't have access to this conversation");
   });
 
   it('rejects a non-friend starting a DM', async () => {
@@ -171,7 +173,7 @@ describe('Chat GraphQL boundary', () => {
     );
     expect(res.status).toBe(200);
     expect(res.body.errors).toBeDefined();
-    expect(res.body.errors[0].message).toContain('friends');
+    expect(res.body.errors[0].message).toContain('You can only message your friends');
   });
 
   it('rejects self-chat', async () => {
@@ -181,7 +183,7 @@ describe('Chat GraphQL boundary', () => {
     );
     expect(res.status).toBe(200);
     expect(res.body.errors).toBeDefined();
-    expect(res.body.errors[0].message).toContain('yourself');
+    expect(res.body.errors[0].message).toContain('You cannot message yourself');
   });
 
   it('rejects over-long message bodies', async () => {
@@ -191,7 +193,7 @@ describe('Chat GraphQL boundary', () => {
       { input: { conversationId: conv.id, body: 'x'.repeat(2001) } },
     );
     expect(res.body.errors).toBeDefined();
-    expect(res.body.errors[0].message).toContain('too long');
+    expect(res.body.errors[0].message).toContain('Message is too long (max 2000 characters)');
   });
 
   it('allows a friend to start a DM', async () => {
