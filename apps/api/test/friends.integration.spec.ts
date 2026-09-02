@@ -239,6 +239,28 @@ describe('Friends Integration', () => {
       const retry = await friendsService.sendRequest(requesterId, addresseeId);
       expect(retry.status).toBe('PENDING');
     });
+
+    it('reorients a reverse-direction reactivation and notifies the real recipient', async () => {
+      const f = await friendsService.sendRequest(requesterId, addresseeId);
+      await friendsService.rejectRequest(f.id, addresseeId);
+
+      // The rejector now initiates a request back. The surviving REJECTED row
+      // must be reoriented to the new direction, not kept as requester→addressee.
+      const retry = await friendsService.sendRequest(addresseeId, requesterId);
+      expect(retry.requesterId).toBe(addresseeId);
+      expect(retry.addresseeId).toBe(requesterId);
+      expect(retry.status).toBe('PENDING');
+
+      // Original requester can accept (no self-accept bypass for the rejector).
+      const accepted = await friendsService.acceptRequest(retry.id, requesterId);
+      expect(accepted.status).toBe('ACCEPTED');
+
+      // Notification went to the real recipient (the original requester).
+      const notification = await prisma.notification.findFirst({
+        where: { userId: requesterId, type: 'FRIEND_REQUEST' },
+      });
+      expect(notification).toBeTruthy();
+    });
   });
 
   describe('removeFriend authorization', () => {

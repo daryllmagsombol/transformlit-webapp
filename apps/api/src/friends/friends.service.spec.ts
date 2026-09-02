@@ -220,7 +220,25 @@ describe('FriendsService', () => {
       expect(result.status).toBe('PENDING');
       expect(prisma.friendship.update).toHaveBeenCalledWith({
         where: { id: 'friendship-1' },
-        data: { status: 'PENDING' },
+        data: { requesterId: 'user-1', addresseeId: 'user-2', status: 'PENDING' },
+      });
+      expect(prisma.friendship.create).not.toHaveBeenCalled();
+    });
+
+    it('should reorient a rejected row when reactivated from the opposite side', async () => {
+      const rejected = { ...mockFriendship, requesterId: 'user-2', addresseeId: 'user-1', status: 'REJECTED' };
+      prisma.friendship.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(rejected);
+      prisma.friendship.update.mockResolvedValue({ ...rejected, requesterId: 'user-1', addresseeId: 'user-2', status: 'PENDING' });
+
+      const result = await service.sendRequest('user-1', 'user-2');
+
+      expect(result.requesterId).toBe('user-1');
+      expect(result.addresseeId).toBe('user-2');
+      expect(prisma.friendship.update).toHaveBeenCalledWith({
+        where: { id: 'friendship-1' },
+        data: { requesterId: 'user-1', addresseeId: 'user-2', status: 'PENDING' },
       });
       expect(prisma.friendship.create).not.toHaveBeenCalled();
     });
@@ -316,9 +334,9 @@ describe('FriendsService', () => {
       });
     });
 
-    it('should return deleted friendship', async () => {
+    it('should return true after deleting', async () => {
       const result = await service.removeFriend('friendship-1', 'user-2');
-      expect(result).toEqual(mockFriendship);
+      expect(result).toBe(true);
     });
 
     it('should reject a non-party caller', async () => {

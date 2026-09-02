@@ -59,7 +59,9 @@ export class FriendsService {
     const friendship = rejected
       ? await this.prisma.friendship.update({
           where: { id: rejected.id },
-          data: { status: 'PENDING' },
+          // Reorient to the new request's direction so the surviving row matches
+          // the caller (this also covers reactivation from the opposite side).
+          data: { requesterId, addresseeId, status: 'PENDING' },
         })
       : await this.prisma.friendship.create({
           data: { requesterId, addresseeId, status: 'PENDING' },
@@ -124,7 +126,8 @@ export class FriendsService {
     if (friendship.requesterId !== userId && friendship.addresseeId !== userId) {
       throw new Error('Not authorized');
     }
-    return this.prisma.friendship.delete({ where: { id: friendshipId } });
+    await this.prisma.friendship.delete({ where: { id: friendshipId } });
+    return true;
   }
 
   async checkFriendship(userId: string, otherUserId: string) {
