@@ -104,4 +104,21 @@ describe('NavItem', () => {
       expect(label.className).toContain('text-[10px]');
     });
   });
+
+  describe('badge prop', () => {
+    it('renders a badge when provided', () => {
+      render(<NavItem label="Chat" href="/chat" icon="chat_bubble" badge={3} />);
+      expect(screen.getByText('3')).toBeInTheDocument();
+    });
+
+    it('caps the badge at 9+', () => {
+      render(<NavItem label="Chat" href="/chat" icon="chat_bubble" badge={12} />);
+      expect(screen.getByText('9+')).toBeInTheDocument();
+    });
+
+    it('renders no badge when zero', () => {
+      render(<NavItem label="Chat" href="/chat" icon="chat_bubble" badge={0} />);
+      expect(screen.queryByText('0')).not.toBeInTheDocument();
+    });
+  });
 });

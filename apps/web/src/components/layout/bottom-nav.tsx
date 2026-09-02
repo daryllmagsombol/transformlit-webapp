@@ -3,9 +3,11 @@
 import { usePathname } from 'next/navigation';
 import { NavItem } from '../ui/nav-item';
 import { BOTTOM_NAV_ITEMS } from '../../lib/constants';
+import { useChatStore } from '../../store/chat-store';
 
 export function BottomNav() {
   const pathname = usePathname();
+  const totalUnread = useChatStore((s) => s.totalUnread);
 
   return (
     <nav
@@ -18,6 +20,7 @@ export function BottomNav() {
           {...item}
           active={pathname.startsWith(item.href)}
           variant="bottom"
+          badge={item.href === '/chat' ? totalUnread : undefined}
         />
       ))}
     </nav>

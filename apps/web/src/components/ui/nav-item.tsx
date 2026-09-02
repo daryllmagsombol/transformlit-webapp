@@ -8,10 +8,11 @@ type NavItemProps = {
   icon: string;
   active?: boolean;
   variant?: 'sidebar' | 'bottom';
+  badge?: number;
   className?: string;
 };
 
-export function NavItem({ label, href, icon, active = false, variant = 'sidebar', className = '' }: NavItemProps) {
+export function NavItem({ label, href, icon, active = false, variant = 'sidebar', badge, className = '' }: NavItemProps) {
   const isSidebar = variant === 'sidebar';
 
   const activeClass = isSidebar
@@ -33,7 +34,7 @@ export function NavItem({ label, href, icon, active = false, variant = 'sidebar'
   return (
     <Link
       href={href}
-      className={`${baseClass} ${active ? activeClass : inactiveClass} ${className}`}
+      className={`${baseClass} relative ${active ? activeClass : inactiveClass} ${className}`}
     >
       <span className={`material-symbols-outlined ${active ? 'filled' : ''}`}>
         {icon}
@@ -41,6 +42,17 @@ export function NavItem({ label, href, icon, active = false, variant = 'sidebar'
       <span className={labelClass}>
         {label}
       </span>
+      {badge !== undefined && badge > 0 && (
+        <span
+          className={`absolute flex items-center justify-center rounded-full bg-brand-orange-dark text-white font-bold ${
+            isSidebar
+              ? 'right-3 top-1/2 -translate-y-1/2 h-5 min-w-5 px-1 text-[10px]'
+              : 'top-0.5 right-3 h-4 min-w-4 px-1 text-[9px]'
+          }`}
+        >
+          {badge > 9 ? '9+' : badge}
+        </span>
+      )}
     </Link>
   );
 }
