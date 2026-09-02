@@ -40,6 +40,12 @@ const ACCEPT_REQUEST = gql`
   }
 `;
 
+const START_DM = gql`
+  mutation StartDirectConversation($otherUserId: String!) {
+    startDirectConversation(otherUserId: $otherUserId) { id }
+  }
+`;
+
 interface ProfileData {
   userProfile: {
     user: { id: string; displayName: string; avatarUrl?: string | null; bio?: string; role: string };
@@ -125,6 +131,24 @@ export default function UserProfileClient() {
       fetchProfile();
     } catch {
       addToast('Failed to accept request.', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleMessage = async () => {
+    if (!friendship || friendship.status !== 'ACCEPTED') return;
+    setActionLoading(true);
+    try {
+      const { data } = await apolloClient.mutate<{ startDirectConversation: { id: string } }>({
+        mutation: START_DM,
+        variables: { otherUserId: userId },
+      });
+      if (data?.startDirectConversation) {
+        router.push(`/chat/${data.startDirectConversation.id}`);
+      }
+    } catch {
+      addToast('You can only message your friends.', 'error');
     } finally {
       setActionLoading(false);
     }
@@ -232,13 +256,16 @@ export default function UserProfileClient() {
                   </span>
                   {actionLoading ? 'Loading...' : buttonLabel}
                 </button>
-                <button
-                  onClick={() => addToast('Messaging coming soon.', 'info')}
-                  className="font-display font-headline-h4 px-6 h-11 rounded-md border border-outline-variant text-on-surface flex items-center gap-2 shadow-sm transition-all active:scale-95 hover:bg-surface-container-high"
-                >
-                  <span className="material-symbols-outlined text-[20px]">chat_bubble</span>
-                  Message
-                </button>
+                {friendship?.status === 'ACCEPTED' && (
+                  <button
+                    onClick={() => void handleMessage()}
+                    disabled={actionLoading}
+                    className="font-display font-headline-h4 px-6 h-11 rounded-md border border-outline-variant text-on-surface flex items-center gap-2 shadow-sm transition-all active:scale-95 hover:bg-surface-container-high disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">chat_bubble</span>
+                    {actionLoading ? 'Loading...' : 'Message'}
+                  </button>
+                )}
               </div>
             )}
           </div>

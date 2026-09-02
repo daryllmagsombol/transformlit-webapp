@@ -52,6 +52,12 @@ const SEND_FRIEND_REQUEST = gql`
   }
 `;
 
+const START_DM = gql`
+  mutation StartDirectConversation($otherUserId: String!) {
+    startDirectConversation(otherUserId: $otherUserId) { id }
+  }
+`;
+
 interface UserProfileData {
   userProfile: {
     user: { id: string; displayName: string; avatarUrl?: string | null; bio?: string; role: string };
@@ -141,6 +147,25 @@ export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserP
       fetchData();
     } catch {
       addToast('Failed to accept request.', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleMessage = async () => {
+    if (!friendship || friendship.status !== 'ACCEPTED') return;
+    setActionLoading(true);
+    try {
+      const { data } = await apolloClient.mutate<{ startDirectConversation: { id: string } }>({
+        mutation: START_DM,
+        variables: { otherUserId: userId },
+      });
+      if (data?.startDirectConversation) {
+        onClose();
+        router.push(`/chat/${data.startDirectConversation.id}`);
+      }
+    } catch {
+      addToast('You can only message your friends.', 'error');
     } finally {
       setActionLoading(false);
     }
@@ -248,6 +273,16 @@ export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserP
                     {friendship?.status === 'ACCEPTED' ? 'check' : 'person_add'}
                   </span>
                   {actionLoading ? 'Loading...' : buttonLabel}
+                </button>
+              )}
+              {friendship?.status === 'ACCEPTED' && (
+                <button
+                  onClick={() => void handleMessage()}
+                  disabled={actionLoading}
+                  className="w-full py-3 rounded-lg font-bold shadow-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all border border-outline-variant text-on-surface hover:bg-surface-container-high disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined">chat_bubble</span>
+                  {actionLoading ? 'Loading...' : 'Message'}
                 </button>
               )}
               <button
