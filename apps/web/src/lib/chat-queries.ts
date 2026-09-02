@@ -98,11 +98,12 @@ export async function fetchMessages(
     variables: { conversationId, cursor, limit },
   });
   const conn = data?.messages;
-  const messages = (conn?.edges ?? []).map((e) => e.node);
+  const edges = conn?.edges ?? [];
+  const messages = edges.map((e) => e.node).reverse();
   return {
-    messages,
+    messages, // ascending chronological order (oldest first) for the thread
     hasMore: conn?.hasNextPage ?? false,
-    cursor: conn?.edges.at(-1)?.cursor,
+    cursor: edges.at(-1)?.cursor, // oldest edge pre-reversal = next older-page cursor
   };
 }
 
