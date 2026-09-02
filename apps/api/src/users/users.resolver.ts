@@ -31,8 +31,11 @@ export class UsersResolver {
 
   @Query(() => UserProfile, { name: 'userProfile' })
   @UseGuards(JwtAuthGuard)
-  async userProfile(@Args('id') id: string) {
-    return this.usersService.getProfile(id);
+  async userProfile(
+    @CurrentUser() user: { id: string },
+    @Args('id') id: string,
+  ) {
+    return this.usersService.getProfile(id, user.id);
   }
 
   @Mutation(() => User, { name: 'updateProfile' })

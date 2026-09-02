@@ -4,6 +4,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AuthService } from '../src/auth/auth.service';
 import { FriendsService } from '../src/friends/friends.service';
+import { UsersService } from '../src/users/users.service';
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
 import * as fs from 'node:fs';
@@ -46,6 +47,7 @@ async function runMigrations(pool: Pool) {
 
 describe('Friends Integration', () => {
   let app: INestApplication;
+  let moduleFixture: TestingModule;
   let friendsService: FriendsService;
   let authService: AuthService;
   let prisma: PrismaService;
@@ -85,7 +87,7 @@ describe('Friends Integration', () => {
 
     await runMigrations(pool);
 
-    const moduleFixture: TestingModule = await Test.createTestingModule({
+    moduleFixture = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
 
@@ -305,6 +307,29 @@ describe('Friends Integration', () => {
     it('clamps limit', async () => {
       const suggestions = await friendsService.suggestedFriends(requesterId, 999);
       expect(suggestions.length).toBeLessThanOrEqual(20);
+    });
+  });
+
+  describe('mutualFriends', () => {
+    it('lists users who are friends with both parties', async () => {
+      const [alice, bridge] = await Promise.all([
+        authService.registerLocal({ email: 'alice@example.com', password: 'password123', displayName: 'Alice' }),
+        authService.registerLocal({ email: 'bridge@example.com', password: 'password123', displayName: 'Bridge' }),
+      ]);
+      await prisma.friendship.create({ data: { requesterId: requesterId, addresseeId: bridge.user.id, status: 'ACCEPTED' } });
+      await prisma.friendship.create({ data: { requesterId: alice.user.id, addresseeId: bridge.user.id, status: 'ACCEPTED' } });
+
+      const usersService = moduleFixture.get<UsersService>(UsersService);
+      const profile = await usersService.getProfile(alice.user.id, requesterId);
+
+      expect(profile.mutualFriends.map((u: any) => u.id)).toContain(bridge.user.id);
+      expect(profile.mutualFriends.map((u: any) => u.id)).not.toContain(requesterId);
+    });
+
+    it('returns empty for own profile', async () => {
+      const usersService = moduleFixture.get<UsersService>(UsersService);
+      const profile = await usersService.getProfile(requesterId, requesterId);
+      expect(profile.mutualFriends).toEqual([]);
     });
   });
 });
