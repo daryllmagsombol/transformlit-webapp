@@ -205,7 +205,7 @@ describe('Chat Integration', () => {
         );
       }
 
-      const result = await chatService.getMessages(conv.id, undefined, 3);
+      const result = await chatService.getMessages(conv.id, undefined, 3, user1Id);
 
       expect(result.edges.length).toBe(3);
       expect(result.hasNextPage).toBe(true);
@@ -213,7 +213,7 @@ describe('Chat Integration', () => {
       expect(result.edges[0]).toHaveProperty('cursor');
 
       const cursor = result.edges[result.edges.length - 1].cursor;
-      const page2 = await chatService.getMessages(conv.id, cursor, 3);
+      const page2 = await chatService.getMessages(conv.id, cursor, 3, user1Id);
 
       expect(page2.edges.length).toBe(2);
       expect(page2.hasNextPage).toBe(false);
@@ -223,7 +223,7 @@ describe('Chat Integration', () => {
     it('should return empty edges for conversation with no messages', async () => {
       const conv = await chatService.getOrCreateDirectConversation(user1Id, user2Id);
 
-      const result = await chatService.getMessages(conv.id);
+      const result = await chatService.getMessages(conv.id, undefined, 25, user1Id);
 
       expect(result.edges.length).toBe(0);
       expect(result.hasNextPage).toBe(false);

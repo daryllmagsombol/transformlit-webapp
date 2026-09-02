@@ -61,7 +61,7 @@ export type FriendRequestInput = z.infer<typeof friendRequestSchema>;
 
 export const sendMessageSchema = z.object({
   conversationId: z.string().uuid(),
-  body: z.string().min(1).max(5000),
+  body: z.string().min(1).max(2000),
 });
 
 export const messagesQuerySchema = z.object({

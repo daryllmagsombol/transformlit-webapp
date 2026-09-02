@@ -21,6 +21,13 @@ export class ChatService {
     });
   }
 
+  private async assertMember(conversationId: string, userId: string) {
+    const member = await this.prisma.conversationMember.findUnique({
+      where: { conversationId_userId: { conversationId, userId } },
+    });
+    if (!member) throw new Error("You don't have access to this conversation");
+  }
+
   async getOrCreateDirectConversation(userId: string, otherUserId: string) {
     // Find existing direct conversation
     const existing = await this.prisma.conversation.findFirst({
@@ -47,7 +54,12 @@ export class ChatService {
     return conv;
   }
 
-  async getOrCreateGroupConversation(groupId: string) {
+  async getOrCreateGroupConversation(groupId: string, userId: string) {
+    const member = await this.prisma.groupMember.findFirst({
+      where: { groupId, userId, status: 'ACTIVE' },
+    });
+    if (!member) throw new Error('You must be an active member of this group');
+
     const existing = await this.prisma.conversation.findFirst({
       where: { type: 'GROUP', groupId, deletedAt: null },
     });
@@ -60,11 +72,17 @@ export class ChatService {
   }
 
   async sendMessage(input: SendMessageInput, senderId: string) {
+    await this.assertMember(input.conversationId, senderId);
+
+    const body = input.body.trim();
+    if (!body) throw new Error('Message body cannot be empty');
+    if (body.length > 2000) throw new Error('Message is too long (max 2000 characters)');
+
     const msg = await this.prisma.message.create({
       data: {
         conversationId: input.conversationId,
         senderId,
-        body: input.body,
+        body,
       },
     });
 
@@ -84,9 +102,12 @@ export class ChatService {
 
   async getMessages(
     conversationId: string,
-    cursor?: string,
+    cursor: string | undefined,
     limit = 25,
+    userId: string,
   ) {
+    await this.assertMember(conversationId, userId);
+
     const where: any = { conversationId, deletedAt: null };
     if (cursor) {
       where.createdAt = { lt: new Date(cursor) };
@@ -112,6 +133,7 @@ export class ChatService {
   }
 
   async markRead(conversationId: string, userId: string) {
+    await this.assertMember(conversationId, userId);
     await this.prisma.conversationMember.updateMany({
       where: { conversationId, userId },
       data: { lastReadAt: new Date() },

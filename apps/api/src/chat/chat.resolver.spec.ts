@@ -79,8 +79,8 @@ describe('ChatResolver', () => {
 
   describe('messages', () => {
     it('should delegate to getMessages with conversationId', async () => {
-      const result = await resolver.messages('conv-1');
-      expect(chatService.getMessages).toHaveBeenCalledWith('conv-1', undefined, undefined);
+      const result = await resolver.messages(mockUser, 'conv-1');
+      expect(chatService.getMessages).toHaveBeenCalledWith('conv-1', undefined, undefined, 'user-1');
       expect(result).toEqual({
         edges: [{ node: mockMessage, cursor: '2024-01-01T12:00:00.000Z' }],
         totalCount: 1,
@@ -89,8 +89,8 @@ describe('ChatResolver', () => {
     });
 
     it('should pass cursor and limit when provided', async () => {
-      const result = await resolver.messages('conv-1', '2024-01-01T00:00:00.000Z', 10);
-      expect(chatService.getMessages).toHaveBeenCalledWith('conv-1', '2024-01-01T00:00:00.000Z', 10);
+      const result = await resolver.messages(mockUser, 'conv-1', '2024-01-01T00:00:00.000Z', 10);
+      expect(chatService.getMessages).toHaveBeenCalledWith('conv-1', '2024-01-01T00:00:00.000Z', 10, 'user-1');
       expect(result).toBeDefined();
     });
   });

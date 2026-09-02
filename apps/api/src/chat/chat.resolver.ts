@@ -31,11 +31,12 @@ export class ChatResolver {
   @Query(() => MessageConnection, { name: 'messages' })
   @UseGuards(JwtAuthGuard)
   async messages(
+    @CurrentUser() user: { id: string },
     @Args('conversationId') conversationId: string,
     @Args('cursor', { nullable: true }) cursor?: string,
     @Args('limit', { defaultValue: 25 }) limit?: number,
   ) {
-    return this.chatService.getMessages(conversationId, cursor, limit);
+    return this.chatService.getMessages(conversationId, cursor, limit, user.id);
   }
 
   @Mutation(() => Message, { name: 'sendMessage' })
