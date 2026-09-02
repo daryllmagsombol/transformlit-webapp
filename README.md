@@ -1,279 +1,212 @@
-# Transformlit MVP
+# 📖 Transformlit
 
-A multi-tenant community platform built for reading groups, book clubs, and literary organizations. Warm, paper-toned design with group management, chat, announcements, and document sharing.
+A community-driven platform for reading groups, book sharing, chat, and literary engagement. Warm, paper-toned design with dark mode. Mobile-first web app with a future React Native companion.
 
-**Production:** https://transformlit.darjosh.dev
+**Production:** `app.transformlit.com` (API at `/api` path)
+**Dev:** `dev.transformlit.com`
 
 ---
 
-## Documentation Map
+## 📚 Documentation Map
 
 | File | Contents |
 |---|---|
-| `ARCHITECTURE.md` | System design, scope, data model, API plan, frontend stack, deployment strategy |
-| `DB_DESIGN.md` | Full PostgreSQL schema: tables, enums, indexes, constraints, soft delete conventions |
-| `DESIGN_SYSTEM.md` | Brand direction, color tokens, typography scale, spacing, components, Tailwind config |
-| `Deployment.md` | VM runbook, Docker Compose, nginx, Cloudflare, CI/CD trigger |
-| `SETUP_NESTJS_NEXTJS_TURBOREPO.md` | How the monorepo was scaffolded from scratch |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 🏛️ System design, modular monolith, GraphQL API, subscriptions, auth flow, PDF streaming |
+| [`docs/DB_DESIGN.md`](docs/DB_DESIGN.md) | 🗄️ Full PostgreSQL schema: tables, enums, indexes, constraints, conventions |
+| [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) | 🎨 Brand direction, color tokens (light + dark), typography, spacing, components |
+| [`docs/MEMORY.md`](docs/MEMORY.md) | 🧠 Task tracker, decisions log, open questions, future microservice extraction plan |
+| [`docs/Deployment.md`](docs/Deployment.md) | 🚀 Azure Container Apps, Terraform IaC, GitHub Actions CI/CD, Cloudflare DNS, GHCR |
 
 ---
 
-## Stack
+## 🏗️ Stack
 
 | Layer | Technology |
 |---|---|
-| **Monorepo** | Turborepo + npm workspaces |
-| **API** | NestJS (TypeScript) |
-| **Frontend** | Next.js 15 (App Router) |
-| **Shared** | `packages/shared` — DTOs, types, validation |
-| **Database** | PostgreSQL 16 via Prisma ORM |
-| **Auth** | Email/password, argon2 hashing, JWT (7d expiry) |
-| **Deployment** | Docker Compose on Azure VM, nginx reverse proxy, Cloudflare SSL |
-| **State (client)** | Tanstack Query (server state), Redux Toolkit (UI state) |
+| **Monorepo** | Turborepo + pnpm workspaces |
+| **API** | NestJS 11 (TypeScript) + Apollo GraphQL |
+| **Frontend** | Next.js 16 (App Router) + React 19 |
+| **Database** | PostgreSQL via Prisma 7 ORM |
+| **Auth** | Google OAuth + email/password, JWT (15min access) + rotating refresh tokens (7d) |
+| **Client state** | Apollo Client (server cache + subscriptions), Zustand (UI state) |
+| **Styling** | Tailwind CSS v4, CSS variables, dark/light mode |
+| **Forms** | React Hook Form + Zod, shared schemas |
+| **Tables** | TanStack Table |
+| **Azure cloud** | Container Apps, PostgreSQL Flexible Server, Blob Storage, Key Vault, ACS Email |
+| **IaC** | Terraform (Azure Storage backend) |
+| **CI/CD** | GitHub Actions (infra + deploy), GHCR (container registry) |
+| **DNS/SSL** | Cloudflare Full (strict) |
 
 ---
 
-## Project Structure
+## 📁 Project Structure
 
 ```
 new-transformlit-webapp/
 ├── apps/
-│   ├── api/                    # NestJS backend (:3005)
+│   ├── api/                     # NestJS backend (Apollo GraphQL)
 │   │   ├── src/
-│   │   │   ├── auth/           # Register, login, JWT guard
-│   │   │   ├── announcements/  # Tenant-wide CRUD + publish/unpublish
-│   │   │   ├── friends/        # Requests, accept/reject, search
-│   │   │   ├── groups/         # Create, join, roles, search
-│   │   │   ├── documents/      # Upload, stream, access control
-│   │   │   ├── prisma/         # Schema, migrations, seed
-│   │   │   ├── app.module.ts   # Root module
-│   │   │   └── main.ts         # Bootstrap, CORS, validation
-│   │   └── Dockerfile
-│   ├── web/                    # Next.js frontend (:3000)
-│   │   ├── src/
-│   │   │   ├── app/            # App Router pages
-│   │   │   ├── components/     # UI primitives + feature components
-│   │   │   ├── lib/            # API client, helpers
-│   │   │   └── store/          # Redux slices
-│   │   └── Dockerfile
+│   │   │   ├── auth/            # OAuth, JWT, refresh rotation
+│   │   │   ├── users/
+│   │   │   ├── groups/
+│   │   │   ├── friends/
+│   │   │   ├── chat/            # Subscriptions via Postgres LISTEN/NOTIFY
+│   │   │   ├── books/           # PDF streaming + read progress
+│   │   │   ├── feed/            # Announcements + verse-of-day
+│   │   │   ├── notifications/
+│   │   │   ├── prisma/          # PrismaService (@Global)
+│   │   │   ├── azure/           # BlobService, EmailService
+│   │   │   ├── common/          # Guards, decorators, pipes, filters
+│   │   │   ├── app.module.ts
+│   │   │   └── main.ts
+│   │   ├── prisma/schema.prisma
+│   │   ├── test/
+│   │   ├── Dockerfile
+│   │   └── package.json
+│   └── web/                     # Next.js frontend
+│       ├── src/
+│       │   ├── app/             # App Router pages + layouts
+│       │   ├── components/      # UI primitives + feature components
+│       │   ├── lib/             # Apollo Client, auth helpers
+│       │   ├── store/           # Zustand stores
+│       │   └── styles/          # Tailwind globals + tokens
+│       ├── Dockerfile
+│       ├── next.config.ts
+│       └── package.json
 ├── packages/
-│   └── shared/                 # Shared DTOs, types, validation
-├── deploy/                     # (on VM) Docker Compose + nginx config
-├── images/                     # Brand assets
-├── turbo.json                  # Turborepo pipeline
-├── package.json                # Workspace root
-└── *.md                        # Documentation (see map above)
+│   ├── shared/                  # Zod schemas, enums, constants, DTOs
+│   └── graphql/                 # Codegen types + .graphql operations
+├── infra/                       # Terraform IaC
+│   ├── modules/
+│   │   ├── resource-group/
+│   │   ├── postgresql/
+│   │   ├── blob-storage/
+│   │   ├── container-apps-env/
+│   │   ├── container-app/
+│   │   ├── key-vault/
+│   │   ├── communication-services/
+│   │   └── monitoring/
+│   ├── dev/main.tf
+│   ├── prod/main.tf
+│   └── backend.tf
+├── .github/workflows/
+│   ├── infra.yml                # Terraform plan/apply
+│   ├── deploy-api.yml           # Build → GHCR → ACA deploy
+│   └── deploy-web.yml           # Build → GHCR → ACA deploy
+├── docs/                        # 📚 Documentation
+│   ├── ARCHITECTURE.md          # 🏛️ System architecture
+│   ├── DB_DESIGN.md             # 🗄️ Database schema
+│   ├── DESIGN_SYSTEM.md         # 🎨 Visual design system
+│   ├── Deployment.md            # 🚀 Deployment guide
+│   └── MEMORY.md                # 🧠 Project memory & tracker
+└── turbo.json / package.json
 ```
 
 ---
 
-## Features (MVP Scope)
+## ⭐ Key Features
 
-- **Multi-tenant**: Every tenant gets isolated data via `tenant_id` on all rows. Registration creates a tenant + admin user in one step.
-- **Groups**: Public/private groups, join requests, member roles (owner, admin, member).
-- **Friends**: Request/accept/reject/block friendships.
-- **Chat**: Direct and group conversations via short polling (5–10s). Schema compatible with future WebSocket upgrade.
-- **Announcements**: Tenant-wide feed with draft/publish/archive workflow. Scheduled publishing and expiry.
-- **Documents**: PDF upload, access control per user or group, authorized streaming.
+- 💬 **Real-time Chat**: GraphQL subscriptions over WebSocket. No polling.
+- 🔄 **Web Reactive**: Apollo Client with `graphql-ws`. Zero stale data.
+- 📚 **Books**: Protected PDF streaming, read progress (page + scroll), bookmarks, highlights. Paid books show "Coming Soon."
+- 🔐 **SSO Auth**: Google OAuth + local email/password with rotating refresh tokens. Microsoft and Facebook phase 2.
+- 👥 **Roles**: Admin / Moderator / Member (global). Owner / Member (per group).
+- 🌓 **Dark Mode**: Full light/dark theme with Tailwind v4 `dark:` utilities.
+- 📰 **Feed**: Announcements with category badges + Bible Verse of the Day (Our Manna API via `beta.ourmanna.com`, key-less, cached daily, UTC+8).
+- 🧱 **Modular Monolith**: NestJS domain modules with zero cross-deps — extract to microservices later with zero rewrites.
 
-### Out of Scope (v1)
-
-- Realtime chat, typing indicators, read receipts
-- Mobile apps
-- Recommendation engine
-- Payments or subscriptions
-- Advanced search and discovery
-
----
-
-## Database
-
-Multi-tenant PostgreSQL with UUID primary keys, soft deletes, and audit fields.
-
-**Enums:** `user_status`, `user_role`, `group_visibility`, `group_member_role`, `friendship_status`, `conversation_type`, `announcement_status`, `document_access_type`
-
-**Core tables:** `tenants`, `users`, `profiles`, `friendships`, `groups`, `group_members`, `conversations`, `conversation_members`, `messages`, `documents`, `document_access`, `announcements`
-
-See `DB_DESIGN.md` for full schema with indexes and constraints.
-
----
-
-## API Endpoints
-
-### Auth
-| Method | Path | Auth | Body |
-|---|---|---|---|
-| POST | `/auth/register` | No | `{ tenantName, email, password, displayName? }` |
-| POST | `/auth/login` | No | `{ tenantSlug, email, password }` |
-| GET | `/auth/me` | JWT | — |
-
-### Announcements
-| Method | Path | Auth |
-|---|---|---|
-| GET | `/announcements` | JWT |
-| GET | `/announcements/:id` | JWT |
-| POST | `/announcements` | JWT |
-| PATCH | `/announcements/:id` | JWT |
-| POST | `/announcements/:id/publish` | JWT |
-| POST | `/announcements/:id/unpublish` | JWT |
-| DELETE | `/announcements/:id` | JWT |
-
-### Groups
-| Method | Path | Auth |
-|---|---|---|
-| GET | `/groups` | JWT |
-| GET | `/groups/:id` | JWT |
-| GET | `/groups/search` | JWT |
-| POST | `/groups` | JWT |
-| PUT | `/groups/:id` | JWT |
-| DELETE | `/groups/:id` | JWT |
-| POST | `/groups/:id/members` | JWT |
-| DELETE | `/groups/:id/members/:memberId` | JWT |
-
-### Friends
-| Method | Path | Auth |
-|---|---|---|
-| GET | `/friends` | JWT |
-| GET | `/friends/search` | JWT |
-| POST | `/friends/request` | JWT |
-| POST | `/friends/:id/accept` | JWT |
-| POST | `/friends/:id/reject` | JWT |
-| DELETE | `/friends/:id` | JWT |
-
-### Documents
-| Method | Path | Auth |
-|---|---|---|
-| GET | `/documents` | JWT |
-| GET | `/documents/:id` | JWT |
-| POST | `/documents` | JWT |
-| PUT | `/documents/:id` | JWT |
-| DELETE | `/documents/:id` | JWT |
-| POST | `/documents/:id/access` | JWT |
-| DELETE | `/documents/:id/access/:accessId` | JWT |
-
----
-
-## Development
-
-### Prerequisites
-
-- Node.js 20+
-- npm 10+
-- PostgreSQL 15+
-
-### Setup
-
-```bash
-# Install dependencies
-npm install
-
-# Create environment files
-cp apps/api/.env.example apps/api/.env
-cp apps/web/.env.example apps/web/.env
-
-# Generate Prisma client, run migrations, seed
-npm run db:generate -w apps/api
-npm run db:migrate -w apps/api
-npm run db:seed -w apps/api
-
-# Start both API and web dev servers
-npm run dev
-```
-
-API runs on `http://localhost:3005`, web on `http://localhost:3000`.
-
-### Useful Commands
-
-```bash
-# Targeted workspace scripts
-npm run dev -w apps/api          # API dev server with watch
-npm run dev -w apps/web          # Web dev server
-npm run build -w apps/api        # Build API
-npm run build -w apps/web        # Build web
-
-# Database
-npm run db:generate -w apps/api  # Generate Prisma client
-npm run db:migrate -w apps/api   # Run migrations
-npm run db:seed -w apps/api      # Seed data
-
-# Root scripts (runs all workspaces)
-npm run dev                      # Full stack via Turborepo
-npm run build                    # Build all workspaces
-npm run lint                     # Lint all workspaces
-npm run test                     # Test all workspaces
-```
-
-### Environment Variables (API)
-
-| Variable | Default | Required |
-|---|---|---|
-| `DATABASE_URL` | — | Yes |
-| `JWT_SECRET` | — | Yes |
-| `PORT` | `3005` | No |
-| `CORS_ORIGIN` | `http://localhost:3000` | No |
-
----
-
-## Design System
-
-Warm, literary aesthetic anchored on orange-and-ink branding.
-
-- **Colors:** Brand orange (`#F4A11C`), ink black (`#111111`), warm paper (`#FFF6E8`), teal accent (`#1F7A6D`)
-- **Typography:** Space Grotesk (UI), Newsreader (reading), JetBrains Mono (code)
-- **Spacing:** 4px scale through 64px
-- **Radius:** sm 8px, md 12px, lg 16px, xl 20px
-
-See `DESIGN_SYSTEM.md` for full token set, Tailwind config, component specs, and motion guidelines.
-
----
-
-## Deployment
-
-The app runs on an Azure VM (Standard_B2s, Ubuntu) via Docker Compose alongside the blink-social-media stack.
-
-**Infrastructure:**
-- Docker Compose: `postgres`, `transformlit-api`, `transformlit-web`, `nginx`
-- nginx reverse proxy with Cloudflare Full (strict) SSL
-- Shared PostgreSQL instance across stacks
-- Variable-based proxy_pass with Docker DNS resolver
-
-**Production URL:** https://transformlit.darjosh.dev
-**API base:** `https://transformlit.darjosh.dev/api`
-
-See `Deployment.md` for the VM runbook, Dockerfile details, and CI/CD trigger setup.
-
----
-
-## Auth & Security
-
-- Email/password authentication with argon2 password hashing
-- JWT-based API access (7-day expiry, no refresh tokens)
-- Custom `JwtAuthGuard` — `CanActivate` guard with `JwtService.verifyAsync`
-- Tenant-scoped data isolation via `tenant_id` on all queries
-- Soft deletes: `deleted_at` + `deleted_by` on all major tables
-
-**Seed credentials (dev):**
-- Tenant: `transformlit`
-- Admin: `admin@transformlit.local` / `Transformlit123!`
-
----
-
-## Architecture Decisions
+## 🧠 Architecture Decisions
 
 | Decision | Rationale |
 |---|---|
-| **No global API prefix** | Routes at `/auth/register` (not `/api/auth/register`); nginx strips `/api` in `proxy_pass` via rewrite |
-| **Custom JWT guard** | Simple `CanActivate` with `JwtService.verifyAsync` instead of Passport; fewer abstractions for MVP |
-| **Short-polling chat** | Avoid WebSocket infrastructure for MVP; compatible schema for future upgrade |
-| **Shared Prisma in root** | Avoids workspace-hoisting conflicts with Prisma version; use `npx prisma@<exact-version>` in production |
-| **npm workspaces** | Simpler than pnpm for MVP; adequate workspace isolation |
+| **Modular monolith** | Domain modules with zero cross-deps. Single deploy for MVP. Extract to microservices when needed — no rewrites. |
+| **Full GraphQL (Apollo)** | One API paradigm. Queries, mutations, subscriptions. Optimal for mobile/React Native future. |
+| **Postgres LISTEN/NOTIFY** | Pub/sub for GraphQL subscriptions. Zero extra infra (no Redis at MVP). Works natively on Burstable tier. |
+| **No APIM** | Frontend calls Container Apps directly (Cloudflare → ACA ingress). Revisit if external API consumers added. |
+| **Container Apps over App Service** | Scale-to-zero for web. Per-second billing. Native WebSocket support + sticky sessions. |
+| **Path-based routing** | `app.transformlit.com/api/*` → NestJS container. Same origin → no CORS, simpler WebSocket. |
+| **GHCR over ACR** | Free with GitHub. Auth built into Actions. No separate registry cost. |
+| **Azure Storage TF backend** | Simplest. No HCP Terraform dependency. Free at <1 GB state storage. |
 
 ---
 
-## Related
+## 🛠️ Development
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — Full system design and scope
-- [DB_DESIGN.md](./DB_DESIGN.md) — Database schema and conventions
-- [DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md) — Visual design tokens and components
-- [Deployment.md](./Deployment.md) — Infrastructure and deployment steps
-- [SETUP_NESTJS_NEXTJS_TURBOREPO.md](./SETUP_NESTJS_NEXTJS_TURBOREPO.md) — Monorepo scaffold guide
+### 📋 Prerequisites
+
+- Node.js 22+
+- pnpm 10+
+- PostgreSQL 16+
+- Azure CLI (for infra)
+
+### ⚡ Quick Start
+
+```bash
+pnpm install
+
+# Environment
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env
+
+# Database
+pnpm exec prisma generate --schema=apps/api/prisma/schema.prisma
+pnpm exec prisma migrate dev --schema=apps/api/prisma/schema.prisma
+pnpm exec prisma db seed --schema=apps/api/prisma/schema.prisma
+
+# Dev servers (API + Web via Turbo)
+pnpm dev
+```
+
+🔌 API (GraphQL playground): `http://localhost:3005/graphql`
+🌐 Web: `http://localhost:3000`
+
+### 💻 Workspace Commands
+
+```bash
+pnpm --filter @transformlit/api dev
+pnpm --filter @transformlit/web dev
+pnpm --filter @transformlit/api build
+pnpm --filter @transformlit/web build
+pnpm lint
+pnpm test
+
+# Prisma
+pnpm exec prisma migrate dev --schema=apps/api/prisma/schema.prisma
+pnpm exec prisma db seed --schema=apps/api/prisma/schema.prisma
+pnpm exec prisma studio --schema=apps/api/prisma/schema.prisma
+```
+
+### 🔑 Environment Variables
+
+**API (`apps/api/.env`)**
+
+| Variable | Description | Required |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL connection string (local dev) | Yes |
+| `JWT_SECRET` | HS256 signing key for JWT | Yes |
+| `JWT_REFRESH_SECRET` | HS256 signing key for refresh tokens | Yes |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID | For SSO |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | For SSO |
+| `AZURE_STORAGE_CONNECTION_STRING` | Blob Storage for PDF uploads/streaming | Yes (prod) |
+| `ACS_CONNECTION_STRING` | Azure Communication Services email | Yes (prod) |
+| `PORT` | API port (default 3005) | No |
+
+**Web (`apps/web/.env`)**
+
+| Variable | Description | Required |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | GraphQL endpoint | Yes |
+| `NEXT_PUBLIC_WS_URL` | WebSocket endpoint (graphql-ws) | Yes |
+
+---
+
+## 🚀 Deployment
+
+See [`docs/Deployment.md`](docs/Deployment.md) for full details. Summary:
+
+1. 📤 Push code → GitHub Actions builds Docker image → pushes to GHCR
+2. 🏗️ `infra.yml` manages Azure infra via Terraform (plan on PR, apply on merge)
+3. 🔄 Container Apps pull updated images and swap active revision
+4. 🔒 Cloudflare fronts `app.transformlit.com` with Full (strict) SSL → ACA ingress
+
+**💰 Cost**: ~$25-30/mo per environment, covered by Azure nonprofit sponsorship.

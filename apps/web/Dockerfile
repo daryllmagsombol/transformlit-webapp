@@ -1,20 +1,23 @@
-FROM node:22-bullseye-slim
+FROM node:22-bookworm-slim
 WORKDIR /workspace
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:3005/api
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
-COPY package.json package-lock.json ./
+RUN npm install -g pnpm@10
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
+COPY packages/graphql/package.json packages/graphql/
 
-RUN npm install && npm install lightningcss-linux-x64-gnu @tailwindcss/oxide-linux-x64-gnu --no-save
+RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN npx turbo run build --filter=web...
+
+RUN pnpm exec turbo run build --filter=@transformlit/web...
 
 ENV NODE_ENV=production
-
 EXPOSE 3000
 
-CMD ["npm", "run", "start", "--workspace", "apps/web"]
+CMD ["pnpm", "--filter", "@transformlit/web", "run", "start"]

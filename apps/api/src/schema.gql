@@ -1,0 +1,391 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+input AddBookmarkInput {
+  bookId: ID!
+  color: String
+  label: String
+  page: Float!
+}
+
+input AddHighlightInput {
+  bookId: ID!
+  color: String
+  note: String
+  page: Float!
+  text: String!
+}
+
+type Announcement {
+  body: String!
+  category: AnnouncementCategory!
+  createdAt: DateTime!
+  expiresAt: DateTime
+  id: ID!
+  publishAt: DateTime
+  publishedAt: DateTime
+  status: AnnouncementStatus!
+  title: String!
+}
+
+enum AnnouncementCategory {
+  EVENT
+  GENERAL
+  UPDATE
+}
+
+enum AnnouncementStatus {
+  ARCHIVED
+  DRAFT
+  PUBLISHED
+}
+
+type AuthPayload {
+  accessToken: String!
+  refreshToken: String!
+  user: User!
+}
+
+type Book {
+  accessLevel: BookAccessLevel!
+  author: String
+  coverUrl: String
+  createdAt: DateTime!
+  currency: String
+  description: String
+  id: ID!
+  price: Float
+  publishedAt: DateTime
+  status: BookStatus!
+  title: String!
+  totalPages: Float
+}
+
+enum BookAccessLevel {
+  FREE
+  RESTRICTED
+}
+
+type BookProgress {
+  bookId: ID!
+  completedAt: DateTime
+  currentPage: Float!
+  lastReadAt: DateTime!
+  scrollY: Float
+}
+
+enum BookStatus {
+  COMING_SOON
+  DRAFT
+  PUBLISHED
+}
+
+type Bookmark {
+  color: String
+  createdAt: DateTime!
+  id: ID!
+  label: String
+  page: Float!
+}
+
+type Conversation {
+  createdAt: DateTime!
+  groupId: ID
+  id: ID!
+  type: ConversationType!
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+input CreateGroupInput {
+  category: GroupCategory
+  coverImageUrl: String
+  description: String
+  name: String!
+  visibility: GroupVisibility = PUBLIC
+}
+
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
+type Friendship {
+  addresseeId: String!
+  createdAt: DateTime!
+  id: ID!
+  requesterId: String!
+  status: FriendshipStatus!
+}
+
+enum FriendshipStatus {
+  ACCEPTED
+  BLOCKED
+  PENDING
+  REJECTED
+}
+
+type Group {
+  category: GroupCategory
+  coverImageUrl: String
+  createdAt: DateTime!
+  description: String
+  featured: Boolean!
+  id: ID!
+  memberCount: Int!
+  myRole: String
+  name: String!
+  slug: String!
+  visibility: GroupVisibility!
+}
+
+enum GroupCategory {
+  BIBLICAL_STUDIES
+  HISTORICAL
+  MODERN_FICTION
+  PHILOSOPHY
+  YOUNG_ADULT
+}
+
+type GroupMember {
+  id: ID!
+  joinedAt: DateTime!
+  role: GroupMemberRole!
+  status: GroupMemberStatus!
+  userId: ID!
+}
+
+enum GroupMemberRole {
+  MEMBER
+  OWNER
+}
+
+enum GroupMemberStatus {
+  ACTIVE
+  BANNED
+  PENDING
+}
+
+enum GroupVisibility {
+  PRIVATE
+  PUBLIC
+}
+
+type Highlight {
+  color: String
+  createdAt: DateTime!
+  id: ID!
+  note: String
+  page: Float!
+  text: String!
+}
+
+"""
+The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
+"""
+scalar JSON
+
+input LoginLocalInput {
+  email: String!
+  password: String!
+}
+
+type Message {
+  body: String!
+  conversationId: ID!
+  createdAt: DateTime!
+  editedAt: DateTime
+  id: ID!
+  senderId: ID!
+}
+
+type MessageConnection {
+  edges: [MessageEdge!]!
+  hasNextPage: Boolean!
+  totalCount: Float!
+}
+
+type MessageEdge {
+  cursor: String!
+  node: Message!
+}
+
+type Mutation {
+  acceptFriendRequest(friendshipId: String!): Friendship!
+  addBookmark(input: AddBookmarkInput!): Bookmark!
+  addHighlight(input: AddHighlightInput!): Highlight!
+  createAnnouncement(input: PublishAnnouncementInput!): Announcement!
+  createGroup(input: CreateGroupInput!): Group!
+  deleteAnnouncement(id: String!): Boolean!
+  deleteBook(id: String!): Boolean!
+  deleteGroup(groupId: String!): Group!
+  joinGroup(groupId: String!): GroupMember!
+  leaveGroup(groupId: String!): Boolean!
+  loginLocal(input: LoginLocalInput!): AuthPayload!
+  markAllNotificationsRead: Boolean!
+  markConversationRead(conversationId: String!): Boolean!
+  markNotificationRead(notificationId: String!): Boolean!
+  publishAnnouncement(id: String!): Announcement!
+  refreshToken(refreshToken: String!): AuthPayload!
+  registerLocal(input: RegisterLocalInput!): AuthPayload!
+  rejectFriendRequest(friendshipId: String!): Friendship!
+  removeBookmark(id: String!): Boolean!
+  removeFriend(friendshipId: String!): Boolean!
+  removeHighlight(id: String!): Boolean!
+  saveProgress(input: SaveProgressInput!): BookProgress!
+  sendFriendRequest(addresseeId: String!): Friendship!
+  sendMessage(input: SendMessageInput!): Message!
+  startDirectConversation(otherUserId: String!): Conversation!
+  unpublishAnnouncement(id: String!): Announcement!
+  updateAnnouncement(id: String!, input: UpdateAnnouncementInput!): Announcement!
+  updateBook(id: String!, input: UpdateBookInput!): Book!
+  updateGroup(groupId: String!, input: UpdateGroupInput!): Group!
+  updateProfile(input: UpdateProfileInput!): User!
+  uploadBook(input: UploadBookInput!): Book!
+  uploadPdf(bookId: String!, file: Upload!): Book!
+}
+
+type Notification {
+  createdAt: DateTime!
+  id: ID!
+  payload: JSON
+  readAt: DateTime
+  type: NotificationType!
+}
+
+enum NotificationType {
+  ANNOUNCEMENT
+  FRIEND_ACCEPTED
+  FRIEND_REQUEST
+  GROUP_INVITE
+  GROUP_UPDATE
+  SYSTEM
+}
+
+input PublishAnnouncementInput {
+  body: String!
+  category: AnnouncementCategory = GENERAL
+  expiresAt: String
+  publishAt: String
+  title: String!
+}
+
+type Query {
+  announcement(id: String!): Announcement
+  announcements: [Announcement!]!
+  book(id: String!): Book!
+  bookmarks(bookId: String!): [Bookmark!]!
+  books: [Book!]!
+  conversations: [Conversation!]!
+  discoverGroups(category: GroupCategory): [Group!]!
+  friendRequests: [Friendship!]!
+  friends: [Friendship!]!
+  group(id: String!): Group
+  groupMembers(groupId: String!): [GroupMember!]!
+  groups: [Group!]!
+  highlights(bookId: String!): [Highlight!]!
+  me: User!
+  messages(conversationId: String!, cursor: String, limit: Float! = 25): MessageConnection!
+  myGroups: [Group!]!
+  notifications(limit: Int! = 50): [Notification!]!
+  readProgress(bookId: String!): BookProgress
+  searchGroups(query: String!): [Group!]!
+  searchUsers(query: String!): [User!]!
+  unreadNotificationCount: Int!
+  users: [User!]!
+  verseOfDay: VerseOfDay!
+}
+
+input RegisterLocalInput {
+  displayName: String!
+  email: String!
+  password: String!
+}
+
+input SaveProgressInput {
+  bookId: ID!
+  currentPage: Float!
+  scrollY: Float
+}
+
+input SendMessageInput {
+  body: String!
+  conversationId: ID!
+}
+
+type Subscription {
+  messageAdded(conversationId: String!): Message!
+}
+
+input UpdateAnnouncementInput {
+  body: String
+  category: AnnouncementCategory
+  expiresAt: String
+  publishAt: String
+  title: String
+}
+
+input UpdateBookInput {
+  accessLevel: BookAccessLevel
+  author: String
+  description: String
+  price: Float
+  status: BookStatus
+  title: String
+}
+
+input UpdateGroupInput {
+  category: GroupCategory
+  coverImageUrl: String
+  description: String
+  featured: Boolean
+  name: String
+  visibility: GroupVisibility
+}
+
+input UpdateProfileInput {
+  avatarUrl: String
+  bio: String
+  displayName: String
+}
+
+"""The `Upload` scalar type represents a file upload."""
+scalar Upload
+
+input UploadBookInput {
+  accessLevel: BookAccessLevel!
+  author: String
+  currency: String
+  description: String
+  price: Float
+  title: String!
+}
+
+type User {
+  avatarUrl: String
+  bio: String
+  createdAt: DateTime!
+  displayName: String!
+  email: String!
+  id: ID!
+  lastLoginAt: DateTime
+  role: UserRole!
+  status: String!
+}
+
+enum UserRole {
+  ADMIN
+  MEMBER
+  MODERATOR
+}
+
+type VerseOfDay {
+  date: String!
+  reference: String!
+  text: String!
+  version: String!
+}

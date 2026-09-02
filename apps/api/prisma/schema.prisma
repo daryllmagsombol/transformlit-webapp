@@ -4,345 +4,430 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
-enum UserStatus {
-  active
-  suspended
-  invited
-}
+// ── User & Auth ────────────────────────────────────────────────────────────
 
 enum UserRole {
-  tenant_admin
-  member
-}
-
-enum GroupVisibility {
-  public
-  private
-}
-
-enum GroupMemberRole {
-  owner
-  admin
-  member
-}
-
-enum GroupMemberStatus {
-  active
-  pending
-  banned
-}
-
-enum FriendshipStatus {
-  pending
-  accepted
-  rejected
-  blocked
-}
-
-enum ConversationType {
-  direct
-  group
-}
-
-enum AnnouncementStatus {
-  draft
-  published
-  archived
-}
-
-enum DocumentAccessType {
-  read
-  download
-}
-
-model Tenant {
-  id           String   @id @default(uuid()) @db.Uuid
-  name         String
-  slug         String   @unique
-  status       String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  deletedAt    DateTime?
-  createdBy    String?  @db.Uuid
-  updatedBy    String?  @db.Uuid
-  deletedBy    String?  @db.Uuid
-
-  users               User[]
-  profiles            Profile[]
-  friendships         Friendship[]
-  groups              Group[]
-  groupMembers        GroupMember[]
-  conversations       Conversation[]
-  conversationMembers ConversationMember[]
-  messages            Message[]
-  documents           Document[]
-  documentAccesses    DocumentAccess[]
-  announcements       Announcement[]
-
-  @@index([slug])
+  ADMIN
+  MODERATOR
+  MEMBER
 }
 
 model User {
-  id              String     @id @default(uuid()) @db.Uuid
-  tenantId        String     @db.Uuid
-  email           String
-  emailNormalized String
-  passwordHash    String
-  status          UserStatus
-  role            UserRole
-  lastLoginAt     DateTime?
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
-  deletedAt       DateTime?
-  createdBy       String?    @db.Uuid
-  updatedBy       String?    @db.Uuid
-  deletedBy       String?    @db.Uuid
+  id             String   @id @default(uuid())
+  email          String   @unique
+  emailNormalized String  @unique
+  passwordHash   String?
+  displayName    String
+  avatarUrl      String?
+  bio            String?
+  role           UserRole @default(MEMBER)
+  status         String   @default("active")
+  lastLoginAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
 
-  tenant                 Tenant               @relation(fields: [tenantId], references: [id])
-  profile                Profile?
-  friendshipsSent        Friendship[]         @relation("FriendRequester")
-  friendshipsReceived    Friendship[]         @relation("FriendAddressee")
-  groupMembers           GroupMember[]
-  conversationMembers    ConversationMember[]
-  messages               Message[]
-  documentAccesses       DocumentAccess[]
-  announcementsPublished Announcement[]       @relation("AnnouncementPublisher")
+  identities         Identity[]
+  refreshTokens      RefreshToken[]
+  friendshipsAsRequester Friendship[]  @relation("Requester")
+  friendshipsAsAddressee Friendship[]  @relation("Addressee")
+  groupMemberships   GroupMember[]
+  sentMessages       Message[]
+  conversationMembers ConversationMember[]
+  bookAccess         BookAccess[]
+  bookProgress       BookProgress[]
+  bookmarks          Bookmark[]
+  highlights         Highlight[]
+  notifications      Notification[]     @relation("NotificationUser")
+  notificationsCreated Notification[]   @relation("NotificationCreatedBy")
+  announcementsPublished Announcement[] @relation("AnnouncementPublishedBy")
+  announcementsCreated Announcement[]   @relation("AnnouncementCreatedBy")
+  groupsCreated      Group[]            @relation("GroupCreatedBy")
+  booksCreated       Book[]             @relation("BookCreatedBy")
+  auditLogs         AuditLog[]
 
-  @@unique([tenantId, emailNormalized])
-  @@index([tenantId, emailNormalized])
-  @@index([tenantId, status])
+  @@index([emailNormalized])
+  @@index([role, status])
+  @@map("users")
 }
 
-model Profile {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @db.Uuid
-  userId      String   @unique @db.Uuid
-  displayName String
-  avatarUrl   String?
-  bio         String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime?
-  createdBy   String?  @db.Uuid
-  updatedBy   String?  @db.Uuid
-  deletedBy   String?  @db.Uuid
+model Identity {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider   String
+  providerId String
+  email      String
+  createdAt  DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id])
-  user   User   @relation(fields: [userId], references: [id])
-
-  @@index([tenantId])
+  @@unique([provider, providerId])
+  @@index([userId])
+  @@map("identities")
 }
 
-model Friendship {
-  id          String           @id @default(uuid()) @db.Uuid
-  tenantId    String           @db.Uuid
-  requesterId String           @db.Uuid
-  addresseeId String           @db.Uuid
-  status      FriendshipStatus
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  deletedAt   DateTime?
-  createdBy   String?          @db.Uuid
-  updatedBy   String?          @db.Uuid
-  deletedBy   String?          @db.Uuid
+model RefreshToken {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  familyId    String
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
 
-  tenant     Tenant @relation(fields: [tenantId], references: [id])
-  requester  User   @relation("FriendRequester", fields: [requesterId], references: [id])
-  addressee  User   @relation("FriendAddressee", fields: [addresseeId], references: [id])
+  @@index([userId, familyId])
+  @@map("refresh_tokens")
+}
 
-  @@unique([tenantId, requesterId, addresseeId])
-  @@index([tenantId, requesterId])
-  @@index([tenantId, addresseeId])
-  @@index([tenantId, status])
+// ── Groups ─────────────────────────────────────────────────────────────────
+
+enum GroupCategory {
+  BIBLICAL_STUDIES
+  MODERN_FICTION
+  HISTORICAL
+  PHILOSOPHY
+  YOUNG_ADULT
+}
+
+enum GroupVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum GroupMemberRole {
+  OWNER
+  MEMBER
+}
+
+enum GroupMemberStatus {
+  ACTIVE
+  PENDING
+  BANNED
 }
 
 model Group {
-  id          String          @id @default(uuid()) @db.Uuid
-  tenantId    String          @db.Uuid
-  name        String
-  description String?
-  visibility  GroupVisibility
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  deletedAt   DateTime?
-  createdBy   String?         @db.Uuid
-  updatedBy   String?         @db.Uuid
-  deletedBy   String?         @db.Uuid
+  id            String          @id @default(uuid())
+  name          String
+  slug          String          @unique
+  description   String?
+  visibility    GroupVisibility @default(PUBLIC)
+  category      GroupCategory?
+  coverImageUrl String?
+  featured      Boolean         @default(false)
+  createdById   String?
+  createdBy     User?           @relation("GroupCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  deletedAt     DateTime?
 
-  tenant       Tenant         @relation(fields: [tenantId], references: [id])
-  members      GroupMember[]
+  members       GroupMember[]
   conversations Conversation[]
-  documents    DocumentAccess[]
 
-  @@index([tenantId, name])
-  @@index([tenantId, visibility])
+  @@index([visibility])
+  @@index([category])
+  @@index([featured])
+  @@index([name])
+  @@map("groups")
 }
 
 model GroupMember {
-  id        String            @id @default(uuid()) @db.Uuid
-  tenantId  String            @db.Uuid
-  groupId   String            @db.Uuid
-  userId    String            @db.Uuid
-  role      GroupMemberRole
-  status    GroupMemberStatus
+  id        String            @id @default(uuid())
+  groupId   String
+  group     Group             @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      GroupMemberRole   @default(MEMBER)
+  status    GroupMemberStatus @default(PENDING)
   joinedAt  DateTime          @default(now())
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
-  deletedAt DateTime?
-  createdBy String?           @db.Uuid
-  updatedBy String?           @db.Uuid
-  deletedBy String?           @db.Uuid
-
-  tenant Tenant @relation(fields: [tenantId], references: [id])
-  group  Group  @relation(fields: [groupId], references: [id])
-  user   User   @relation(fields: [userId], references: [id])
 
   @@unique([groupId, userId])
-  @@index([tenantId, userId])
-  @@index([tenantId, groupId])
-  @@index([tenantId, status])
+  @@index([userId])
+  @@index([groupId, status])
+  @@map("group_members")
+}
+
+// ── Friends ─────────────────────────────────────────────────────────────────
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  BLOCKED
+}
+
+model Friendship {
+  id          String           @id @default(uuid())
+  requesterId String
+  requester   User             @relation("Requester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addresseeId String
+  addressee   User             @relation("Addressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([requesterId, addresseeId])
+  @@index([requesterId, status])
+  @@index([addresseeId, status])
+  @@map("friendships")
+}
+
+// ── Chat ────────────────────────────────────────────────────────────────────
+
+enum ConversationType {
+  DIRECT
+  GROUP
 }
 
 model Conversation {
-  id        String           @id @default(uuid()) @db.Uuid
-  tenantId  String           @db.Uuid
+  id        String           @id @default(uuid())
   type      ConversationType
-  groupId   String?          @db.Uuid
+  groupId   String?
+  group     Group?           @relation(fields: [groupId], references: [id])
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
   deletedAt DateTime?
-  createdBy String?          @db.Uuid
-  updatedBy String?          @db.Uuid
-  deletedBy String?          @db.Uuid
 
-  tenant    Tenant @relation(fields: [tenantId], references: [id])
-  group     Group? @relation(fields: [groupId], references: [id])
-  members   ConversationMember[]
-  messages  Message[]
+  members  ConversationMember[]
+  messages Message[]
 
-  @@index([tenantId, type])
-  @@index([tenantId, groupId])
+  @@index([type])
+  @@map("conversations")
 }
 
 model ConversationMember {
-  id                String    @id @default(uuid()) @db.Uuid
-  tenantId          String    @db.Uuid
-  conversationId    String    @db.Uuid
-  userId            String    @db.Uuid
-  lastReadMessageId String?   @db.Uuid
-  lastReadAt        DateTime?
-  joinedAt          DateTime  @default(now())
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  deletedAt         DateTime?
-  createdBy         String?   @db.Uuid
-  updatedBy         String?   @db.Uuid
-  deletedBy         String?   @db.Uuid
-
-  tenant          Tenant   @relation(fields: [tenantId], references: [id])
-  conversation    Conversation @relation(fields: [conversationId], references: [id])
-  user            User     @relation(fields: [userId], references: [id])
-  lastReadMessage Message? @relation("LastReadMessage", fields: [lastReadMessageId], references: [id])
+  id             String   @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastReadAt     DateTime?
+  joinedAt       DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@unique([conversationId, userId])
-  @@index([tenantId, userId])
-  @@index([tenantId, conversationId])
+  @@index([userId])
+  @@map("conversation_members")
 }
 
 model Message {
-  id             String   @id @default(uuid()) @db.Uuid
-  tenantId       String   @db.Uuid
-  conversationId String   @db.Uuid
-  senderId       String   @db.Uuid
+  id             String   @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
   body           String
+  editedAt       DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  editedAt       DateTime?
   deletedAt      DateTime?
-  createdBy      String?  @db.Uuid
-  updatedBy      String?  @db.Uuid
-  deletedBy      String?  @db.Uuid
 
-  tenant          Tenant                 @relation(fields: [tenantId], references: [id])
-  conversation    Conversation           @relation(fields: [conversationId], references: [id])
-  sender          User                   @relation(fields: [senderId], references: [id])
-  lastReadBy      ConversationMember[]   @relation("LastReadMessage")
-
-  @@index([tenantId, conversationId, createdAt(sort: Desc)])
-  @@index([tenantId, senderId])
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([senderId])
+  @@map("messages")
 }
 
-model Document {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @db.Uuid
-  title       String
-  description String?
-  blobPath    String
-  mimeType    String
-  fileSize    BigInt
-  accessLevel String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime?
-  createdBy   String?  @db.Uuid
-  updatedBy   String?  @db.Uuid
-  deletedBy   String?  @db.Uuid
+// ── Books ───────────────────────────────────────────────────────────────────
 
-  tenant    Tenant           @relation(fields: [tenantId], references: [id])
-  accesses  DocumentAccess[]
-
-  @@index([tenantId, title])
+enum BookAccessLevel {
+  FREE
+  RESTRICTED
 }
 
-model DocumentAccess {
-  id         String            @id @default(uuid()) @db.Uuid
-  tenantId   String            @db.Uuid
-  documentId String            @db.Uuid
-  userId     String?           @db.Uuid
-  groupId    String?           @db.Uuid
-  accessType DocumentAccessType
-  createdAt  DateTime          @default(now())
-  updatedAt  DateTime          @updatedAt
-  deletedAt  DateTime?
-  createdBy  String?           @db.Uuid
-  updatedBy  String?           @db.Uuid
-  deletedBy  String?           @db.Uuid
+enum BookStatus {
+  DRAFT
+  PUBLISHED
+  COMING_SOON
+}
 
-  tenant   Tenant   @relation(fields: [tenantId], references: [id])
-  document Document @relation(fields: [documentId], references: [id])
-  user     User?    @relation(fields: [userId], references: [id])
-  group    Group?   @relation(fields: [groupId], references: [id])
+model Book {
+  id            String          @id @default(uuid())
+  title         String
+  author        String?
+  description   String?
+  blobPath      String?
+  coverUrl      String?
+  price         Decimal?        @db.Decimal(10, 2)
+  currency      String?         @default("USD")
+  accessLevel   BookAccessLevel @default(FREE)
+  status        BookStatus      @default(DRAFT)
+  totalPages    Int?
+  createdById   String?
+  createdBy     User?           @relation("BookCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  publishedAt   DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  deletedAt     DateTime?
 
-  @@unique([documentId, userId])
-  @@unique([documentId, groupId])
-  @@index([tenantId, documentId])
-  @@index([tenantId, userId])
-  @@index([tenantId, groupId])
+  access     BookAccess[]
+  progress   BookProgress[]
+  bookmarks  Bookmark[]
+  highlights Highlight[]
+
+  @@index([status])
+  @@index([title])
+  @@map("books")
+}
+
+model BookAccess {
+  id        String   @id @default(uuid())
+  bookId    String
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String?
+  grantedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([bookId, userId])
+  @@index([userId])
+  @@map("book_access")
+}
+
+model BookProgress {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookId      String
+  book        Book      @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  currentPage Int       @default(1)
+  scrollY     Float?
+  completedAt DateTime?
+  lastReadAt  DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([userId, bookId])
+  @@index([bookId])
+  @@map("book_progress")
+}
+
+model Bookmark {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookId    String
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  page      Int
+  label     String?
+  color     String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, bookId])
+  @@map("bookmarks")
+}
+
+model Highlight {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookId    String
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  page      Int
+  text      String
+  note      String?
+  color     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, bookId])
+  @@map("highlights")
+}
+
+// ── Feed ────────────────────────────────────────────────────────────────────
+
+enum AnnouncementStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AnnouncementCategory {
+  EVENT
+  UPDATE
+  GENERAL
 }
 
 model Announcement {
-  id          String             @id @default(uuid()) @db.Uuid
-  tenantId    String             @db.Uuid
-  title       String
-  body        String
-  status      AnnouncementStatus
-  publishAt   DateTime?
-  expiresAt   DateTime?
-  publishedAt DateTime?
-  publishedById String?          @db.Uuid
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  deletedAt   DateTime?
-  createdBy   String?            @db.Uuid
-  updatedBy   String?            @db.Uuid
-  deletedBy   String?            @db.Uuid
+  id            String               @id @default(uuid())
+  title         String
+  body          String
+  status        AnnouncementStatus   @default(DRAFT)
+  category      AnnouncementCategory @default(GENERAL)
+  publishAt     DateTime?
+  expiresAt     DateTime?
+  publishedAt   DateTime?
+  publishedById String?
+  publishedBy   User?                @relation("AnnouncementPublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
+  createdById   String?
+  createdBy     User?                @relation("AnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  deletedAt     DateTime?
 
-  tenant      Tenant  @relation(fields: [tenantId], references: [id])
-  publishedBy User?   @relation("AnnouncementPublisher", fields: [publishedById], references: [id])
+  @@index([status, publishAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("announcements")
+}
 
-  @@index([tenantId, status, publishAt(sort: Desc)])
-  @@index([tenantId, expiresAt])
+model VerseOfTheDay {
+  id        String   @id @default(uuid())
+  date      DateTime @unique
+  text      String
+  reference String
+  version   String   @default("KJV")
+  fetchedAt DateTime @default(now())
+
+  @@index([date(sort: Desc)])
+  @@map("verse_of_day")
+}
+
+// ── Notifications ──────────────────────────────────────────────────────────
+
+enum NotificationType {
+  FRIEND_REQUEST
+  FRIEND_ACCEPTED
+  GROUP_INVITE
+  GROUP_UPDATE
+  ANNOUNCEMENT
+  SYSTEM
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  userId      String
+  user        User             @relation("NotificationUser", fields: [userId], references: [id], onDelete: Cascade)
+  type        NotificationType
+  payload     Json?
+  readAt      DateTime?
+  createdById String?
+  createdBy   User?            @relation("NotificationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime         @default(now())
+
+  @@index([userId, readAt, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+// ── Audit ───────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action     String
+  targetType String?
+  targetId   String?
+  payload    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
 }

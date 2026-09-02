@@ -1,7 +1,48 @@
+# Dependencies
 node_modules
+
+# Build outputs
 .next
 dist
 .turbo
+build
+
+# Environment
 .env
 .env.local
+.env.*.local
+
+# IDE
 .DS_Store
+*.code-workspace
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
+
+# Terraform
+infra/**/.terraform/
+infra/**/*.tfstate
+infra/**/*.tfstate.*
+infra/**/terraform.tfvars
+!infra/**/terraform.tfvars.example
+infra/backend.tfvars
+
+# GraphQL codegen
+__generated__/
+
+# Prisma
+apps/api/prisma/migrations/*/generated/
+
+# Testing
+coverage/
+
+# Docker
+*.log
+
+# OS
+Thumbs.db
+*.tsbuildinfo
+
+# Local Uploads
+uploads/

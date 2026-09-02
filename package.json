@@ -1,7 +1,7 @@
 {
   "name": "transformlit",
   "private": true,
-  "packageManager": "npm@11.6.2",
+  "packageManager": "pnpm@11.24.0+sha512.bd27e345e976dcb0be0b7a1228217b049a817e21b1f355c90dbe7dc46671895a8bc1e6d06c24554505ea93ea0b45f489a27ec1bfbc8de6a9659fca0f16fa0000",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -10,14 +10,17 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
-    "test": "turbo run test"
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration",
+    "test:e2e": "turbo run test:e2e",
+    "test:coverage": "turbo run test:coverage",
+    "clean": "turbo run clean",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "graphql:codegen": "turbo run graphql:codegen"
   },
   "devDependencies": {
-    "prisma": "^7.8.0",
-    "turbo": "^2.1.0",
-    "typescript": "^5.6.2"
-  },
-  "dependencies": {
-    "@prisma/client": "^7.8.0"
+    "prettier": "^3.9.4",
+    "turbo": "^2.10.2",
+    "typescript": "^6.0.3"
   }
 }

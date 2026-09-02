@@ -3,9 +3,10 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**"]
+      "outputs": ["dist/**", ".next/**", "build/**"]
     },
     "dev": {
+      "dependsOn": ["^build"],
       "cache": false,
       "persistent": true
     },
@@ -14,6 +15,30 @@
     },
     "test": {
       "dependsOn": ["^test"]
+    },
+    "test:integration": {
+      "dependsOn": ["build"]
+    },
+    "test:e2e": {
+      "dependsOn": ["build"],
+      "cache": false
+    },
+    "test:coverage": {
+      "dependsOn": ["^test:coverage"]
+    },
+    "clean": {
+      "cache": false
+    },
+    "graphql:codegen": {
+      "cache": false,
+      "outputs": ["__generated__/**"]
+    },
+    "db:generate": {
+      "cache": false,
+      "outputs": ["node_modules/.prisma/**"]
+    },
+    "db:migrate": {
+      "cache": false
     }
   }
 }

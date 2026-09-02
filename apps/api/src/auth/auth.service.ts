@@ -1,15 +1,10 @@
-import {
-  BadRequestException,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { PrismaService } from '../prisma/prisma.service';
-import { RegisterDto } from './dto/register.dto';
-import { LoginDto } from './dto/login.dto';
-import type { AuthUser } from './auth.types';
-import { UserRole, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service.js';
+import { RegisterLocalInput, LoginLocalInput } from './models/auth.model.js';
+import { randomBytes, createHash } from 'node:crypto';
 
 @Injectable()
 export class AuthService {
@@ -18,82 +13,35 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async register(dto: RegisterDto) {
-    const emailNormalized = dto.email.trim().toLowerCase();
-    const tenantSlug = await this.createUniqueTenantSlug(dto.tenantName);
-
-    const tenant = await this.prisma.tenant.create({
-      data: {
-        name: dto.tenantName.trim(),
-        slug: tenantSlug,
-        status: 'active',
-      },
-    });
-
-    const existingUser = await this.prisma.user.findUnique({
-      where: {
-        tenantId_emailNormalized: {
-          tenantId: tenant.id,
-          emailNormalized,
-        },
-      },
-    });
-
-    if (existingUser) {
-      throw new BadRequestException('Email already registered');
-    }
-
-    const passwordHash = await argon2.hash(dto.password);
+  async registerLocal(input: RegisterLocalInput) {
+    const passwordHash = await argon2.hash(input.password);
+    const emailNormalized = input.email.toLowerCase().trim();
 
     const user = await this.prisma.user.create({
       data: {
-        tenantId: tenant.id,
-        email: dto.email.trim(),
+        email: input.email,
         emailNormalized,
         passwordHash,
-        status: UserStatus.active,
-        role: UserRole.tenant_admin,
+        displayName: input.displayName,
       },
     });
 
-    await this.prisma.profile.create({
-      data: {
-        tenantId: tenant.id,
-        userId: user.id,
-        displayName: dto.displayName?.trim() || 'Tenant Admin',
-      },
-    });
-
-    return this.buildAuthResponse(user, tenant);
+    return this.generateTokens(user.id);
   }
 
-  async login(dto: LoginDto) {
-    const emailNormalized = dto.email.trim().toLowerCase();
-    const tenant = await this.prisma.tenant.findUnique({
-      where: { slug: dto.tenantSlug.trim().toLowerCase() },
-    });
-
-    if (!tenant) {
-      throw new UnauthorizedException('Invalid tenant or credentials');
-    }
-
+  async loginLocal(input: LoginLocalInput) {
+    const emailNormalized = input.email.toLowerCase().trim();
     const user = await this.prisma.user.findUnique({
-      where: {
-        tenantId_emailNormalized: {
-          tenantId: tenant.id,
-          emailNormalized,
-        },
-      },
+      where: { emailNormalized },
     });
 
-    if (!user) {
-      throw new UnauthorizedException('Invalid tenant or credentials');
+    if (!user || !user.passwordHash) {
+      throw new UnauthorizedException('Invalid credentials');
     }
 
-    const passwordValid = await argon2.verify(user.passwordHash, dto.password);
-
-    if (!passwordValid) {
-      throw new UnauthorizedException('Invalid tenant or credentials');
+    const valid = await argon2.verify(user.passwordHash, input.password);
+    if (!valid) {
+      throw new UnauthorizedException('Invalid credentials');
     }
 
     await this.prisma.user.update({
@@ -101,72 +49,139 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     });
 
-    return this.buildAuthResponse(user, tenant);
+    return this.generateTokens(user.id);
   }
 
-  async me(user: AuthUser) {
-    const record = await this.prisma.user.findUnique({
-      where: { id: user.id },
-      select: {
-        id: true,
-        tenantId: true,
-        email: true,
-        role: true,
-        status: true,
+  async refreshTokens(refreshToken: string) {
+    const tokenHash = this.hashToken(refreshToken);
+    const stored = await this.prisma.refreshToken.findUnique({
+      where: { tokenHash },
+    });
+
+    if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+      // Possible token reuse — revoke family
+      if (stored) {
+        await this.prisma.refreshToken.updateMany({
+          where: { familyId: stored.familyId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    // Rotate: revoke old + issue new in a single transaction (same family)
+    const { accessToken, refreshToken: newRefresh, user } =
+      await this.prisma.$transaction(async (tx) => {
+        await tx.refreshToken.update({
+          where: { id: stored.id },
+          data: { revokedAt: new Date() },
+        });
+        return this.generateTokens(stored.userId, stored.familyId, tx);
+      });
+
+    return { accessToken, refreshToken: newRefresh, user };
+  }
+
+  async findOrCreateOAuthUser(profile: {
+    provider: string;
+    providerId: string;
+    email: string;
+    displayName: string;
+  }) {
+    let identity = await this.prisma.identity.findUnique({
+      where: {
+        provider_providerId: {
+          provider: profile.provider,
+          providerId: profile.providerId,
+        },
+      },
+      include: { user: true },
+    });
+
+    if (identity) {
+      await this.prisma.user.update({
+        where: { id: identity.userId },
+        data: { lastLoginAt: new Date() },
+      });
+      return this.generateTokens(identity.userId);
+    }
+
+    const emailNormalized = profile.email.toLowerCase().trim();
+
+    // Cross-provider account linking: a user with the same email may already
+    // exist (e.g. signed up via Google/Facebook/Microsoft). Bind the new
+    // provider identity to that account instead of creating a duplicate user.
+    const existingUser = await this.prisma.user.findUnique({
+      where: { emailNormalized },
+    });
+    if (existingUser) {
+      await this.prisma.identity.create({
+        data: {
+          userId: existingUser.id,
+          provider: profile.provider,
+          providerId: profile.providerId,
+          email: profile.email,
+        },
+      });
+      await this.prisma.user.update({
+        where: { id: existingUser.id },
+        data: { lastLoginAt: new Date() },
+      });
+      return this.generateTokens(existingUser.id);
+    }
+
+    // Create user + identity
+    const user = await this.prisma.user.create({
+      data: {
+        email: profile.email,
+        emailNormalized,
+        displayName: profile.displayName,
       },
     });
 
-    if (!record) {
-      throw new UnauthorizedException('User not found');
-    }
+    await this.prisma.identity.create({
+      data: {
+        userId: user.id,
+        provider: profile.provider,
+        providerId: profile.providerId,
+        email: profile.email,
+      },
+    });
 
-    return record;
+    return this.generateTokens(user.id);
   }
 
-  private async createUniqueTenantSlug(tenantName: string) {
-    const base = this.slugify(tenantName);
-    let slug = base;
-    let suffix = 1;
-
-    while (await this.prisma.tenant.findUnique({ where: { slug } })) {
-      slug = `${base}-${suffix}`;
-      suffix += 1;
-    }
-
-    return slug;
+  async validateUser(userId: string) {
+    return this.prisma.user.findUnique({
+      where: { id: userId, deletedAt: null },
+    });
   }
 
-  private slugify(value: string) {
-    return value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)+/g, '');
-  }
-
-  private buildAuthResponse(
-    user: { id: string; email: string; role: string },
-    tenant: { id: string; name: string; slug: string },
+  private async generateTokens(
+    userId: string,
+    familyId?: string,
+    tx?: Prisma.TransactionClient,
   ) {
-    const token = this.jwtService.sign({
-      sub: user.id,
-      tenantId: tenant.id,
-      role: user.role,
-      email: user.email,
+    const db = tx ?? this.prisma;
+    const accessToken = this.jwtService.sign({ sub: userId });
+    const rawRefresh = randomBytes(40).toString('hex');
+    const tokenHash = this.hashToken(rawRefresh);
+    const famId = familyId ?? randomBytes(16).toString('hex');
+
+    await db.refreshToken.create({
+      data: {
+        userId,
+        tokenHash,
+        familyId: famId,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+      },
     });
 
-    return {
-      token,
-      tenant: {
-        id: tenant.id,
-        name: tenant.name,
-        slug: tenant.slug,
-      },
-      user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-      },
-    };
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    return { accessToken, refreshToken: rawRefresh, user };
+  }
+
+  private hashToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
   }
 }

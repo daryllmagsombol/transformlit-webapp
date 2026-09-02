@@ -1,0 +1,17 @@
+{
+  "name": "@transformlit/graphql",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "graphql:codegen": "graphql-codegen --config codegen.ts",
+    "clean": "rm -rf __generated__"
+  },
+  "devDependencies": {
+    "@graphql-codegen/cli": "^7.2.0",
+    "@graphql-codegen/typescript": "^6.1.0",
+    "@graphql-codegen/typescript-operations": "^6.1.6",
+    "@graphql-codegen/typescript-react-apollo": "^4.4.2",
+    "graphql": "^16.14.2",
+    "typescript": "^6.0.3"
+  }
+}

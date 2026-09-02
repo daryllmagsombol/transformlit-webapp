@@ -1,130 +1,158 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import type { AuthUser } from '../auth/auth.types';
-import { GroupMemberRole, GroupMemberStatus } from '@prisma/client';
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service.js';
+import { CreateGroupInput, UpdateGroupInput } from './models/group.model.js';
+import { GroupCategory } from '@transformlit/shared';
+import { Prisma } from '@prisma/client';
+
+/** Reusable include to count active members and fetch the current user's membership */
+function groupInclude(userId?: string) {
+  return {
+    members: userId ? { where: { userId } } : false,
+    _count: {
+      select: { members: { where: { status: 'ACTIVE' } } },
+    },
+  } satisfies Prisma.GroupInclude;
+}
+
+/** Map raw Prisma result → Group shape (memberCount from _count, myRole from members) */
+function mapGroup(g: any, userId?: string) {
+  return {
+    ...g,
+    memberCount: g._count?.members ?? 0,
+    myRole: g.members?.[0]?.role ?? null,
+  };
+}
 
 @Injectable()
 export class GroupsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(user: AuthUser) {
-    return this.prisma.group.findMany({
-      where: { tenantId: user.tenantId, deletedAt: null },
+  // ── Queries ────────────────────────────────────────────────────────────────
+
+  async listGroups(userId?: string) {
+    const groups = await this.prisma.group.findMany({
+      where: { deletedAt: null },
+      include: groupInclude(userId),
       orderBy: { createdAt: 'desc' },
     });
+    return groups.map((g) => mapGroup(g, userId));
   }
 
-  async getById(user: AuthUser, id: string) {
-    const group = await this.prisma.group.findFirst({
-      where: { id, tenantId: user.tenantId, deletedAt: null },
-    });
-
-    if (!group) throw new NotFoundException('Group not found');
-    return group;
-  }
-
-  async create(
-    user: AuthUser,
-    dto: { name: string; description?: string; visibility?: any },
-  ) {
-    return this.prisma.group.create({
-      data: {
-        tenantId: user.tenantId,
-        name: dto.name,
-        description: dto.description ?? null,
-        visibility: dto.visibility ?? 'private',
-        createdBy: user.id,
-        updatedBy: user.id,
-      },
-    });
-  }
-
-  async update(
-    user: AuthUser,
-    id: string,
-    dto: { name?: string; description?: string; visibility?: any },
-  ) {
-    const group = await this.getById(user, id);
-
-    return this.prisma.group.update({
-      where: { id: group.id },
-      data: {
-        name: dto.name ?? group.name,
-        description: dto.description ?? group.description,
-        visibility: dto.visibility ?? group.visibility,
-        updatedBy: user.id,
-      },
-    });
-  }
-
-  async remove(user: AuthUser, id: string) {
-    const group = await this.getById(user, id);
-
-    return this.prisma.group.update({
-      where: { id: group.id },
-      data: { deletedAt: new Date(), deletedBy: user.id },
-    });
-  }
-
-  async addMember(
-    user: AuthUser,
-    groupId: string,
-    userId: string,
-    role?: GroupMemberRole,
-  ) {
-    const group = await this.getById(user, groupId);
-
-    // ensure target user exists in tenant
-    const target = await this.prisma.user.findFirst({
-      where: { id: userId, tenantId: user.tenantId },
-    });
-    if (!target) throw new NotFoundException('User not found');
-
-    return this.prisma.groupMember.upsert({
-      where: { groupId_userId: { groupId: group.id, userId: target.id } },
-      create: {
-        tenantId: user.tenantId,
-        groupId: group.id,
-        userId: target.id,
-        role: role ?? GroupMemberRole.member,
-        status: GroupMemberStatus.active,
-        createdBy: user.id,
-        updatedBy: user.id,
-      },
-      update: {
-        role: role ?? GroupMemberRole.member,
-        status: GroupMemberStatus.active,
-        updatedBy: user.id,
-      },
-    });
-  }
-
-  async removeMember(user: AuthUser, groupId: string, memberId: string) {
-    const group = await this.getById(user, groupId);
-
-    const member = await this.prisma.groupMember.findUnique({
-      where: { groupId_userId: { groupId: group.id, userId: memberId } },
-    });
-    if (!member) throw new NotFoundException('Member not found');
-
-    return this.prisma.groupMember.update({
-      where: { id: member.id },
-      data: { deletedAt: new Date(), deletedBy: user.id },
-    });
-  }
-
-  async search(user: AuthUser, q: string) {
-    return this.prisma.group.findMany({
+  /** Groups the current user is an ACTIVE member of */
+  async myGroups(userId: string) {
+    const groups = await this.prisma.group.findMany({
       where: {
-        tenantId: user.tenantId,
-        name: { contains: q, mode: 'insensitive' },
         deletedAt: null,
+        members: { some: { userId, status: 'ACTIVE' } },
       },
+      include: groupInclude(userId),
+      orderBy: { updatedAt: 'desc' },
+    });
+    return groups.map((g) => mapGroup(g, userId));
+  }
+
+  /** Discover groups: public groups the user is NOT a member of, optionally filtered by category */
+  async discoverGroups(userId: string, category?: GroupCategory) {
+    const where: Prisma.GroupWhereInput = {
+      deletedAt: null,
+      visibility: 'PUBLIC',
+      ...(category && { category }),
+      members: { none: { userId } },
+    };
+
+    const groups = await this.prisma.group.findMany({
+      where,
+      include: groupInclude(userId),
+      orderBy: [{ featured: 'desc' }, { createdAt: 'desc' }],
+    });
+    return groups.map((g) => mapGroup(g, userId));
+  }
+
+  /** Count of ACTIVE members in a group */
+  async countActiveMembers(groupId: string): Promise<number> {
+    return this.prisma.groupMember.count({
+      where: { groupId, status: 'ACTIVE' },
+    });
+  }
+
+  async findById(id: string, userId?: string) {
+    const g = await this.prisma.group.findUnique({
+      where: { id, deletedAt: null },
+      include: groupInclude(userId),
+    });
+    if (!g) return null;
+    return mapGroup(g, userId);
+  }
+
+  // ── Mutations ──────────────────────────────────────────────────────────────
+
+  async create(userId: string, input: CreateGroupInput) {
+    const slug = input.name
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '');
+    const group = await this.prisma.group.create({
+      data: {
+        name: input.name,
+        slug: `${slug}-${Date.now()}`,
+        description: input.description,
+        visibility: input.visibility ?? 'PUBLIC',
+        category: input.category,
+        coverImageUrl: input.coverImageUrl,
+        createdById: userId,
+      },
+    });
+    await this.prisma.groupMember.create({
+      data: { groupId: group.id, userId, role: 'OWNER', status: 'ACTIVE' },
+    });
+    return { ...group, memberCount: 1, myRole: 'OWNER' };
+  }
+
+  async join(groupId: string, userId: string) {
+    const group = await this.prisma.group.findUnique({ where: { id: groupId } });
+    if (!group) throw new Error('Group not found');
+    const member = await this.prisma.groupMember.upsert({
+      where: { groupId_userId: { groupId, userId } },
+      update: { status: group.visibility === 'PUBLIC' ? 'ACTIVE' : 'PENDING' },
+      create: {
+        groupId,
+        userId,
+        status: group.visibility === 'PUBLIC' ? 'ACTIVE' : 'PENDING',
+      },
+    });
+    return member;
+  }
+
+  async leave(groupId: string, userId: string) {
+    await this.prisma.groupMember.deleteMany({ where: { groupId, userId } });
+    return true;
+  }
+
+  async updateGroup(groupId: string, input: UpdateGroupInput) {
+    return this.prisma.group.update({ where: { id: groupId }, data: input });
+  }
+
+  async deleteGroup(groupId: string) {
+    return this.prisma.group.update({
+      where: { id: groupId },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  async searchGroups(query: string) {
+    const groups = await this.prisma.group.findMany({
+      where: { deletedAt: null, name: { contains: query, mode: 'insensitive' } },
       take: 20,
+      include: { _count: { select: { members: { where: { status: 'ACTIVE' } } } } },
+    });
+    return groups.map((g) => mapGroup(g));
+  }
+
+  async listMembers(groupId: string) {
+    return this.prisma.groupMember.findMany({
+      where: { groupId },
+      include: { user: true },
+      orderBy: { joinedAt: 'asc' },
     });
   }
 }

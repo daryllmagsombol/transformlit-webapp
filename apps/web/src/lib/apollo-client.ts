@@ -1,0 +1,284 @@
+import {
+  ApolloClient,
+  ApolloLink,
+  InMemoryCache,
+  createHttpLink,
+  split,
+} from '@apollo/client';
+import { setContext } from '@apollo/client/link/context';
+import { onError } from '@apollo/client/link/error';
+import { CombinedGraphQLErrors } from '@apollo/client/errors';
+import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
+import { getMainDefinition } from '@apollo/client/utilities';
+import { Observable } from 'rxjs';
+import { createClient } from 'graphql-ws';
+import type { GraphQLUser } from '@transformlit/shared';
+import { useAuthStore } from '../store';
+import {
+  clearAuth,
+  getAccessToken,
+  getRefreshToken,
+  isTokenExpiringSoon,
+  setAccessToken,
+  setRefreshToken,
+} from './auth';
+
+const httpUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/graphql';
+const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:3005/graphql';
+
+const isServer = typeof window === 'undefined';
+
+/* ------------------------------------------------------------------ */
+/*  Token refresh helpers                                             */
+/* ------------------------------------------------------------------ */
+
+let refreshPromise: Promise<boolean> | null = null;
+let lastRefreshAttempt = 0;
+const MIN_REFRESH_INTERVAL_MS = 30_000;
+
+interface RefreshPayload {
+  accessToken: string;
+  refreshToken: string;
+  user: GraphQLUser;
+}
+
+function redirectToLogin() {
+  clearAuth();
+  useAuthStore.getState().clearAuth();
+  if (!isServer) {
+    window.location.href = '/login';
+  }
+}
+
+async function callRefreshMutation(refreshToken: string): Promise<RefreshPayload> {
+  const response = await fetch(httpUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({
+      query: `
+        mutation RefreshToken($refreshToken: String!) {
+          refreshToken(refreshToken: $refreshToken) {
+            accessToken
+            refreshToken
+            user { id email displayName avatarUrl role status createdAt }
+          }
+        }
+      `,
+      variables: { refreshToken },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Refresh failed: ${response.status}`);
+  }
+
+  const result = (await response.json()) as {
+    data?: { refreshToken: RefreshPayload };
+    errors?: Array<{ message?: string }>;
+  };
+
+  if (result.errors?.length) {
+    throw new Error(result.errors[0].message ?? 'Refresh failed');
+  }
+
+  if (!result.data?.refreshToken) {
+    throw new Error('Refresh response missing tokens');
+  }
+
+  return result.data.refreshToken;
+}
+
+async function doRefreshTokens(): Promise<boolean> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    redirectToLogin();
+    return false;
+  }
+
+  lastRefreshAttempt = Date.now();
+  try {
+    const payload = await callRefreshMutation(refreshToken);
+    setAccessToken(payload.accessToken);
+    setRefreshToken(payload.refreshToken);
+    useAuthStore
+      .getState()
+      .setAuth(payload.user, payload.accessToken, payload.refreshToken);
+    return true;
+  } catch {
+    redirectToLogin();
+    return false;
+  }
+}
+
+export function refreshTokens(): Promise<boolean> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = doRefreshTokens().finally(() => {
+    refreshPromise = null;
+  });
+  return refreshPromise;
+}
+
+function isUnauthorizedError(error: unknown): boolean {
+  if (CombinedGraphQLErrors.is(error)) {
+    return error.errors.some((err) => {
+      const code = (err as { extensions?: { code?: string } }).extensions?.code;
+      return (
+        code === 'UNAUTHENTICATED' ||
+        err.message?.toLowerCase().includes('unauthorized') === true
+      );
+    });
+  }
+  if (
+    error &&
+    typeof error === 'object' &&
+    'statusCode' in error &&
+    (error as { statusCode?: number }).statusCode === 401
+  ) {
+    return true;
+  }
+  if (
+    error &&
+    typeof error === 'object' &&
+    'message' in error &&
+    String((error as { message?: unknown }).message).toLowerCase().includes('unauthorized')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Apollo links                                                      */
+/* ------------------------------------------------------------------ */
+
+const httpLink = createHttpLink({
+  uri: httpUrl,
+  credentials: 'include',
+});
+
+const authLink = setContext((_, { headers }) => {
+  const token = isServer ? null : getAccessToken();
+  return {
+    headers: {
+      ...headers,
+      authorization: token ? `Bearer ${token}` : '',
+    },
+  };
+});
+
+/**
+ * Proactively refreshes the access token shortly before expiry so that
+ * subsequent GraphQL requests rarely hit the error link.
+ */
+const proactiveRefreshLink = new ApolloLink((operation, forward) => {
+  const token = getAccessToken();
+  if (
+    token &&
+    isTokenExpiringSoon(token, 120) &&
+    Date.now() - lastRefreshAttempt > MIN_REFRESH_INTERVAL_MS
+  ) {
+    lastRefreshAttempt = Date.now();
+    return new Observable((subscriber) => {
+      refreshTokens()
+        .then((success) => {
+          if (!success) throw new Error('Session expired');
+          return forward(operation);
+        })
+        .then((observable) => {
+          observable.subscribe(subscriber);
+        })
+        .catch((err) => subscriber.error(err));
+    });
+  }
+  return forward(operation);
+});
+
+/**
+ * Intercepts 401/UNAUTHENTICATED responses, performs a rotating refresh,
+ * and retries the failed request with the new access token.
+ */
+const errorLink = onError(({ error, operation, forward }) => {
+  if (!isUnauthorizedError(error)) return;
+
+  // Login/registration hit unauthenticated endpoints: an "Invalid credentials"
+  // (UNAUTHENTICATED) response is a business error, NOT an expired session.
+  // Intercepting it here would try a refresh, find no token, and force a page
+  // reload — destroying the form and any error toast mid-login.
+  if (operation.operationName === 'LoginLocal' || operation.operationName === 'RegisterLocal') return;
+  // No session to refresh — let the original error propagate to the caller.
+  if (!getRefreshToken()) return;
+
+  const context = operation.getContext();
+  if (context.authRetry) return;
+  operation.setContext({ ...context, authRetry: true });
+
+  return new Observable((subscriber) => {
+    refreshTokens()
+      .then((success) => {
+        if (!success) throw new Error('Session expired');
+        const token = getAccessToken();
+        operation.setContext(({ headers = {} }) => ({
+          headers: {
+            ...headers,
+            authorization: token ? `Bearer ${token}` : '',
+          },
+        }));
+        return forward(operation);
+      })
+      .then((observable) => {
+        observable.subscribe(subscriber);
+      })
+      .catch((err) => subscriber.error(err));
+  });
+});
+
+const wsLink = !isServer
+  ? new GraphQLWsLink(
+      createClient({
+        url: wsUrl,
+        connectionParams: () => {
+          const token = getAccessToken();
+          return { authorization: token ? `Bearer ${token}` : '' };
+        },
+      }),
+    )
+  : null;
+
+const splitLink =
+  !isServer && wsLink
+    ? split(
+        ({ query }) => {
+          const definition = getMainDefinition(query);
+          return (
+            definition.kind === 'OperationDefinition' &&
+            definition.operation === 'subscription'
+          );
+        },
+        wsLink,
+        httpLink,
+      )
+    : httpLink;
+
+export const apolloClient = new ApolloClient({
+  link: ApolloLink.from([errorLink, proactiveRefreshLink, authLink, splitLink]),
+  ssrMode: isServer,
+  cache: new InMemoryCache({
+    typePolicies: {
+      Query: {
+        fields: {
+          messages: {
+            keyArgs: ['conversationId'],
+            merge(existing, incoming) {
+              return incoming;
+            },
+          },
+        },
+      },
+    },
+  }),
+  defaultOptions: {
+    watchQuery: { fetchPolicy: 'cache-and-network' },
+    query: { fetchPolicy: 'no-cache' },
+  },
+});
