@@ -3,7 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { GroupsResolver } from './groups.resolver';
 import { GroupsService } from './groups.service';
 import type { Group } from './models/group.model';
-import type { GroupCategory, GroupVisibility } from '@transformlit/shared';
+import { GroupMemberRole, type GroupCategory, type GroupVisibility } from '@transformlit/shared';
 
 const mockGroup = {
   id: 'group-1',
@@ -48,6 +48,11 @@ describe('GroupsResolver', () => {
       leave: jest.fn().mockResolvedValue(true),
       updateGroup: jest.fn().mockResolvedValue({ ...mockGroup, name: 'Updated' }),
       deleteGroup: jest.fn().mockResolvedValue({ ...mockGroup, deletedAt: new Date() }),
+      approveMember: jest.fn().mockResolvedValue({ ...mockMember, status: 'ACTIVE' }),
+      removeMember: jest.fn().mockResolvedValue(true),
+      banMember: jest.fn().mockResolvedValue({ ...mockMember, status: 'BANNED' }),
+      unbanMember: jest.fn().mockResolvedValue({ ...mockMember, status: 'ACTIVE' }),
+      updateMemberRole: jest.fn().mockResolvedValue({ ...mockMember, role: 'MODERATOR' }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -196,6 +201,61 @@ describe('GroupsResolver', () => {
       const result = await resolver.deleteGroup('group-1');
       expect(service.deleteGroup).toHaveBeenCalledWith('group-1');
       expect(result).toEqual(expect.objectContaining({ deletedAt: expect.any(Date) }));
+    });
+  });
+
+  // ── approveGroupMember mutation ─────────────────────────────────────────────
+
+  describe('approveGroupMember', () => {
+    it('should delegate to approveMember with groupId, user id, and target userId', async () => {
+      const result = await resolver.approveGroupMember(mockUser, 'group-1', 'user-2');
+      expect(service.approveMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2');
+      expect(result).toEqual(expect.objectContaining({ status: 'ACTIVE' }));
+    });
+  });
+
+  // ── removeGroupMember mutation ──────────────────────────────────────────────
+
+  describe('removeGroupMember', () => {
+    it('should delegate to removeMember with groupId, user id, and target userId', async () => {
+      const result = await resolver.removeGroupMember(mockUser, 'group-1', 'user-2');
+      expect(service.removeMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2');
+      expect(result).toBe(true);
+    });
+  });
+
+  // ── banGroupMember mutation ─────────────────────────────────────────────────
+
+  describe('banGroupMember', () => {
+    it('should delegate to banMember with groupId, user id, and target userId', async () => {
+      const result = await resolver.banGroupMember(mockUser, 'group-1', 'user-2');
+      expect(service.banMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2');
+      expect(result).toEqual(expect.objectContaining({ status: 'BANNED' }));
+    });
+  });
+
+  // ── unbanGroupMember mutation ───────────────────────────────────────────────
+
+  describe('unbanGroupMember', () => {
+    it('should delegate to unbanMember with groupId, user id, and target userId', async () => {
+      const result = await resolver.unbanGroupMember(mockUser, 'group-1', 'user-2');
+      expect(service.unbanMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2');
+      expect(result).toEqual(expect.objectContaining({ status: 'ACTIVE' }));
+    });
+  });
+
+  // ── updateGroupMemberRole mutation ──────────────────────────────────────────
+
+  describe('updateGroupMemberRole', () => {
+    it('should delegate to updateMemberRole with MODERATOR role', async () => {
+      const result = await resolver.updateGroupMemberRole(mockUser, 'group-1', 'user-2', GroupMemberRole.MODERATOR);
+      expect(service.updateMemberRole).toHaveBeenCalledWith('group-1', 'user-1', 'user-2', 'MODERATOR');
+      expect(result).toEqual(expect.objectContaining({ role: 'MODERATOR' }));
+    });
+
+    it('should delegate to updateMemberRole with MEMBER role', async () => {
+      await resolver.updateGroupMemberRole(mockUser, 'group-1', 'user-2', GroupMemberRole.MEMBER);
+      expect(service.updateMemberRole).toHaveBeenCalledWith('group-1', 'user-1', 'user-2', 'MEMBER');
     });
   });
 });

@@ -22,6 +22,7 @@ export interface GraphQLGroup {
   featured: boolean;
   memberCount: number;
   myRole?: string | null;
+  myStatus?: string | null;
   createdAt: string;
 }
 
@@ -31,6 +32,26 @@ export interface GraphQLGroupMember {
   role: string;
   status: string;
   joinedAt: string;
+}
+
+export interface GraphQLGroupPost {
+  id: string;
+  groupId: string;
+  body: string;
+  imageKey?: string | null;
+  createdAt: string;
+  likeCount: number;
+  commentCount: number;
+  likedByMe: boolean;
+  author?: GraphQLUser | null;
+}
+
+export interface GraphQLGroupPostComment {
+  id: string;
+  postId: string;
+  body: string;
+  createdAt: string;
+  author?: GraphQLUser | null;
 }
 
 // ── Friendship ─────────────────────────────────────────────────────────────

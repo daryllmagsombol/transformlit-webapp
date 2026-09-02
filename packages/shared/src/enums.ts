@@ -13,6 +13,7 @@ export enum GroupVisibility {
 
 export enum GroupMemberRole {
   OWNER = 'OWNER',
+  MODERATOR = 'MODERATOR',
   MEMBER = 'MEMBER',
 }
 

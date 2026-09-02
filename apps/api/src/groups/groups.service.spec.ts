@@ -60,6 +60,9 @@ describe('GroupsService', () => {
         upsert: jest.fn().mockResolvedValue(mockMember),
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
         findMany: jest.fn().mockResolvedValue([{ ...mockMember, user: mockUser }]),
+        findUnique: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockResolvedValue(mockMember),
+        delete: jest.fn().mockResolvedValue(mockMember),
       },
     };
 
@@ -83,6 +86,9 @@ describe('GroupsService', () => {
     prisma.groupMember.upsert.mockResolvedValue(mockMember);
     prisma.groupMember.deleteMany.mockResolvedValue({ count: 1 });
     prisma.groupMember.findMany.mockResolvedValue([{ ...mockMember, user: mockUser }]);
+    prisma.groupMember.findUnique.mockResolvedValue(null);
+    prisma.groupMember.update.mockResolvedValue(mockMember);
+    prisma.groupMember.delete.mockResolvedValue(mockMember);
   });
 
   // ── listGroups ──────────────────────────────────────────────────────────────
@@ -535,6 +541,52 @@ describe('GroupsService', () => {
       prisma.groupMember.findMany.mockResolvedValue([]);
       const result = await service.listMembers('group-1');
       expect(result).toEqual([]);
+    });
+  });
+
+  // ── member management ──────────────────────────────────────────────────────
+
+  describe('member management', () => {
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it('approveMember activates a pending member for an owner', async () => {
+      prisma.groupMember.findUnique
+        .mockResolvedValueOnce({ role: 'OWNER', status: 'ACTIVE' }) // actor
+        .mockResolvedValueOnce({ id: 'm2', status: 'PENDING' }); // target
+      prisma.groupMember.update.mockResolvedValue({ id: 'm2', status: 'ACTIVE' });
+      const result = await service.approveMember('g1', 'u1', 'u2');
+      expect(result.status).toBe('ACTIVE');
+      expect(prisma.groupMember.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: 'ACTIVE' } }),
+      );
+    });
+
+    it('blocks non-moderators from approving', async () => {
+      prisma.groupMember.findUnique.mockResolvedValueOnce({
+        role: 'MEMBER',
+        status: 'ACTIVE',
+      });
+      await expect(service.approveMember('g1', 'u1', 'u2')).rejects.toThrow();
+    });
+
+    it('prevents removing the owner', async () => {
+      prisma.groupMember.findUnique
+        .mockResolvedValueOnce({ role: 'OWNER', status: 'ACTIVE' })
+        .mockResolvedValueOnce({ role: 'OWNER', status: 'ACTIVE' });
+      await expect(service.removeMember('g1', 'u1', 'u2')).rejects.toThrow(
+        'Cannot remove the group owner',
+      );
+    });
+
+    it('promotes a member to MODERATOR only for the owner', async () => {
+      prisma.groupMember.findUnique
+        .mockResolvedValueOnce({ role: 'OWNER', status: 'ACTIVE' })
+        .mockResolvedValueOnce({ role: 'MEMBER', status: 'ACTIVE' });
+      prisma.groupMember.update.mockResolvedValue({ role: 'MODERATOR' });
+      const result = await service.updateMemberRole('g1', 'u1', 'u2', 'MODERATOR');
+      expect(result.role).toBe('MODERATOR');
     });
   });
 });
