@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { gql } from '@apollo/client';
 import { useParams, useRouter } from 'next/navigation';
 import { apolloClient } from '../../../../lib/apollo-client';
+import { startDirectConversation } from '../../../../lib/chat-queries';
 import { useRequireAuth } from '../../../../lib/hooks/use-require-auth';
 import { useAuthStore } from '../../../../store';
 import { useToast, UserAvatar, BookCard, LoadingSpinner } from '../../../../components/ui';
@@ -38,12 +39,6 @@ const FRIENDSHIP_STATUS_QUERY = gql`
 const ACCEPT_REQUEST = gql`
   mutation AcceptFriendRequest($friendshipId: String!) {
     acceptFriendRequest(friendshipId: $friendshipId) { id status }
-  }
-`;
-
-const START_DM = gql`
-  mutation StartDirectConversation($otherUserId: String!) {
-    startDirectConversation(otherUserId: $otherUserId) { id }
   }
 `;
 
@@ -142,13 +137,8 @@ export default function UserProfileClient() {
     if (!friendship || friendship.status !== 'ACCEPTED') return;
     setActionLoading(true);
     try {
-      const { data } = await apolloClient.mutate<{ startDirectConversation: { id: string } }>({
-        mutation: START_DM,
-        variables: { otherUserId: userId },
-      });
-      if (data?.startDirectConversation) {
-        router.push(`/chat/${data.startDirectConversation.id}`);
-      }
+      const conversationId = await startDirectConversation(userId);
+      router.push(`/chat/${conversationId}`);
     } catch {
       addToast('You can only message your friends.', 'error');
     } finally {

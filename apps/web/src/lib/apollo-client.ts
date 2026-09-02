@@ -149,6 +149,36 @@ function isUnauthorizedError(error: unknown): boolean {
 }
 
 /* ------------------------------------------------------------------ */
+/*  WS reconnect handlers                                             */
+/* ------------------------------------------------------------------ */
+
+const wsReconnectHandlers = new Set<() => void>();
+
+/**
+ * Registers a callback invoked when the GraphQL WS connection is
+ * re-established after a network drop (graphql-ws auto-retry). Kept in
+ * this module so chat consumers can subscribe without a circular import
+ * (chat-queries already imports apollo-client).
+ */
+export function registerWsReconnectHandler(handler: () => void): void {
+  wsReconnectHandlers.add(handler);
+}
+
+export function unregisterWsReconnectHandler(handler: () => void): void {
+  wsReconnectHandlers.delete(handler);
+}
+
+function notifyWsReconnected(): void {
+  wsReconnectHandlers.forEach((handler) => {
+    try {
+      handler();
+    } catch {
+      // a failing handler must not break the remaining subscribers
+    }
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /*  Apollo links                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -240,6 +270,14 @@ const wsLink = !isServer
         connectionParams: () => {
           const token = getAccessToken();
           return { authorization: token ? `Bearer ${token}` : '' };
+        },
+        on: {
+          // graphql-ws v6 has no `reconnected` event; the `connected` listener
+          // receives `wasRetry`, which is true only for reconnects after a
+          // network drop. Fire so the chat store can refetch conversations.
+          connected: (_socket, _payload, wasRetry) => {
+            if (wasRetry) notifyWsReconnected();
+          },
         },
       }),
     )

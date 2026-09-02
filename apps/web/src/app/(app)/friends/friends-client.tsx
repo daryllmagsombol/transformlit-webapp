@@ -78,12 +78,6 @@ const SUGGESTED_QUERY = gql`
   }
 `;
 
-const REMOVE_FRIEND = gql`
-  mutation RemoveFriend($friendshipId: String!) {
-    removeFriend(friendshipId: $friendshipId)
-  }
-`;
-
 interface FriendData {
   id: string;
   requesterId: string;
@@ -157,15 +151,6 @@ export default function FriendsClient() {
       loadData();
     } catch {
       addToast('Failed to decline request.', 'error');
-    }
-  };
-
-  const handleSendRequest = async (userId: string) => {
-    try {
-      await apolloClient.mutate({ mutation: SEND_REQUEST, variables: { addresseeId: userId } });
-      addToast('Friend request sent!', 'success');
-    } catch {
-      addToast('Failed to send request.', 'error');
     }
   };
 

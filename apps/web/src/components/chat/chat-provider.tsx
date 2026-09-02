@@ -1,7 +1,11 @@
 'use client';
 
 import { useEffect } from 'react';
-import { apolloClient } from '../../lib/apollo-client';
+import {
+  apolloClient,
+  registerWsReconnectHandler,
+  unregisterWsReconnectHandler,
+} from '../../lib/apollo-client';
 import { MESSAGE_ADDED, fetchConversations } from '../../lib/chat-queries';
 import { useAuthStore } from '../../store';
 import { useChatStore } from '../../store/chat-store';
@@ -26,6 +30,11 @@ export function ChatProvider() {
 
     // Cold start: seed the conversation list (unread badge) immediately.
     refreshConversations();
+
+    // WS drop → graphql-ws auto-reconnect → refetch so messages missed while
+    // disconnected (pg NOTIFY gives no replay) and stale badges are refreshed.
+    const onWsReconnected = () => refreshConversations();
+    registerWsReconnectHandler(onWsReconnected);
 
     const subscription = apolloClient
       .subscribe<{
@@ -60,7 +69,12 @@ export function ChatProvider() {
 
     return () => {
       active = false;
+      unregisterWsReconnectHandler(onWsReconnected);
       subscription.unsubscribe();
+      // Logout/account switch tears the subscription down: drop the previous
+      // user's conversations/messages/unread. The next authenticated mount
+      // cold-starts from scratch, so always-reset is safe.
+      useChatStore.getState().reset();
     };
   }, [userId]);
 

@@ -29,7 +29,7 @@ async function registerFriend(
 }
 
 test.describe('Chat flow', () => {
-  test('friend request → accept → DM both ways with unread badge', async ({ browser }) => {
+  test('friend request → accept → DM both ways with realtime reply', async ({ browser }) => {
     // Unique per-run identity: the dev DB persists across runs, so the
     // admin's requests/friends lists accumulate buddies from earlier runs.
     const stamp = Date.now();
