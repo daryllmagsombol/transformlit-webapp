@@ -46,3 +46,6 @@ coverage/
 # OS
 Thumbs.db
 *.tsbuildinfo
+
+# Local Uploads
+uploads/
