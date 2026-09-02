@@ -47,9 +47,16 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
 
     if (el.scrollTop < 40 && !loadingOlder && hasMore && cursor) {
       setLoadingOlder(true);
+      // Snapshot the height before prepending so we can restore the reading
+      // position after older messages push the content down.
+      const prevHeight = el.scrollHeight;
       fetchMessages(conversationId, cursor)
         .then(({ messages: older, hasMore: more, cursor: next }) => {
           useChatStore.getState().prependMessages(conversationId, older, more, next);
+          requestAnimationFrame(() => {
+            const el2 = scrollRef.current;
+            if (el2) el2.scrollTop = el2.scrollHeight - prevHeight;
+          });
         })
         .catch(() => addToast('Failed to load older messages.', 'error'))
         .finally(() => setLoadingOlder(false));

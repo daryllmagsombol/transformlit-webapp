@@ -35,6 +35,7 @@ beforeEach(() => {
   useChatStore.getState().reset();
   useAuthStore.setState({ user: { id: 'u1' } as any, token: 't', isHydrated: true });
   mockAddToast.mockClear();
+  (chatQueries.fetchMessages as jest.Mock).mockClear();
   useChatStore.getState().setConversations([
     { id: 'c1', type: 'DIRECT', updatedAt: '2026-09-02T10:00:00Z', otherUser: { id: 'u2', displayName: 'Bob', avatarUrl: null }, group: null, lastMessage: null, unreadCount: 0, myLastReadAt: '2026-09-02T08:00:00Z' },
   ]);
@@ -66,6 +67,35 @@ it('sends a message on Enter and reconciles the temp message', async () => {
   // temp removed, server message appended
   const list = useChatStore.getState().messagesByConversation.c1.map((m) => m.id);
   expect(list).toEqual(['m-server']);
+});
+
+it('prepends older messages when scrolled to the top', async () => {
+  (chatQueries.fetchMessages as jest.Mock)
+    .mockResolvedValueOnce({
+      messages: [msg('m1', 'u1', 'Hello'), msg('m2', 'u2', 'Hi there')],
+      hasMore: true,
+      cursor: 'cur-1',
+    })
+    .mockResolvedValueOnce({
+      messages: [msg('m0', 'u1', 'oldest', '2026-09-01T08:00:00Z')],
+      hasMore: false,
+    });
+
+  const { container } = render(<ChatThread conversationId="c1" />);
+  expect(await screen.findByText('Hello')).toBeInTheDocument();
+
+  const scrollEl = container.querySelector('.overflow-y-auto')!;
+  // jsdom does no layout; fake enough geometry for the top-of-list branch.
+  Object.defineProperty(scrollEl, 'scrollHeight', { configurable: true, value: 2000 });
+  Object.defineProperty(scrollEl, 'clientHeight', { configurable: true, value: 500 });
+  Object.defineProperty(scrollEl, 'scrollTop', { configurable: true, writable: true, value: 20 });
+  fireEvent.scroll(scrollEl);
+
+  expect(await screen.findByText('oldest')).toBeInTheDocument();
+  expect(chatQueries.fetchMessages).toHaveBeenCalledTimes(2);
+  expect(chatQueries.fetchMessages).toHaveBeenLastCalledWith('c1', 'cur-1');
+  const list = useChatStore.getState().messagesByConversation.c1.map((m) => m.id);
+  expect(list).toEqual(['m0', 'm1', 'm2']);
 });
 
 it('renders the New divider when there are unread messages', async () => {

@@ -26,6 +26,8 @@ describe('ChatProvider', () => {
     useAuthStore.setState({ user: { id: 'u1' } as any, token: 't', isHydrated: true });
     unsub = jest.fn();
     mockSubscribe.mockReset();
+    (chatQueries.fetchConversations as jest.Mock).mockReset();
+    (chatQueries.fetchConversations as jest.Mock).mockResolvedValue([]);
     mockSubscribe.mockReturnValue({
       subscribe: jest.fn(({ next }) => {
         next({ data: { messageAdded: { id: 'm1', conversationId: 'c1', senderId: 'u2', body: 'hi', createdAt: '2026-09-02T10:00:00Z' } } });
@@ -50,7 +52,23 @@ describe('ChatProvider', () => {
     (chatQueries.fetchConversations as jest.Mock).mockResolvedValue([]);
     render(<ChatProvider />);
     await Promise.resolve();
-    expect(chatQueries.fetchConversations).toHaveBeenCalled();
+    // cold-start seed + the unknown-conversation message event
+    expect(chatQueries.fetchConversations).toHaveBeenCalledTimes(2);
+  });
+
+  it('fetches conversations on mount to seed the unread badge (cold start)', async () => {
+    (chatQueries.fetchConversations as jest.Mock).mockResolvedValue([
+      { id: 'c1', type: 'DIRECT', updatedAt: '2026-09-02T10:00:00Z', otherUser: { id: 'u2', displayName: 'Bob', avatarUrl: null }, group: null, lastMessage: null, unreadCount: 2, myLastReadAt: null },
+    ]);
+    // Override the subscription so no message event interferes with the count.
+    mockSubscribe.mockReturnValue({
+      subscribe: jest.fn(() => ({ unsubscribe: unsub })),
+    });
+    render(<ChatProvider />);
+    expect(chatQueries.fetchConversations).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    expect(useChatStore.getState().conversations).toHaveLength(1);
+    expect(useChatStore.getState().totalUnread).toBe(2);
   });
 
   it('unsubscribes on unmount', () => {

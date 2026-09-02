@@ -24,6 +24,9 @@ export function ChatProvider() {
         });
     };
 
+    // Cold start: seed the conversation list (unread badge) immediately.
+    refreshConversations();
+
     const subscription = apolloClient
       .subscribe<{
         messageAdded: {
