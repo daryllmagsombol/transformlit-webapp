@@ -320,4 +320,31 @@ describe('Chat Integration', () => {
       expect(result.edges[0].node.sender!.id).toBe(user1Id);
     });
   });
+
+  describe('pubsub broadcast', () => {
+    it('delivers a message to all waiting subscribers', async () => {
+      const iteratorA = pubSub.asyncIterator('messageAdded');
+      const iteratorB = pubSub.asyncIterator('messageAdded');
+
+      // next() promises must exist before publish (publish only wakes waiting triggers)
+      const nextA = iteratorA.next();
+      const nextB = iteratorB.next();
+
+      const payload = {
+        messageAdded: {
+          id: 'broadcast-1',
+          conversationId: 'c1',
+          senderId: user1Id,
+          body: 'hi',
+          createdAt: new Date().toISOString(),
+        },
+        memberIds: [user1Id, user2Id],
+      };
+      await pubSub.publish('messageAdded', payload);
+
+      const [resA, resB] = await Promise.all([nextA, nextB]);
+      expect(resA.value.messageAdded.id).toBe('broadcast-1');
+      expect(resB.value.messageAdded.id).toBe('broadcast-1');
+    });
+  });
 });

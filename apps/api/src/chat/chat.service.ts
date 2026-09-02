@@ -175,9 +175,11 @@ export class ChatService {
       select: { userId: true },
     });
 
-    // Publish via Postgres NOTIFY
+    // Publish via Postgres NOTIFY; keep the payload slim — exclude the full
+    // sender row (password hash, email) from the pg_notify payload.
+    const { sender: _sender, ...slim } = msg;
     await this.pubSub.publish('messageAdded', {
-      messageAdded: msg,
+      messageAdded: slim,
       memberIds: members.map((m) => m.userId),
     });
 
