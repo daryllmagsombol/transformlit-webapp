@@ -19,6 +19,7 @@ const USER_PROFILE_QUERY = gql`
         currentPage
       }
       groups { id name slug description category coverImageUrl memberCount }
+      mutualFriends { id displayName avatarUrl }
     }
   }
 `;
@@ -54,6 +55,7 @@ interface ProfileData {
     bookCount: number;
     bookProgress: Array<{ book: { id: string; title: string; author?: string; coverUrl?: string }; currentPage: number }>;
     groups: Array<{ id: string; name: string; slug: string; description: string; category?: string; coverImageUrl?: string; memberCount: number }>;
+    mutualFriends: Array<{ id: string; displayName: string; avatarUrl?: string | null }>;
   };
 }
 
@@ -189,13 +191,6 @@ export default function UserProfileClient() {
     }
   }
 
-  const MUTUAL_FRIENDS = [
-    { name: 'Julian R.', initial: 'J' },
-    { name: 'Mia Chen', initial: 'M' },
-    { name: 'Prof. Ao', initial: 'A' },
-    { name: 'Ling W.', initial: 'L' },
-  ];
-
   const BOOK_STATUS_PILLS: { label: string; colorClass: string }[] = [
     { label: 'Reading', colorClass: 'bg-success text-white' },
     { label: 'Queued', colorClass: 'bg-accent-teal-dark text-white' },
@@ -279,19 +274,19 @@ export default function UserProfileClient() {
         </div>
       </section>
 
-      {!isOwnProfile && (
+      {!isOwnProfile && profile.mutualFriends.length > 0 && (
         <section>
           <h2 className="font-micro text-micro uppercase tracking-widest text-on-surface-variant mb-4 flex items-center gap-2">
             <span className="material-symbols-outlined text-base">group</span>
             Mutual Friends
           </h2>
           <div className="flex gap-5 overflow-x-auto pb-2 -mx-4 px-4">
-            {MUTUAL_FRIENDS.map((friend) => (
-              <div key={friend.name} className="flex flex-col items-center gap-2 min-w-[64px]">
-                <div className="w-10 h-10 rounded-full bg-primary-fixed border border-primary/20 flex items-center justify-center overflow-hidden">
-                  <span className="text-xs font-bold text-on-primary-container">{friend.initial}</span>
-                </div>
-                <span className="font-micro text-[10px] text-on-surface-variant text-center">{friend.name}</span>
+            {profile.mutualFriends.map((friend) => (
+              <div key={friend.id} className="flex flex-col items-center gap-2 min-w-[64px]">
+                <UserAvatar avatarUrl={friend.avatarUrl} displayName={friend.displayName} size="md" />
+                <span className="font-micro text-[10px] text-on-surface-variant text-center line-clamp-1">
+                  {friend.displayName}
+                </span>
               </div>
             ))}
           </div>
