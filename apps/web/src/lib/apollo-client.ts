@@ -263,20 +263,7 @@ const splitLink =
 export const apolloClient = new ApolloClient({
   link: ApolloLink.from([errorLink, proactiveRefreshLink, authLink, splitLink]),
   ssrMode: isServer,
-  cache: new InMemoryCache({
-    typePolicies: {
-      Query: {
-        fields: {
-          messages: {
-            keyArgs: ['conversationId'],
-            merge(existing, incoming) {
-              return incoming;
-            },
-          },
-        },
-      },
-    },
-  }),
+  cache: new InMemoryCache(),
   defaultOptions: {
     watchQuery: { fetchPolicy: 'cache-and-network' },
     query: { fetchPolicy: 'no-cache' },
