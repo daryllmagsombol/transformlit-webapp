@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { gql } from '@apollo/client';
+import { useRouter } from 'next/navigation';
 import type { GraphQLGroup } from '@transformlit/shared';
 import { useToast, GroupCard, CategoryChip, FeaturedGroupCard, CompactGroupCard, LoadingSpinner } from '../../../components/ui';
 import { apolloClient } from '../../../lib/apollo-client';
@@ -48,6 +49,7 @@ function compactGroupMeta(category?: string | null) {
 export default function GroupsClient() {
   const { isReady } = useRequireAuth();
   const { addToast } = useToast();
+  const router = useRouter();
 
   const [myGroups, setMyGroups] = useState<GraphQLGroup[]>([]);
   const [discoverGroups, setDiscoverGroups] = useState<GraphQLGroup[]>([]);
@@ -205,10 +207,12 @@ export default function GroupsClient() {
             {featuredDiscover ? (
               <FeaturedGroupCard
                 name={featuredDiscover.name}
+                slug={featuredDiscover.slug}
                 description={featuredDiscover.description}
                 coverImageUrl={featuredDiscover.coverImageUrl}
                 memberCount={featuredDiscover.memberCount}
-                onDetails={() => addToast('Group details coming soon.', 'info')}
+                onJoin={() => handleJoinGroup(featuredDiscover.id)}
+                onDetails={() => router.push(`/groups/${featuredDiscover.slug}`)}
               />
             ) : (
               <div className="md:col-span-8 bg-surface-container-low rounded-2xl p-8 text-center border border-outline-variant">

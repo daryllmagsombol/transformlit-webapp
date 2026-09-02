@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { GROUP_CATEGORIES } from '../../lib/constants';
 
 interface GroupCardProps {
@@ -14,11 +15,13 @@ interface GroupCardProps {
 
 export function GroupCard({
   name,
+  slug,
   description,
   coverImageUrl,
   memberCount,
   category,
 }: GroupCardProps) {
+  const router = useRouter();
   return (
     <div className="bg-paper-warm rounded-xl shadow-sm border border-outline-variant overflow-hidden flex flex-col group hover:shadow-lg transition-all duration-300">
       {/* Cover image */}
@@ -58,7 +61,10 @@ export function GroupCard({
           </p>
         )}
 
-        <button className="w-full py-2 bg-primary text-on-primary rounded-lg font-display text-headline-h4 border-2 border-[var(--color-primary,#845400)] hover:bg-brand-orange-dark hover:border-brand-orange-dark transition-colors active:scale-[0.98]">
+        <button
+          onClick={() => slug && router.push(`/groups/${slug}`)}
+          className="w-full py-2 bg-primary text-on-primary rounded-lg font-display text-headline-h4 border-2 border-[var(--color-primary,#845400)] hover:bg-brand-orange-dark hover:border-brand-orange-dark transition-colors active:scale-[0.98]"
+        >
           Open Circle
         </button>
       </div>

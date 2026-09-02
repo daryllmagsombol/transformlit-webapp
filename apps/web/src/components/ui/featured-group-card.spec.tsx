@@ -1,4 +1,11 @@
 import { render, screen } from '@testing-library/react';
+
+const mockPush = jest.fn();
+
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
+
 import { FeaturedGroupCard } from './featured-group-card';
 
 describe('FeaturedGroupCard', () => {

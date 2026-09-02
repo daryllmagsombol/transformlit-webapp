@@ -1,20 +1,27 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+
 interface FeaturedGroupCardProps {
   name: string;
+  slug?: string;
   description?: string | null;
   coverImageUrl?: string | null;
   memberCount: number;
+  onJoin?: () => void;
   onDetails?: () => void;
 }
 
 export function FeaturedGroupCard({
   name,
+  slug,
   description,
   coverImageUrl,
   memberCount,
+  onJoin,
   onDetails,
 }: FeaturedGroupCardProps) {
+  const router = useRouter();
   return (
     <div className="md:col-span-8 bg-paper rounded-2xl p-6 md:p-8 flex flex-col md:flex-row gap-8 items-center border border-outline-variant relative overflow-hidden group">
       {/* Image */}
@@ -40,12 +47,21 @@ export function FeaturedGroupCard({
           <p className="font-body text-body text-on-surface-variant mb-6">{description}</p>
         )}
         <div className="flex items-center gap-4">
-          <button className="px-8 py-3 bg-primary text-on-primary rounded-lg font-display text-headline-h4 border-2 border-[var(--color-primary,#845400)] active:scale-95 transition-transform hover:bg-brand-orange-dark">
+          <button
+            onClick={onJoin}
+            className="px-8 py-3 bg-primary text-on-primary rounded-lg font-display text-headline-h4 border-2 border-[var(--color-primary,#845400)] active:scale-95 transition-transform hover:bg-brand-orange-dark"
+          >
             Join Group
           </button>
-          {onDetails && (
+          {(slug || onDetails) && (
             <button
-              onClick={onDetails}
+              onClick={() => {
+                if (slug) {
+                  router.push(`/groups/${slug}`);
+                } else if (onDetails) {
+                  onDetails();
+                }
+              }}
               className="px-6 py-3 border border-primary text-primary rounded-lg font-display text-headline-h4 hover:bg-primary hover:text-on-primary transition-colors active:scale-95"
             >
               Details
