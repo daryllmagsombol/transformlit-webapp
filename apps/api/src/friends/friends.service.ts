@@ -33,14 +33,37 @@ export class FriendsService {
 
   async sendRequest(requesterId: string, addresseeId: string) {
     if (requesterId === addresseeId) throw new Error('Cannot friend yourself');
-    const existing = await this.prisma.friendship.findUnique({
-      where: { requesterId_addresseeId: { requesterId, addresseeId } },
+    const existing = await this.prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { requesterId, addresseeId },
+          { requesterId: addresseeId, addresseeId: requesterId },
+        ],
+        status: { not: 'REJECTED' },
+      },
     });
     if (existing) throw new Error('Friendship already exists');
 
-    const friendship = await this.prisma.friendship.create({
-      data: { requesterId, addresseeId, status: 'PENDING' },
+    // A previously rejected request (in either direction) is reactivated
+    // rather than duplicated, since (requesterId, addresseeId) is unique.
+    const rejected = await this.prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { requesterId, addresseeId },
+          { requesterId: addresseeId, addresseeId: requesterId },
+        ],
+        status: 'REJECTED',
+      },
     });
+
+    const friendship = rejected
+      ? await this.prisma.friendship.update({
+          where: { id: rejected.id },
+          data: { status: 'PENDING' },
+        })
+      : await this.prisma.friendship.create({
+          data: { requesterId, addresseeId, status: 'PENDING' },
+        });
 
     const notification = await this.notifications.createNotification(
       addresseeId,
@@ -93,7 +116,14 @@ export class FriendsService {
     });
   }
 
-  async removeFriend(friendshipId: string) {
+  async removeFriend(friendshipId: string, userId: string) {
+    const friendship = await this.prisma.friendship.findUnique({
+      where: { id: friendshipId },
+    });
+    if (!friendship) throw new Error('Not authorized');
+    if (friendship.requesterId !== userId && friendship.addresseeId !== userId) {
+      throw new Error('Not authorized');
+    }
     return this.prisma.friendship.delete({ where: { id: friendshipId } });
   }
 

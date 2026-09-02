@@ -50,8 +50,11 @@ export class FriendsResolver {
 
   @Mutation(() => Boolean, { name: 'removeFriend' })
   @UseGuards(JwtAuthGuard)
-  async removeFriend(@Args('friendshipId') friendshipId: string) {
-    return this.friendsService.removeFriend(friendshipId);
+  async removeFriend(
+    @CurrentUser() user: { id: string },
+    @Args('friendshipId') friendshipId: string,
+  ) {
+    return this.friendsService.removeFriend(friendshipId, user.id);
   }
 
   @Query(() => Friendship, { name: 'friendshipStatus', nullable: true })

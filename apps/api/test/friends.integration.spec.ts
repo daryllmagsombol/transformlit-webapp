@@ -221,4 +221,47 @@ describe('Friends Integration', () => {
       expect(requests[0].status).toBe('PENDING');
     });
   });
+
+  describe('sendRequest direction handling', () => {
+    it('rejects a reverse-direction pending request', async () => {
+      await friendsService.sendRequest(requesterId, addresseeId);
+      await expect(
+        friendsService.sendRequest(addresseeId, requesterId),
+      ).rejects.toThrow('Friendship already exists');
+    });
+
+    it('allows re-request after rejection', async () => {
+      const f = await friendsService.sendRequest(requesterId, addresseeId);
+      await friendsService.rejectRequest(f.id, addresseeId);
+
+      const retry = await friendsService.sendRequest(requesterId, addresseeId);
+      expect(retry.status).toBe('PENDING');
+    });
+  });
+
+  describe('removeFriend authorization', () => {
+    it('rejects removal by a non-party', async () => {
+      const friendship = await friendsService.sendRequest(requesterId, addresseeId);
+      await friendsService.acceptRequest(friendship.id, addresseeId);
+
+      const stranger = await authService.registerLocal({
+        email: 'stranger@example.com',
+        password: 'password123',
+        displayName: 'Stranger',
+      });
+
+      await expect(
+        friendsService.removeFriend(friendship.id, stranger.user.id),
+      ).rejects.toThrow('Not authorized');
+    });
+
+    it('allows removal by a party', async () => {
+      const friendship = await friendsService.sendRequest(requesterId, addresseeId);
+      await friendsService.acceptRequest(friendship.id, addresseeId);
+
+      await expect(
+        friendsService.removeFriend(friendship.id, requesterId),
+      ).resolves.toBeTruthy();
+    });
+  });
 });
