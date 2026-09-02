@@ -11,14 +11,62 @@ export class ChatService {
   ) {}
 
   async listConversations(userId: string) {
-    return this.prisma.conversation.findMany({
+    const conversations = await this.prisma.conversation.findMany({
       where: { members: { some: { userId } }, deletedAt: null },
       include: {
         members: { include: { user: true } },
         messages: { take: 1, orderBy: { createdAt: 'desc' } },
+        group: true,
       },
       orderBy: { updatedAt: 'desc' },
+      take: 50,
     });
+
+    const unread = await this.getUnreadCounts(userId);
+
+    return conversations.map((conv) => {
+      const me = conv.members.find((m) => m.userId === userId);
+      const other =
+        conv.type === 'DIRECT'
+          ? conv.members.find((m) => m.userId !== userId)
+          : undefined;
+      return {
+        id: conv.id,
+        type: conv.type,
+        groupId: conv.groupId,
+        createdAt: conv.createdAt,
+        updatedAt: conv.updatedAt,
+        otherUser: other?.user,
+        group: conv.group
+          ? {
+              id: conv.group.id,
+              name: conv.group.name,
+              slug: conv.group.slug,
+              coverImageUrl: conv.group.coverImageUrl ?? undefined,
+            }
+          : null,
+        lastMessage: conv.messages[0] ?? null,
+        unreadCount: unread.get(conv.id) ?? 0,
+        myLastReadAt: me?.lastReadAt ?? null,
+      };
+    });
+  }
+
+  private async getUnreadCounts(userId: string): Promise<Map<string, number>> {
+    const rows = await this.prisma.$queryRaw<
+      Array<{ conversationId: string; count: number }>
+    >`
+      SELECT cm."conversationId" AS "conversationId", COUNT(m.id)::int AS "count"
+      FROM "conversation_members" cm
+      LEFT JOIN "messages" m
+        ON m."conversationId" = cm."conversationId"
+        AND m."deletedAt" IS NULL
+        AND m."senderId" <> cm."userId"
+        AND (cm."lastReadAt" IS NULL OR m."createdAt" > cm."lastReadAt")
+      WHERE cm."userId" = ${userId}
+      GROUP BY cm."conversationId"
+    `;
+    return new Map(rows.map((r) => [r.conversationId, Number(r.count)]));
   }
 
   private async assertMember(conversationId: string, userId: string) {
@@ -113,6 +161,7 @@ export class ChatService {
         senderId,
         body,
       },
+      include: { sender: true },
     });
 
     // Update conversation timestamp
@@ -152,6 +201,7 @@ export class ChatService {
       where,
       take: limit + 1,
       orderBy: { createdAt: 'desc' },
+      include: { sender: true },
     });
 
     const hasNextPage = messages.length > limit;
@@ -162,7 +212,6 @@ export class ChatService {
         node: m,
         cursor: m.createdAt.toISOString(),
       })),
-      totalCount: 0, // lazy
       hasNextPage,
     };
   }

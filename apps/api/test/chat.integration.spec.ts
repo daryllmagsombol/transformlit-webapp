@@ -282,4 +282,42 @@ describe('Chat Integration', () => {
       ).rejects.toThrow('You cannot message yourself');
     });
   });
+
+  describe('listConversations enrichment', () => {
+    it('returns otherUser, lastMessage, unreadCount and myLastReadAt', async () => {
+      const conv = await chatService.getOrCreateDirectConversation(user1Id, user2Id);
+      await chatService.sendMessage({ conversationId: conv.id, body: 'Hello' }, user2Id);
+
+      const [list] = await chatService.listConversations(user1Id);
+
+      expect(list.id).toBe(conv.id);
+      expect(list.otherUser!.id).toBe(user2Id);
+      expect(list.lastMessage!.body).toBe('Hello');
+      expect(list.unreadCount).toBe(1);
+      expect(list.myLastReadAt).toBeNull();
+    });
+
+    it('unreadCount resets after markRead and excludes own messages', async () => {
+      const conv = await chatService.getOrCreateDirectConversation(user1Id, user2Id);
+      await chatService.sendMessage({ conversationId: conv.id, body: 'mine' }, user1Id);
+      await chatService.sendMessage({ conversationId: conv.id, body: 'yours' }, user2Id);
+
+      let [list] = await chatService.listConversations(user1Id);
+      expect(list.unreadCount).toBe(1); // only user2's message
+
+      await chatService.markRead(conv.id, user1Id);
+      [list] = await chatService.listConversations(user1Id);
+      expect(list.unreadCount).toBe(0);
+    });
+  });
+
+  describe('getMessages sender', () => {
+    it('includes sender user', async () => {
+      const conv = await chatService.getOrCreateDirectConversation(user1Id, user2Id);
+      await chatService.sendMessage({ conversationId: conv.id, body: 'hi' }, user1Id);
+
+      const result = await chatService.getMessages(conv.id, undefined, 25, user1Id);
+      expect(result.edges[0].node.sender!.id).toBe(user1Id);
+    });
+  });
 });

@@ -1,7 +1,47 @@
-import { Field, ObjectType, InputType, ID, registerEnumType } from '@nestjs/graphql';
+import { Field, ObjectType, InputType, ID, Int, registerEnumType } from '@nestjs/graphql';
 import { ConversationType } from '@transformlit/shared';
+import { User } from '../../auth/models/auth.model.js';
 
 registerEnumType(ConversationType, { name: 'ConversationType' });
+
+@ObjectType()
+export class ConversationGroup {
+  @Field(() => ID)
+  id: string;
+
+  @Field()
+  name: string;
+
+  @Field()
+  slug: string;
+
+  @Field({ nullable: true })
+  coverImageUrl?: string;
+}
+
+@ObjectType()
+export class Message {
+  @Field(() => ID)
+  id: string;
+
+  @Field(() => ID)
+  conversationId: string;
+
+  @Field(() => ID)
+  senderId: string;
+
+  @Field(() => User, { nullable: true })
+  sender?: User;
+
+  @Field()
+  body: string;
+
+  @Field({ nullable: true })
+  editedAt?: Date;
+
+  @Field()
+  createdAt: Date;
+}
 
 @ObjectType()
 export class Conversation {
@@ -16,27 +56,24 @@ export class Conversation {
 
   @Field()
   createdAt: Date;
-}
-
-@ObjectType()
-export class Message {
-  @Field(() => ID)
-  id: string;
-
-  @Field(() => ID)
-  conversationId: string;
-
-  @Field(() => ID)
-  senderId: string;
 
   @Field()
-  body: string;
+  updatedAt: Date;
+
+  @Field(() => User, { nullable: true })
+  otherUser?: User;
+
+  @Field(() => ConversationGroup, { nullable: true })
+  group?: ConversationGroup;
+
+  @Field(() => Message, { nullable: true })
+  lastMessage?: Message;
+
+  @Field(() => Int)
+  unreadCount: number;
 
   @Field({ nullable: true })
-  editedAt?: Date;
-
-  @Field()
-  createdAt: Date;
+  myLastReadAt?: Date;
 }
 
 @ObjectType()
@@ -52,9 +89,6 @@ export class MessageEdge {
 export class MessageConnection {
   @Field(() => [MessageEdge])
   edges: MessageEdge[];
-
-  @Field()
-  totalCount: number;
 
   @Field()
   hasNextPage: boolean;
