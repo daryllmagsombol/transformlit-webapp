@@ -121,9 +121,15 @@ export class ChatService {
       data: { updatedAt: new Date() },
     });
 
+    const members = await this.prisma.conversationMember.findMany({
+      where: { conversationId: input.conversationId },
+      select: { userId: true },
+    });
+
     // Publish via Postgres NOTIFY
     await this.pubSub.publish('messageAdded', {
       messageAdded: msg,
+      memberIds: members.map((m) => m.userId),
     });
 
     return msg;

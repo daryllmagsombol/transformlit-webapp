@@ -5,6 +5,7 @@ import { PubSubService } from './pubsub.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Conversation, Message, MessageConnection, SendMessageInput } from './models/chat.model.js';
+import { messageAddedFilter, MessageAddedPayload } from './message-added.filter.js';
 
 @Resolver()
 export class ChatResolver {
@@ -59,12 +60,12 @@ export class ChatResolver {
 
   @Subscription(() => Message, {
     name: 'messageAdded',
-    resolve: (payload) => payload.messageAdded,
-    filter: (payload, variables) =>
-      payload.messageAdded.conversationId === variables.conversationId,
+    resolve: (payload: MessageAddedPayload) => payload.messageAdded,
+    filter: (payload, variables, context) =>
+      messageAddedFilter(payload, variables, context),
   })
   @UseGuards(JwtAuthGuard)
-  messageAdded(@Args('conversationId') conversationId: string) {
+  messageAdded(@Args('conversationId', { nullable: true }) conversationId?: string) {
     return this.pubSub.asyncIterator('messageAdded');
   }
 }

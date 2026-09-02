@@ -33,7 +33,11 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     await client.query('LISTEN "notificationReceived"');
 
     // Keep connection open
-    client.on('error', () => {});
+    // Realtime dies silently if the LISTEN connection drops; log loudly so
+    // operators notice (process restart restores the subscription).
+    client.on('error', (err) => {
+      console.error('[pubsub] Postgres LISTEN connection error:', err.message);
+    });
   }
 
   async onModuleDestroy() {

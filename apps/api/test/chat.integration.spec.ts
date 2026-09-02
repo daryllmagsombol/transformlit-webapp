@@ -197,6 +197,7 @@ describe('Chat Integration', () => {
 
       expect(publishSpy).toHaveBeenCalledWith('messageAdded', {
         messageAdded: expect.objectContaining({ id: msg.id }),
+        memberIds: expect.arrayContaining([user1Id, user2Id]),
       });
 
       publishSpy.mockRestore();
