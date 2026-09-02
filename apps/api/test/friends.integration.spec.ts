@@ -264,4 +264,47 @@ describe('Friends Integration', () => {
       ).resolves.toBeTruthy();
     });
   });
+
+  describe('suggestedFriends', () => {
+    it('ranks by mutual friends and excludes self, friends, pending', async () => {
+      const [alice, bob, carol, dave] = await Promise.all([
+        authService.registerLocal({ email: 'alice@example.com', password: 'password123', displayName: 'Alice' }),
+        authService.registerLocal({ email: 'bob@example.com', password: 'password123', displayName: 'Bob' }),
+        authService.registerLocal({ email: 'carol@example.com', password: 'password123', displayName: 'Carol' }),
+        authService.registerLocal({ email: 'dave@example.com', password: 'password123', displayName: 'Dave' }),
+      ]);
+
+      const mkFriend = (a: string, b: string) =>
+        prisma.friendship.create({ data: { requesterId: a, addresseeId: b, status: 'ACCEPTED' } });
+      const mkPending = (a: string, b: string) =>
+        prisma.friendship.create({ data: { requesterId: a, addresseeId: b, status: 'PENDING' } });
+
+      // requester -friends-> bob; requester has pending to carol; bob -friends-> dave
+      await mkFriend(requesterId, bob.user.id);
+      await mkPending(requesterId, carol.user.id);
+      await mkFriend(bob.user.id, dave.user.id);
+
+      const suggestions = await friendsService.suggestedFriends(requesterId, 10);
+      const ids = suggestions.map((u) => u.id);
+
+      expect(ids).toContain(dave.user.id); // mutual friend
+      expect(ids).not.toContain(requesterId);
+      expect(ids).not.toContain(bob.user.id); // existing friend
+      expect(ids).not.toContain(carol.user.id); // pending request exists
+    });
+
+    it('falls back to newest members when no mutual friends exist', async () => {
+      const [alice] = [await authService.registerLocal({
+        email: 'fresh@example.com', password: 'password123', displayName: 'Fresh',
+      })];
+
+      const suggestions = await friendsService.suggestedFriends(requesterId, 5);
+      expect(suggestions.some((u) => u.id === alice.user.id)).toBe(true);
+    });
+
+    it('clamps limit', async () => {
+      const suggestions = await friendsService.suggestedFriends(requesterId, 999);
+      expect(suggestions.length).toBeLessThanOrEqual(20);
+    });
+  });
 });

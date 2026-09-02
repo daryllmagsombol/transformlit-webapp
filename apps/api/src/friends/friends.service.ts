@@ -143,4 +143,56 @@ export class FriendsService {
 
     return friendship;
   }
+
+  async suggestedFriends(userId: string, limit = 5) {
+    const clamped = Math.min(Math.max(limit, 1), 20);
+
+    const myRows = await this.prisma.friendship.findMany({
+      where: { OR: [{ requesterId: userId }, { addresseeId: userId }] },
+    });
+    const myFriendIds = new Set<string>();
+    const excludedIds = new Set<string>([userId]);
+    for (const f of myRows) {
+      const other = f.requesterId === userId ? f.addresseeId : f.requesterId;
+      if (f.status === 'ACCEPTED') myFriendIds.add(other);
+      else excludedIds.add(other); // PENDING, REJECTED, BLOCKED
+    }
+
+    const scores = new Map<string, number>();
+    if (myFriendIds.size > 0) {
+      const rows = await this.prisma.friendship.findMany({
+        where: {
+          OR: [
+            { requesterId: { in: [...myFriendIds] } },
+            { addresseeId: { in: [...myFriendIds] } },
+          ],
+          status: 'ACCEPTED',
+        },
+      });
+      for (const f of rows) {
+        const other = myFriendIds.has(f.requesterId) ? f.addresseeId : f.requesterId;
+        if (excludedIds.has(other) || myFriendIds.has(other)) continue;
+        scores.set(other, (scores.get(other) ?? 0) + 1);
+      }
+    }
+
+    const ranked = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, clamped);
+
+    if (ranked.length === 0) {
+      return this.prisma.user.findMany({
+        where: {
+          id: { notIn: [...excludedIds, ...myFriendIds] },
+          deletedAt: null,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: clamped,
+      });
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: ranked.map(([id]) => id) }, deletedAt: null },
+    });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    return ranked.map(([id]) => byId.get(id)).filter(Boolean) as any;
+  }
 }
