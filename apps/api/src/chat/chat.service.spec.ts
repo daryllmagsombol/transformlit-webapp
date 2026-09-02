@@ -6,7 +6,7 @@ import { PubSubService } from './pubsub.service.js';
 describe('ChatService authorization', () => {
   let service: ChatService;
   let prisma: {
-    conversationMember: { findUnique: jest.Mock };
+    conversationMember: { findUnique: jest.Mock; findMany: jest.Mock };
     message: { create: jest.Mock; findMany: jest.Mock };
     conversation: { update: jest.Mock; findMany: jest.Mock; findFirst: jest.Mock; create: jest.Mock };
     groupMember: { findFirst: jest.Mock };
@@ -20,6 +20,7 @@ describe('ChatService authorization', () => {
     prisma = {
       conversationMember: {
         findUnique: jest.fn().mockResolvedValue({ userId: userA, lastReadAt: null }),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       message: {
         create: jest.fn().mockResolvedValue({ id: 'm1', body: 'hi' }),
