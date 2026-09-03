@@ -28,13 +28,22 @@ import { HealthModule } from './health/health.module.js';
  * throw (never return null / Invalid Date) on anything that cannot be
  * represented as a DateTime.
  */
+function describeValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
+}
+
 export const DateTimeScalar = new GraphQLScalarType({
   name: 'DateTime',
   description:
     'A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.',
   parseValue(value: unknown) {
     if (typeof value !== 'string') {
-      throw new GraphQLError(`DateTime cannot represent a non-string value: ${String(value)}`);
+      throw new GraphQLError(`DateTime cannot represent a non-string value: ${describeValue(value)}`);
     }
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) {
@@ -48,7 +57,7 @@ export const DateTimeScalar = new GraphQLScalarType({
       const d = new Date(value);
       if (!Number.isNaN(d.getTime())) return d.toISOString();
     }
-    throw new GraphQLError(`DateTime cannot represent value: ${String(value)}`);
+    throw new GraphQLError(`DateTime cannot represent value: ${describeValue(value)}`);
   },
   parseLiteral(ast) {
     if (ast.kind !== Kind.STRING || typeof ast.value !== 'string') {

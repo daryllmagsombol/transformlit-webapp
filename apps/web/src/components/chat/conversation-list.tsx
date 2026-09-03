@@ -66,7 +66,7 @@ export function ConversationList() {
           onClick={loadConversations}
           className="font-display font-headline-h4 px-6 h-11 rounded-md bg-brand-orange-dark text-on-primary flex items-center gap-2 shadow-sm hover:brightness-110 active:scale-95 transition-all"
         >
-          <span className="material-symbols-outlined text-[20px]">refresh</span>
+          <span className="material-symbols-outlined text-[20px]">refresh</span>{' '}
           Retry
         </button>
       </div>
