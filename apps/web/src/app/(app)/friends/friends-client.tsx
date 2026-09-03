@@ -67,9 +67,14 @@ const SEND_REQUEST = gql`
   }
 `;
 
-const REMOVE_FRIEND = gql`
-  mutation RemoveFriend($friendshipId: String!) {
-    removeFriend(friendshipId: $friendshipId)
+const SUGGESTED_QUERY = gql`
+  query SuggestedFriends($limit: Int!) {
+    suggestedFriends(limit: $limit) {
+      id
+      displayName
+      avatarUrl
+      bio
+    }
   }
 `;
 
@@ -96,6 +101,9 @@ export default function FriendsClient() {
 
   const [friends, setFriends] = useState<FriendData[]>([]);
   const [requests, setRequests] = useState<RequestData[]>([]);
+  const [suggestions, setSuggestions] = useState<
+    Array<{ id: string; displayName: string; avatarUrl?: string | null; bio?: string | null }>
+  >([]);
   const [loading, setLoading] = useState(true);
   const [requestsOpen, setRequestsOpen] = useState(true);
   const [profileSheetUserId, setProfileSheetUserId] = useState<string | null>(null);
@@ -103,12 +111,17 @@ export default function FriendsClient() {
 
   const loadData = useCallback(async () => {
     try {
-      const [friendsResult, requestsResult] = await Promise.all([
+      const [friendsResult, requestsResult, suggestionsResult] = await Promise.all([
         apolloClient.query<{ friends: FriendData[] }>({ query: FRIENDS_QUERY }),
         apolloClient.query<{ friendRequests: RequestData[] }>({ query: REQUESTS_QUERY }),
+        apolloClient.query<{ suggestedFriends: typeof suggestions }>({
+          query: SUGGESTED_QUERY,
+          variables: { limit: 5 },
+        }),
       ]);
       setFriends(friendsResult.data?.friends ?? []);
       setRequests(requestsResult.data?.friendRequests ?? []);
+      setSuggestions(suggestionsResult.data?.suggestedFriends ?? []);
     } catch {
       addToast('Failed to load friends.', 'error');
     } finally {
@@ -141,17 +154,21 @@ export default function FriendsClient() {
     }
   };
 
-  const handleSendRequest = async (userId: string) => {
-    try {
-      await apolloClient.mutate({ mutation: SEND_REQUEST, variables: { addresseeId: userId } });
-      addToast('Friend request sent!', 'success');
-    } catch {
-      addToast('Failed to send request.', 'error');
-    }
-  };
-
   const handleSelectUser = (userId: string) => {
     setProfileSheetUserId(userId);
+  };
+
+  const handleSuggest = async (userId: string) => {
+    try {
+      await apolloClient.mutate({
+        mutation: SEND_REQUEST,
+        variables: { addresseeId: userId },
+      });
+      addToast('Friend request sent!', 'success');
+      setSuggestions((prev) => prev.filter((s) => s.id !== userId));
+    } catch {
+      addToast('Failed to send friend request.', 'error');
+    }
   };
 
   if (!isReady) return <LoadingSpinner />;
@@ -202,7 +219,7 @@ export default function FriendsClient() {
         </section>
       )}
 
-      {/* Suggested Friends (placeholder — real suggestions come later via group overlap) */}
+      {/* Suggested Friends */}
       <section>
         <h3 className="font-display text-headline-h2 text-on-surface mb-4">Suggested Friends</h3>
         {loading ? (
@@ -211,12 +228,20 @@ export default function FriendsClient() {
               <div key={i} className="min-w-[200px] h-48 bg-surface-container-high rounded-xl animate-pulse flex-shrink-0" />
             ))}
           </div>
-        ) : (
+        ) : suggestions.length > 0 ? (
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 md:mx-0 md:px-0 snap-x">
-            <SuggestedFriendCard name="Leo T." tag="Classic Literature Fan" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
-            <SuggestedFriendCard name="Emma K." tag="Sci-Fi Enthusiast" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
-            <SuggestedFriendCard name="Oliver K." tag="Poetry Lover" onAdd={() => addToast('Suggestions coming soon!', 'info')} />
+            {suggestions.map((s) => (
+              <SuggestedFriendCard
+                key={s.id}
+                name={s.displayName}
+                tag={s.bio || 'Community member'}
+                avatarUrl={s.avatarUrl}
+                onAdd={() => handleSuggest(s.id)}
+              />
+            ))}
           </div>
+        ) : (
+          <p className="font-body text-on-surface-variant">No suggestions right now — check back soon.</p>
         )}
       </section>
 

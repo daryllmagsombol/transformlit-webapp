@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useUIStore } from '../../store';
+import { useChatStore } from '../../store/chat-store';
 import { NavItem } from '../ui/nav-item';
 import { SIDEBAR_NAV_ITEMS } from '../../lib/constants';
 import { ThemeToggle } from '../ui/theme-toggle';
@@ -12,6 +13,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
+  const totalUnread = useChatStore((s) => s.totalUnread);
 
   // Open sidebar on desktop, close on mobile — respond to resize across breakpoint
   useEffect(() => {
@@ -51,6 +53,7 @@ export function Sidebar() {
               {...item}
               active={pathname.startsWith(item.href)}
               variant="sidebar"
+              badge={item.href === '/chat' ? totalUnread : undefined}
             />
           ))}
         </nav>

@@ -47,7 +47,7 @@ export class UsersService {
     });
   }
 
-  async getProfile(userId: string) {
+  async getProfile(userId: string, currentUserId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId, deletedAt: null },
       select: {
@@ -90,10 +90,37 @@ export class UsersService {
       }),
     ]);
 
+    let mutualFriends: any[] = [];
+    if (currentUserId !== userId) {
+      const [myRows, theirRows] = await Promise.all([
+        this.prisma.friendship.findMany({
+          where: { OR: [{ requesterId: currentUserId }, { addresseeId: currentUserId }], status: 'ACCEPTED' },
+          select: { requesterId: true, addresseeId: true },
+        }),
+        this.prisma.friendship.findMany({
+          where: { OR: [{ requesterId: userId }, { addresseeId: userId }], status: 'ACCEPTED' },
+          select: { requesterId: true, addresseeId: true },
+        }),
+      ]);
+      const myIds = new Set(
+        myRows.map((f) => (f.requesterId === currentUserId ? f.addresseeId : f.requesterId)),
+      );
+      const theirIds = new Set(
+        theirRows.map((f) => (f.requesterId === userId ? f.addresseeId : f.requesterId)),
+      );
+      const mutual = [...theirIds].filter((id) => id !== userId && myIds.has(id)).slice(0, 10);
+      if (mutual.length > 0) {
+        mutualFriends = await this.prisma.user.findMany({
+          where: { id: { in: mutual }, deletedAt: null },
+        });
+      }
+    }
+
     return {
       user,
       groups: groups.map((gm) => gm.group),
       bookProgress,
+      mutualFriends,
       friendCount,
       groupCount,
       bookCount,

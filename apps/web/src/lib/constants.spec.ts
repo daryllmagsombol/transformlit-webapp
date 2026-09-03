@@ -11,7 +11,7 @@ import {
 
 describe('SIDEBAR_NAV_ITEMS', () => {
   it('has the expected number of items', () => {
-    expect(SIDEBAR_NAV_ITEMS).toHaveLength(5);
+    expect(SIDEBAR_NAV_ITEMS).toHaveLength(6);
   });
 
   it.each(SIDEBAR_NAV_ITEMS)('$label has label, href, and icon', (item) => {
@@ -20,9 +20,9 @@ describe('SIDEBAR_NAV_ITEMS', () => {
     expect(item.icon).toBeTruthy();
   });
 
-  it('contains Feed, Bible, Friends, Groups, and Books', () => {
+  it('contains Feed, Bible, Friends, Chat, Groups, and Books', () => {
     const labels = SIDEBAR_NAV_ITEMS.map((i) => i.label);
-    expect(labels).toEqual(['Feed', 'Bible', 'Friends', 'Groups', 'Books']);
+    expect(labels).toEqual(['Feed', 'Bible', 'Friends', 'Chat', 'Groups', 'Books']);
   });
 });
 

@@ -92,9 +92,9 @@ describe('FriendsResolver', () => {
   // ── removeFriend mutation ───────────────────────────────────────────────────
 
   describe('removeFriend', () => {
-    it('should delegate to removeFriend with friendshipId', async () => {
-      const result = await resolver.removeFriend('friendship-1');
-      expect(service.removeFriend).toHaveBeenCalledWith('friendship-1');
+    it('should delegate to removeFriend with friendshipId and user id', async () => {
+      const result = await resolver.removeFriend(mockUser, 'friendship-1');
+      expect(service.removeFriend).toHaveBeenCalledWith('friendship-1', 'user-1');
       expect(result).toEqual(mockFriendship);
     });
   });

@@ -68,6 +68,7 @@ enum BookAccessLevel {
 }
 
 type BookProgress {
+  book: Book
   bookId: ID!
   completedAt: DateTime
   currentPage: Float!
@@ -91,9 +92,22 @@ type Bookmark {
 
 type Conversation {
   createdAt: DateTime!
+  group: ConversationGroup
   groupId: ID
   id: ID!
+  lastMessage: Message
+  myLastReadAt: DateTime
+  otherUser: User
   type: ConversationType!
+  unreadCount: Int!
+  updatedAt: DateTime!
+}
+
+type ConversationGroup {
+  coverImageUrl: String
+  id: ID!
+  name: String!
+  slug: String!
 }
 
 enum ConversationType {
@@ -109,15 +123,22 @@ input CreateGroupInput {
   visibility: GroupVisibility = PUBLIC
 }
 
+input CreateGroupPostInput {
+  body: String!
+  imageKey: String
+}
+
 """
 A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
 """
 scalar DateTime
 
 type Friendship {
+  addressee: User
   addresseeId: String!
   createdAt: DateTime!
   id: ID!
+  requester: User
   requesterId: String!
   status: FriendshipStatus!
 }
@@ -138,6 +159,7 @@ type Group {
   id: ID!
   memberCount: Int!
   myRole: String
+  myStatus: GroupMemberStatus
   name: String!
   slug: String!
   visibility: GroupVisibility!
@@ -156,11 +178,13 @@ type GroupMember {
   joinedAt: DateTime!
   role: GroupMemberRole!
   status: GroupMemberStatus!
+  user: User
   userId: ID!
 }
 
 enum GroupMemberRole {
   MEMBER
+  MODERATOR
   OWNER
 }
 
@@ -168,6 +192,26 @@ enum GroupMemberStatus {
   ACTIVE
   BANNED
   PENDING
+}
+
+type GroupPost {
+  author: User
+  body: String!
+  commentCount: Int!
+  createdAt: DateTime!
+  groupId: ID!
+  id: ID!
+  imageKey: String
+  likeCount: Int!
+  likedByMe: Boolean!
+}
+
+type GroupPostComment {
+  author: User
+  body: String!
+  createdAt: DateTime!
+  id: ID!
+  postId: ID!
 }
 
 enum GroupVisibility {
@@ -200,13 +244,13 @@ type Message {
   createdAt: DateTime!
   editedAt: DateTime
   id: ID!
+  sender: User
   senderId: ID!
 }
 
 type MessageConnection {
   edges: [MessageEdge!]!
   hasNextPage: Boolean!
-  totalCount: Float!
 }
 
 type MessageEdge {
@@ -218,11 +262,17 @@ type Mutation {
   acceptFriendRequest(friendshipId: String!): Friendship!
   addBookmark(input: AddBookmarkInput!): Bookmark!
   addHighlight(input: AddHighlightInput!): Highlight!
+  approveGroupMember(groupId: String!, userId: String!): GroupMember!
+  banGroupMember(groupId: String!, userId: String!): GroupMember!
   createAnnouncement(input: PublishAnnouncementInput!): Announcement!
   createGroup(input: CreateGroupInput!): Group!
+  createGroupPost(groupId: String!, input: CreateGroupPostInput!): GroupPost!
+  createGroupPostComment(body: String!, postId: String!): GroupPostComment!
   deleteAnnouncement(id: String!): Boolean!
   deleteBook(id: String!): Boolean!
   deleteGroup(groupId: String!): Group!
+  deleteGroupPost(postId: String!): Boolean!
+  deleteGroupPostComment(commentId: String!): Boolean!
   joinGroup(groupId: String!): GroupMember!
   leaveGroup(groupId: String!): Boolean!
   loginLocal(input: LoginLocalInput!): AuthPayload!
@@ -235,15 +285,19 @@ type Mutation {
   rejectFriendRequest(friendshipId: String!): Friendship!
   removeBookmark(id: String!): Boolean!
   removeFriend(friendshipId: String!): Boolean!
+  removeGroupMember(groupId: String!, userId: String!): Boolean!
   removeHighlight(id: String!): Boolean!
   saveProgress(input: SaveProgressInput!): BookProgress!
   sendFriendRequest(addresseeId: String!): Friendship!
   sendMessage(input: SendMessageInput!): Message!
   startDirectConversation(otherUserId: String!): Conversation!
+  toggleGroupPostLike(postId: String!): Boolean!
+  unbanGroupMember(groupId: String!, userId: String!): GroupMember!
   unpublishAnnouncement(id: String!): Announcement!
   updateAnnouncement(id: String!, input: UpdateAnnouncementInput!): Announcement!
   updateBook(id: String!, input: UpdateBookInput!): Book!
   updateGroup(groupId: String!, input: UpdateGroupInput!): Group!
+  updateGroupMemberRole(groupId: String!, role: GroupMemberRole!, userId: String!): GroupMember!
   updateProfile(input: UpdateProfileInput!): User!
   uploadBook(input: UploadBookInput!): Book!
   uploadPdf(bookId: String!, file: Upload!): Book!
@@ -284,18 +338,24 @@ type Query {
   discoverGroups(category: GroupCategory): [Group!]!
   friendRequests: [Friendship!]!
   friends: [Friendship!]!
+  friendshipStatus(otherUserId: String!): Friendship
   group(id: String!): Group
+  groupBySlug(slug: String!): Group
   groupMembers(groupId: String!): [GroupMember!]!
+  groupPostComments(postId: String!): [GroupPostComment!]!
+  groupPosts(groupId: String!, limit: Int! = 20, offset: Int! = 0): [GroupPost!]!
   groups: [Group!]!
   highlights(bookId: String!): [Highlight!]!
   me: User!
-  messages(conversationId: String!, cursor: String, limit: Float! = 25): MessageConnection!
+  messages(conversationId: String!, cursor: String, limit: Int! = 25): MessageConnection!
   myGroups: [Group!]!
   notifications(limit: Int! = 50): [Notification!]!
   readProgress(bookId: String!): BookProgress
   searchGroups(query: String!): [Group!]!
   searchUsers(query: String!): [User!]!
+  suggestedFriends(limit: Int! = 5): [User!]!
   unreadNotificationCount: Int!
+  userProfile(id: String!): UserProfile!
   users: [User!]!
   verseOfDay: VerseOfDay!
 }
@@ -318,7 +378,8 @@ input SendMessageInput {
 }
 
 type Subscription {
-  messageAdded(conversationId: String!): Message!
+  messageAdded(conversationId: String): Message!
+  notificationReceived(userId: String!): Notification!
 }
 
 input UpdateAnnouncementInput {
@@ -375,6 +436,16 @@ type User {
   lastLoginAt: DateTime
   role: UserRole!
   status: String!
+}
+
+type UserProfile {
+  bookCount: Int!
+  bookProgress: [BookProgress!]!
+  friendCount: Int!
+  groupCount: Int!
+  groups: [Group!]!
+  mutualFriends: [User!]!
+  user: User!
 }
 
 enum UserRole {

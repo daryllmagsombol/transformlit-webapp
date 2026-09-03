@@ -1,0 +1,112 @@
+import { render } from '@testing-library/react';
+import { ChatProvider } from './chat-provider';
+import { useChatStore } from '../../store/chat-store';
+import { useAuthStore } from '../../store';
+import * as chatQueries from '../../lib/chat-queries';
+
+jest.mock('../../lib/chat-queries', () => ({
+  MESSAGE_ADDED: { kind: 'Document' },
+  fetchConversations: jest.fn(),
+}));
+
+var mockSubscribe: jest.Mock;
+var mockRegisterWsReconnectHandler: jest.Mock;
+var mockUnregisterWsReconnectHandler: jest.Mock;
+
+jest.mock('../../lib/apollo-client', () => {
+  mockSubscribe = jest.fn();
+  mockRegisterWsReconnectHandler = jest.fn();
+  mockUnregisterWsReconnectHandler = jest.fn();
+  return {
+    apolloClient: { subscribe: mockSubscribe },
+    registerWsReconnectHandler: mockRegisterWsReconnectHandler,
+    unregisterWsReconnectHandler: mockUnregisterWsReconnectHandler,
+  };
+});
+
+describe('ChatProvider', () => {
+  let unsub: () => void;
+  let reconnectHandler: (() => void) | null;
+
+  beforeEach(() => {
+    useChatStore.getState().reset();
+    useAuthStore.setState({ user: { id: 'u1' } as any, token: 't', isHydrated: true });
+    unsub = jest.fn();
+    reconnectHandler = null;
+    mockSubscribe.mockReset();
+    mockRegisterWsReconnectHandler.mockReset();
+    mockUnregisterWsReconnectHandler.mockReset();
+    mockRegisterWsReconnectHandler.mockImplementation((fn: () => void) => {
+      reconnectHandler = fn;
+    });
+    (chatQueries.fetchConversations as jest.Mock).mockReset();
+    (chatQueries.fetchConversations as jest.Mock).mockResolvedValue([]);
+    mockSubscribe.mockReturnValue({
+      subscribe: jest.fn(({ next }) => {
+        next({ data: { messageAdded: { id: 'm1', conversationId: 'c1', senderId: 'u2', body: 'hi', createdAt: '2026-09-02T10:00:00Z' } } });
+        return { unsubscribe: unsub };
+      }),
+    });
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('subscribes once per user and appends known-conversation messages', () => {
+    useChatStore.getState().setConversations([
+      { id: 'c1', type: 'DIRECT', updatedAt: '2026-09-02T10:00:00Z', otherUser: { id: 'u2', displayName: 'Bob', avatarUrl: null }, group: null, lastMessage: null, unreadCount: 0, myLastReadAt: null },
+    ]);
+    render(<ChatProvider />);
+    expect(mockSubscribe).toHaveBeenCalledTimes(1);
+    expect(useChatStore.getState().messagesByConversation.c1).toHaveLength(1);
+    expect(useChatStore.getState().conversations[0].unreadCount).toBe(1);
+  });
+
+  it('refetches conversations for unknown conversations', async () => {
+    (chatQueries.fetchConversations as jest.Mock).mockResolvedValue([]);
+    render(<ChatProvider />);
+    await Promise.resolve();
+    // cold-start seed + the unknown-conversation message event
+    expect(chatQueries.fetchConversations).toHaveBeenCalledTimes(2);
+  });
+
+  it('fetches conversations on mount to seed the unread badge (cold start)', async () => {
+    (chatQueries.fetchConversations as jest.Mock).mockResolvedValue([
+      { id: 'c1', type: 'DIRECT', updatedAt: '2026-09-02T10:00:00Z', otherUser: { id: 'u2', displayName: 'Bob', avatarUrl: null }, group: null, lastMessage: null, unreadCount: 2, myLastReadAt: null },
+    ]);
+    // Override the subscription so no message event interferes with the count.
+    mockSubscribe.mockReturnValue({
+      subscribe: jest.fn(() => ({ unsubscribe: unsub })),
+    });
+    render(<ChatProvider />);
+    expect(chatQueries.fetchConversations).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    expect(useChatStore.getState().conversations).toHaveLength(1);
+    expect(useChatStore.getState().totalUnread).toBe(2);
+  });
+
+  it('unsubscribes, unregisters the reconnect handler, and resets the store on unmount', () => {
+    useChatStore.getState().setConversations([
+      { id: 'c1', type: 'DIRECT', updatedAt: '2026-09-02T10:00:00Z', otherUser: { id: 'u2', displayName: 'Bob', avatarUrl: null }, group: null, lastMessage: null, unreadCount: 2, myLastReadAt: null },
+    ]);
+    const { unmount } = render(<ChatProvider />);
+    expect(mockRegisterWsReconnectHandler).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(unsub).toHaveBeenCalled();
+    expect(mockUnregisterWsReconnectHandler).toHaveBeenCalledWith(reconnectHandler);
+    expect(useChatStore.getState().conversations).toHaveLength(0);
+    expect(useChatStore.getState().totalUnread).toBe(0);
+  });
+
+  it('refetches conversations when the WS connection reconnects', async () => {
+    (chatQueries.fetchConversations as jest.Mock).mockResolvedValue([]);
+    // No immediate message event — count only cold-start + reconnect.
+    mockSubscribe.mockReturnValue({
+      subscribe: jest.fn(() => ({ unsubscribe: unsub })),
+    });
+    render(<ChatProvider />);
+    expect(reconnectHandler).not.toBeNull();
+    reconnectHandler!();
+    await Promise.resolve();
+    expect(chatQueries.fetchConversations).toHaveBeenCalledTimes(2);
+  });
+});

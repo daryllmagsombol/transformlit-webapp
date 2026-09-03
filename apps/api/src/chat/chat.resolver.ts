@@ -1,10 +1,11 @@
-import { Resolver, Query, Mutation, Subscription, Args } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Subscription, Args, Int } from '@nestjs/graphql';
 import { UseGuards } from '@nestjs/common';
 import { ChatService } from './chat.service.js';
 import { PubSubService } from './pubsub.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Conversation, Message, MessageConnection, SendMessageInput } from './models/chat.model.js';
+import { messageAddedFilter, MessageAddedPayload } from './message-added.filter.js';
 
 @Resolver()
 export class ChatResolver {
@@ -31,11 +32,12 @@ export class ChatResolver {
   @Query(() => MessageConnection, { name: 'messages' })
   @UseGuards(JwtAuthGuard)
   async messages(
+    @CurrentUser() user: { id: string },
     @Args('conversationId') conversationId: string,
     @Args('cursor', { nullable: true }) cursor?: string,
-    @Args('limit', { defaultValue: 25 }) limit?: number,
+    @Args('limit', { type: () => Int, defaultValue: 25 }) limit?: number,
   ) {
-    return this.chatService.getMessages(conversationId, cursor, limit);
+    return this.chatService.getMessages(conversationId, cursor, limit, user.id);
   }
 
   @Mutation(() => Message, { name: 'sendMessage' })
@@ -58,12 +60,12 @@ export class ChatResolver {
 
   @Subscription(() => Message, {
     name: 'messageAdded',
-    resolve: (payload) => payload.messageAdded,
-    filter: (payload, variables) =>
-      payload.messageAdded.conversationId === variables.conversationId,
+    resolve: (payload: MessageAddedPayload) => payload.messageAdded,
+    filter: (payload, variables, context) =>
+      messageAddedFilter(payload, variables, context),
   })
   @UseGuards(JwtAuthGuard)
-  messageAdded(@Args('conversationId') conversationId: string) {
+  messageAdded(@Args('conversationId', { nullable: true }) conversationId?: string) {
     return this.pubSub.asyncIterator('messageAdded');
   }
 }

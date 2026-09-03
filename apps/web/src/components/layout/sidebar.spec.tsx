@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { Sidebar } from './sidebar';
+import { useChatStore } from '../../store/chat-store';
 
 var mockSetSidebarOpen: jest.Mock;
 
@@ -35,11 +36,14 @@ jest.mock('../../store', () => {
 });
 
 describe('Sidebar', () => {
+  beforeEach(() => useChatStore.getState().reset());
+
   describe('nav items', () => {
     it('renders all sidebar navigation items', () => {
       render(<Sidebar />);
       expect(screen.getByText('Feed')).toBeInTheDocument();
       expect(screen.getByText('Friends')).toBeInTheDocument();
+      expect(screen.getByText('Chat')).toBeInTheDocument();
       expect(screen.getByText('Groups')).toBeInTheDocument();
       expect(screen.getByText('Books')).toBeInTheDocument();
     });
@@ -49,6 +53,18 @@ describe('Sidebar', () => {
       const feedLinks = screen.getAllByText('Feed');
       const feedLink = feedLinks.find(el => el.closest('a')?.getAttribute('href') === '/feed' && el.tagName === 'SPAN');
       expect(feedLink).toBeInTheDocument();
+    });
+
+    it('shows the unread badge on the Chat item', () => {
+      useChatStore.setState({ totalUnread: 2 });
+      render(<Sidebar />);
+      const chatLink = screen.getByText('Chat').closest('a');
+      expect(chatLink).toContainElement(screen.getByText('2'));
+    });
+
+    it('does not show a badge when there are no unread messages', () => {
+      render(<Sidebar />);
+      expect(screen.queryByText('0')).not.toBeInTheDocument();
     });
   });
 

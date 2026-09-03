@@ -1,9 +1,10 @@
-import { Resolver, Query, Mutation, Args } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Args, Int } from '@nestjs/graphql';
 import { UseGuards } from '@nestjs/common';
 import { FriendsService } from './friends.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Friendship } from './models/friend.model.js';
+import { User } from '../auth/models/auth.model.js';
 
 @Resolver()
 export class FriendsResolver {
@@ -50,8 +51,11 @@ export class FriendsResolver {
 
   @Mutation(() => Boolean, { name: 'removeFriend' })
   @UseGuards(JwtAuthGuard)
-  async removeFriend(@Args('friendshipId') friendshipId: string) {
-    return this.friendsService.removeFriend(friendshipId);
+  async removeFriend(
+    @CurrentUser() user: { id: string },
+    @Args('friendshipId') friendshipId: string,
+  ) {
+    return this.friendsService.removeFriend(friendshipId, user.id);
   }
 
   @Query(() => Friendship, { name: 'friendshipStatus', nullable: true })
@@ -61,5 +65,14 @@ export class FriendsResolver {
     @Args('otherUserId') otherUserId: string,
   ) {
     return this.friendsService.checkFriendship(user.id, otherUserId);
+  }
+
+  @Query(() => [User], { name: 'suggestedFriends' })
+  @UseGuards(JwtAuthGuard)
+  async suggestedFriends(
+    @CurrentUser() user: { id: string },
+    @Args('limit', { type: () => Int, defaultValue: 5 }) limit: number,
+  ) {
+    return this.friendsService.suggestedFriends(user.id, limit);
   }
 }

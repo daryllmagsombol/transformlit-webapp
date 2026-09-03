@@ -6,12 +6,14 @@ import { BottomNav } from './bottom-nav';
 import { ScrollToTop } from './scroll-to-top';
 import { useUIStore } from '../../store';
 import { ProfileSheetProvider } from '../friends/profile-sheet-provider';
+import { ChatProvider } from '../chat/chat-provider';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
 
   return (
     <ProfileSheetProvider>
+      <ChatProvider />
       <div className="min-h-dvh bg-surface dark:bg-surface-dark paper-texture">
         <ScrollToTop />
         <TopBar />

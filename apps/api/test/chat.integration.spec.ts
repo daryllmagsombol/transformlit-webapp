@@ -56,6 +56,12 @@ describe('Chat Integration', () => {
   let user1Id: string;
   let user2Id: string;
 
+  async function makeFriends(a: string, b: string) {
+    await prisma.friendship.create({
+      data: { requesterId: a, addresseeId: b, status: 'ACCEPTED' },
+    });
+  }
+
   beforeAll(async () => {
     let databaseUrl: string;
 
@@ -118,6 +124,7 @@ describe('Chat Integration', () => {
     await prisma.message.deleteMany();
     await prisma.conversationMember.deleteMany();
     await prisma.conversation.deleteMany();
+    await prisma.friendship.deleteMany();
     await prisma.refreshToken.deleteMany();
     await prisma.identity.deleteMany();
     await prisma.user.deleteMany();
@@ -135,6 +142,8 @@ describe('Chat Integration', () => {
       displayName: 'User Two',
     });
     user2Id = user2.user.id;
+
+    await makeFriends(user1Id, user2Id);
   });
 
   describe('getOrCreateDirectConversation', () => {
@@ -188,6 +197,7 @@ describe('Chat Integration', () => {
 
       expect(publishSpy).toHaveBeenCalledWith('messageAdded', {
         messageAdded: expect.objectContaining({ id: msg.id }),
+        memberIds: expect.arrayContaining([user1Id, user2Id]),
       });
 
       publishSpy.mockRestore();
@@ -205,7 +215,7 @@ describe('Chat Integration', () => {
         );
       }
 
-      const result = await chatService.getMessages(conv.id, undefined, 3);
+      const result = await chatService.getMessages(conv.id, undefined, 3, user1Id);
 
       expect(result.edges.length).toBe(3);
       expect(result.hasNextPage).toBe(true);
@@ -213,7 +223,7 @@ describe('Chat Integration', () => {
       expect(result.edges[0]).toHaveProperty('cursor');
 
       const cursor = result.edges[result.edges.length - 1].cursor;
-      const page2 = await chatService.getMessages(conv.id, cursor, 3);
+      const page2 = await chatService.getMessages(conv.id, cursor, 3, user1Id);
 
       expect(page2.edges.length).toBe(2);
       expect(page2.hasNextPage).toBe(false);
@@ -223,7 +233,7 @@ describe('Chat Integration', () => {
     it('should return empty edges for conversation with no messages', async () => {
       const conv = await chatService.getOrCreateDirectConversation(user1Id, user2Id);
 
-      const result = await chatService.getMessages(conv.id);
+      const result = await chatService.getMessages(conv.id, undefined, 25, user1Id);
 
       expect(result.edges.length).toBe(0);
       expect(result.hasNextPage).toBe(false);
@@ -251,6 +261,90 @@ describe('Chat Integration', () => {
         where: { conversationId: conv.id, userId: user1Id },
       });
       expect(after!.lastReadAt).toBeTruthy();
+    });
+  });
+
+  describe('friends-only DMs', () => {
+    it('rejects starting a conversation with a non-friend', async () => {
+      const stranger = await authService.registerLocal({
+        email: 'stranger@example.com',
+        password: 'password123',
+        displayName: 'Stranger',
+      });
+      await expect(
+        chatService.getOrCreateDirectConversation(user1Id, stranger.user.id),
+      ).rejects.toThrow('You can only message your friends');
+    });
+
+    it('rejects self-chat', async () => {
+      await expect(
+        chatService.getOrCreateDirectConversation(user1Id, user1Id),
+      ).rejects.toThrow('You cannot message yourself');
+    });
+  });
+
+  describe('listConversations enrichment', () => {
+    it('returns otherUser, lastMessage, unreadCount and myLastReadAt', async () => {
+      const conv = await chatService.getOrCreateDirectConversation(user1Id, user2Id);
+      await chatService.sendMessage({ conversationId: conv.id, body: 'Hello' }, user2Id);
+
+      const [list] = await chatService.listConversations(user1Id);
+
+      expect(list.id).toBe(conv.id);
+      expect(list.otherUser!.id).toBe(user2Id);
+      expect(list.lastMessage!.body).toBe('Hello');
+      expect(list.unreadCount).toBe(1);
+      expect(list.myLastReadAt).toBeNull();
+    });
+
+    it('unreadCount resets after markRead and excludes own messages', async () => {
+      const conv = await chatService.getOrCreateDirectConversation(user1Id, user2Id);
+      await chatService.sendMessage({ conversationId: conv.id, body: 'mine' }, user1Id);
+      await chatService.sendMessage({ conversationId: conv.id, body: 'yours' }, user2Id);
+
+      let [list] = await chatService.listConversations(user1Id);
+      expect(list.unreadCount).toBe(1); // only user2's message
+
+      await chatService.markRead(conv.id, user1Id);
+      [list] = await chatService.listConversations(user1Id);
+      expect(list.unreadCount).toBe(0);
+    });
+  });
+
+  describe('getMessages sender', () => {
+    it('includes sender user', async () => {
+      const conv = await chatService.getOrCreateDirectConversation(user1Id, user2Id);
+      await chatService.sendMessage({ conversationId: conv.id, body: 'hi' }, user1Id);
+
+      const result = await chatService.getMessages(conv.id, undefined, 25, user1Id);
+      expect(result.edges[0].node.sender!.id).toBe(user1Id);
+    });
+  });
+
+  describe('pubsub broadcast', () => {
+    it('delivers a message to all waiting subscribers', async () => {
+      const iteratorA = pubSub.asyncIterator('messageAdded');
+      const iteratorB = pubSub.asyncIterator('messageAdded');
+
+      // next() promises must exist before publish (publish only wakes waiting triggers)
+      const nextA = iteratorA.next();
+      const nextB = iteratorB.next();
+
+      const payload = {
+        messageAdded: {
+          id: 'broadcast-1',
+          conversationId: 'c1',
+          senderId: user1Id,
+          body: 'hi',
+          createdAt: new Date().toISOString(),
+        },
+        memberIds: [user1Id, user2Id],
+      };
+      await pubSub.publish('messageAdded', payload);
+
+      const [resA, resB] = await Promise.all([nextA, nextB]);
+      expect(resA.value.messageAdded.id).toBe('broadcast-1');
+      expect(resB.value.messageAdded.id).toBe('broadcast-1');
     });
   });
 });

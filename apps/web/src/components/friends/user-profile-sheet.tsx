@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { gql } from '@apollo/client';
 import { useRouter } from 'next/navigation';
 import { apolloClient } from '../../lib/apollo-client';
+import { startDirectConversation } from '../../lib/chat-queries';
 import { useToast, UserAvatar, Modal } from '../ui';
 
 const USER_PROFILE_QUERY = gql`
@@ -146,6 +147,20 @@ export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserP
     }
   };
 
+  const handleMessage = async () => {
+    if (!friendship || friendship.status !== 'ACCEPTED') return;
+    setActionLoading(true);
+    try {
+      const conversationId = await startDirectConversation(userId);
+      onClose();
+      router.push(`/chat/${conversationId}`);
+    } catch {
+      addToast('You can only message your friends.', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const isOwnProfile = userId === currentUserId;
   const user = profile?.user;
 
@@ -248,6 +263,16 @@ export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserP
                     {friendship?.status === 'ACCEPTED' ? 'check' : 'person_add'}
                   </span>
                   {actionLoading ? 'Loading...' : buttonLabel}
+                </button>
+              )}
+              {friendship?.status === 'ACCEPTED' && (
+                <button
+                  onClick={() => void handleMessage()}
+                  disabled={actionLoading}
+                  className="w-full py-3 rounded-lg font-bold shadow-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all border border-outline-variant text-on-surface hover:bg-surface-container-high disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined">chat_bubble</span>
+                  {actionLoading ? 'Loading...' : 'Message'}
                 </button>
               )}
               <button

@@ -14,6 +14,9 @@ export class UserProfile {
   @Field(() => [BookProgress])
   bookProgress: BookProgress[];
 
+  @Field(() => [User])
+  mutualFriends: User[];
+
   @Field(() => Int)
   friendCount: number;
 

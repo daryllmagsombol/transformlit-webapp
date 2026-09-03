@@ -80,6 +80,7 @@ export const SIDEBAR_NAV_ITEMS = [
   { label: 'Feed', href: '/feed', icon: 'dynamic_feed' },
   { label: 'Bible', href: '/bible', icon: 'auto_stories' },
   { label: 'Friends', href: '/friends', icon: 'group' },
+  { label: 'Chat', href: '/chat', icon: 'chat_bubble' },
   { label: 'Groups', href: '/groups', icon: 'diversity_3' },
   { label: 'Books', href: '/books', icon: 'menu_book' },
 ] as const;
