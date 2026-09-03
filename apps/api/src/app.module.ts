@@ -31,7 +31,7 @@ import { HealthModule } from './health/health.module.js';
 function describeValue(value: unknown): string {
   if (typeof value === 'string') return value;
   try {
-    return JSON.stringify(value) ?? String(value);
+    return JSON.stringify(value) ?? Object.prototype.toString.call(value);
   } catch {
     return Object.prototype.toString.call(value);
   }
