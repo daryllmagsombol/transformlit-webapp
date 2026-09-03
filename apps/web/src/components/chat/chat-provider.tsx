@@ -59,7 +59,7 @@ export function ChatProvider() {
         const state = useChatStore.getState();
         const known = state.conversations.some((c) => c.id === message.conversationId);
         if (known) {
-          state.appendMessage(message);
+          state.appendMessage(message, userId);
         } else {
           // New conversation (e.g. started by the other side) — refresh the list.
           refreshConversations();

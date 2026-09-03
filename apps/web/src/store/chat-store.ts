@@ -13,7 +13,7 @@ interface ChatStore {
   setViewingConversationId: (id: string | null) => void;
   setMessages: (conversationId: string, messages: ChatMessage[], hasMore: boolean, cursor?: string) => void;
   prependMessages: (conversationId: string, messages: ChatMessage[], hasMore: boolean, cursor?: string) => void;
-  appendMessage: (message: ChatMessage) => void;
+  appendMessage: (message: ChatMessage, currentUserId?: string) => void;
   removeMessage: (conversationId: string, messageId: string) => void;
   clearUnread: (conversationId: string) => void;
   reset: () => void;
@@ -76,7 +76,7 @@ export const useChatStore = create<ChatStore>((set) => ({
       };
     }),
 
-  appendMessage: (message) =>
+  appendMessage: (message, currentUserId) =>
     set((state) => {
       const list = state.messagesByConversation[message.conversationId] ?? [];
       if (list.some((m) => m.id === message.id)) return state;
@@ -94,7 +94,10 @@ export const useChatStore = create<ChatStore>((set) => ({
         ...conversation,
         updatedAt: message.createdAt,
         lastMessage: { id: message.id, body: message.body, senderId: message.senderId, createdAt: message.createdAt },
-        unreadCount: viewing ? conversation.unreadCount : conversation.unreadCount + 1,
+        unreadCount:
+          viewing || message.senderId === currentUserId
+            ? conversation.unreadCount
+            : conversation.unreadCount + 1,
       };
       const conversations = sortByUpdatedAt(
         state.conversations.map((c) => (c.id === updated.id ? updated : c)),

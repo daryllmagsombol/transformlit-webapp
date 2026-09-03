@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
-import { GraphQLScalarType, Kind } from 'graphql';
+import { GraphQLError, GraphQLScalarType, Kind } from 'graphql';
 import { join } from 'node:path';
 import type { Request } from 'express';
 
@@ -24,14 +24,23 @@ import { HealthModule } from './health/health.module.js';
  * is a Date instance. Subscription payloads are published via Postgres NOTIFY
  * (JSON.stringify -> pg_notify -> JSON.parse), which turns every Date into an
  * ISO string — so messageAdded/notificationReceived always failed to serialize
- * their createdAt fields. Accept both Date objects and valid ISO strings.
+ * their createdAt fields. Accept both Date objects and valid ISO strings, and
+ * throw (never return null / Invalid Date) on anything that cannot be
+ * represented as a DateTime.
  */
-const DateTimeScalar = new GraphQLScalarType({
+export const DateTimeScalar = new GraphQLScalarType({
   name: 'DateTime',
   description:
     'A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.',
   parseValue(value: unknown) {
-    return new Date(value as string);
+    if (typeof value !== 'string') {
+      throw new GraphQLError(`DateTime cannot represent a non-string value: ${String(value)}`);
+    }
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) {
+      throw new GraphQLError(`DateTime cannot represent an invalid date: ${value}`);
+    }
+    return d;
   },
   serialize(value: unknown) {
     if (value instanceof Date) return value.toISOString();
@@ -39,10 +48,17 @@ const DateTimeScalar = new GraphQLScalarType({
       const d = new Date(value);
       if (!Number.isNaN(d.getTime())) return d.toISOString();
     }
-    return null;
+    throw new GraphQLError(`DateTime cannot represent value: ${String(value)}`);
   },
   parseLiteral(ast) {
-    return ast.kind === Kind.STRING ? new Date(ast.value) : null;
+    if (ast.kind !== Kind.STRING || typeof ast.value !== 'string') {
+      throw new GraphQLError('DateTime cannot represent a non-string literal');
+    }
+    const d = new Date(ast.value);
+    if (Number.isNaN(d.getTime())) {
+      throw new GraphQLError(`DateTime cannot represent an invalid date: ${ast.value}`);
+    }
+    return d;
   },
 });
 

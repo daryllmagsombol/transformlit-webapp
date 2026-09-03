@@ -122,12 +122,12 @@ export function ChatThread({ conversationId }: { conversationId: string }) {
       body,
       createdAt: new Date().toISOString(),
     };
-    useChatStore.getState().appendMessage(temp);
+    useChatStore.getState().appendMessage(temp, currentUserId);
 
     try {
       const saved = await sendChatMessage(conversationId, body);
       useChatStore.getState().removeMessage(conversationId, tempId);
-      useChatStore.getState().appendMessage(saved);
+      useChatStore.getState().appendMessage(saved, currentUserId);
       scrollToBottom();
     } catch {
       useChatStore.getState().removeMessage(conversationId, tempId);

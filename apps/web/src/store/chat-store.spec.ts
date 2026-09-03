@@ -11,10 +11,10 @@ const conv = (id: string, unread = 0, updatedAt = '2026-09-02T10:00:00Z') => ({
   myLastReadAt: null,
 });
 
-const msg = (id: string, conversationId: string) => ({
+const msg = (id: string, conversationId: string, senderId = 'u2') => ({
   id,
   conversationId,
-  senderId: 'u2',
+  senderId,
   body: 'hi',
   createdAt: '2026-09-02T10:00:00Z',
 });
@@ -49,6 +49,22 @@ describe('chat store', () => {
     useChatStore.getState().appendMessage(msg('m1', 'c1'));
     expect(useChatStore.getState().conversations[0].unreadCount).toBe(1);
     expect(useChatStore.getState().totalUnread).toBe(1);
+  });
+
+  it('increments unread for another user\'s message when a currentUserId is passed', () => {
+    useChatStore.getState().setConversations([conv('c1', 0)]);
+    useChatStore.getState().setViewingConversationId('c2');
+    useChatStore.getState().appendMessage(msg('m1', 'c1', 'u2'), 'u1');
+    expect(useChatStore.getState().conversations[0].unreadCount).toBe(1);
+    expect(useChatStore.getState().totalUnread).toBe(1);
+  });
+
+  it('does not increment unread for a self-sent message in a non-viewed conversation', () => {
+    useChatStore.getState().setConversations([conv('c1', 0)]);
+    useChatStore.getState().setViewingConversationId('c2');
+    useChatStore.getState().appendMessage(msg('m1', 'c1', 'u1'), 'u1');
+    expect(useChatStore.getState().conversations[0].unreadCount).toBe(0);
+    expect(useChatStore.getState().totalUnread).toBe(0);
   });
 
   it('does not increment unread for the viewed conversation', () => {
