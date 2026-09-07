@@ -67,10 +67,15 @@ export class FriendsService {
           data: { requesterId, addresseeId, status: 'PENDING' },
         });
 
+    const requester = await this.prisma.user.findUnique({
+      where: { id: requesterId },
+      select: { displayName: true },
+    });
+
     const notification = await this.notifications.createNotification(
       addresseeId,
       'FRIEND_REQUEST',
-      { friendshipId: friendship.id },
+      { friendshipId: friendship.id, fromName: requester?.displayName },
       requesterId,
     );
 
@@ -87,15 +92,22 @@ export class FriendsService {
       where: { id: friendshipId },
     });
     if (!friendship || friendship.addresseeId !== userId) throw new Error('Not authorized');
+    await this.notifications.removeFriendRequestNotifications(userId, friendshipId);
+
     const updated = await this.prisma.friendship.update({
       where: { id: friendshipId },
       data: { status: 'ACCEPTED' },
     });
 
+    const accepter = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { displayName: true },
+    });
+
     const notification = await this.notifications.createNotification(
       friendship.requesterId,
       'FRIEND_ACCEPTED',
-      { friendshipId: friendship.id },
+      { friendshipId: friendship.id, fromName: accepter?.displayName },
       userId,
     );
 
@@ -112,6 +124,7 @@ export class FriendsService {
       where: { id: friendshipId },
     });
     if (!friendship || friendship.addresseeId !== userId) throw new Error('Not authorized');
+    await this.notifications.removeFriendRequestNotifications(userId, friendshipId);
     return this.prisma.friendship.update({
       where: { id: friendshipId },
       data: { status: 'REJECTED' },

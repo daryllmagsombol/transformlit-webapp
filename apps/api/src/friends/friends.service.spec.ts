@@ -41,10 +41,14 @@ describe('FriendsService', () => {
         update: jest.fn().mockResolvedValue({ ...mockFriendship, status: 'ACCEPTED' }),
         delete: jest.fn().mockResolvedValue(mockFriendship),
       },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ displayName: 'Test User' }),
+      },
     };
 
     const mockNotifications = {
       createNotification: jest.fn().mockResolvedValue({}),
+      removeFriendRequestNotifications: jest.fn().mockResolvedValue(undefined),
     };
 
     const mockPubSub = {
@@ -283,6 +287,15 @@ describe('FriendsService', () => {
       });
     });
 
+    it('should remove pending FRIEND_REQUEST notification on accept', async () => {
+      notificationsService.removeFriendRequestNotifications.mockClear();
+      await service.acceptRequest('friendship-1', 'user-2');
+      expect(notificationsService.removeFriendRequestNotifications).toHaveBeenCalledWith(
+        'user-2',
+        'friendship-1',
+      );
+    });
+
     it('should return updated friendship', async () => {
       const accepted = { ...mockFriendship, status: 'ACCEPTED' };
       prisma.friendship.update.mockResolvedValue(accepted);
@@ -314,6 +327,15 @@ describe('FriendsService', () => {
         where: { id: 'friendship-1' },
         data: { status: 'REJECTED' },
       });
+    });
+
+    it('should remove pending FRIEND_REQUEST notification on reject', async () => {
+      notificationsService.removeFriendRequestNotifications.mockClear();
+      await service.rejectRequest('friendship-1', 'user-2');
+      expect(notificationsService.removeFriendRequestNotifications).toHaveBeenCalledWith(
+        'user-2',
+        'friendship-1',
+      );
     });
 
     it('should return updated friendship', async () => {
@@ -376,6 +398,9 @@ describe('FriendsService - notifications', () => {
     notification: {
       create: jest.fn(),
     },
+    user: {
+      findUnique: jest.fn(),
+    },
   };
 
   const mockPubSub = {
@@ -390,7 +415,13 @@ describe('FriendsService - notifications', () => {
       providers: [
         FriendsService,
         { provide: PrismaService, useValue: mockPrisma },
-        { provide: NotificationsService, useValue: { createNotification: jest.fn() } },
+        {
+          provide: NotificationsService,
+          useValue: {
+            createNotification: jest.fn(),
+            removeFriendRequestNotifications: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         { provide: PubSubService, useValue: mockPubSub },
       ],
     }).compile();
@@ -400,6 +431,7 @@ describe('FriendsService - notifications', () => {
     prisma = module.get(PrismaService);
     pubSub = module.get(PubSubService);
     jest.clearAllMocks();
+    mockPrisma.user.findUnique.mockResolvedValue({ displayName: 'Test User' });
   });
 
   it('should create a FRIEND_REQUEST notification after sending a request', async () => {
@@ -411,7 +443,7 @@ describe('FriendsService - notifications', () => {
     await service.sendRequest('u1', 'u2');
 
     expect(notificationsService.createNotification).toHaveBeenCalledWith(
-      'u2', 'FRIEND_REQUEST', { friendshipId: 'f1' }, 'u1'
+      'u2', 'FRIEND_REQUEST', { friendshipId: 'f1', fromName: 'Test User' }, 'u1'
     );
   });
 
@@ -439,7 +471,7 @@ describe('FriendsService - notifications', () => {
     await service.acceptRequest('f1', 'u2');
 
     expect(notificationsService.createNotification).toHaveBeenCalledWith(
-      'u1', 'FRIEND_ACCEPTED', { friendshipId: 'f1' }, 'u2'
+      'u1', 'FRIEND_ACCEPTED', { friendshipId: 'f1', fromName: 'Test User' }, 'u2'
     );
   });
 

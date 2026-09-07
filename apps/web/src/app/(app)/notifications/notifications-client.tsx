@@ -59,9 +59,10 @@ interface Notification {
 }
 
 function getBody(n: Notification): string {
+  const name = (n.payload?.fromName as string | undefined)?.trim();
   switch (n.type) {
-    case 'FRIEND_REQUEST': return 'sent you a friend request';
-    case 'FRIEND_ACCEPTED': return 'accepted your friend request';
+    case 'FRIEND_REQUEST': return name ? `${name} sent you a friend request` : 'sent you a friend request';
+    case 'FRIEND_ACCEPTED': return name ? `${name} accepted your friend request` : 'accepted your friend request';
     case 'GROUP_INVITE': return 'invited you to join a group';
     case 'GROUP_UPDATE': return 'New discussion in your group';
     default: return 'You have a new notification';

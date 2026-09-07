@@ -45,4 +45,14 @@ export class NotificationsService {
       data: { userId, type: type as any, payload: payload as any ?? undefined, createdById },
     });
   }
+
+  async removeFriendRequestNotifications(userId: string, friendshipId: string) {
+    await this.prisma.notification.deleteMany({
+      where: {
+        userId,
+        type: 'FRIEND_REQUEST',
+        payload: { path: ['friendshipId'], equals: friendshipId },
+      },
+    });
+  }
 }
