@@ -29,7 +29,7 @@ export function NotificationItem({ type, body, timestamp, read, onPress, childre
       onKeyDown={(e) => e.key === 'Enter' && onPress()}
       aria-label={`Notification: ${body}`}
       className={`p-4 rounded-xl hover:bg-surface-container transition-colors cursor-pointer border border-transparent hover:border-outline-variant relative ${
-        !read ? 'bg-white' : 'bg-paper'
+        !read ? 'bg-surface-container' : 'bg-paper'
       }`}
     >
       {!read && <span className="absolute top-4 right-4 w-2 h-2 bg-info rounded-full" />}

@@ -59,11 +59,12 @@ interface NotificationPanelProps {
 }
 
 function getNotificationBody(notification: Notification): string {
+  const name = (notification.payload?.fromName as string | undefined)?.trim();
   switch (notification.type) {
     case 'FRIEND_REQUEST':
-      return 'sent you a friend request';
+      return name ? `${name} sent you a friend request` : 'sent you a friend request';
     case 'FRIEND_ACCEPTED':
-      return 'accepted your friend request';
+      return name ? `${name} accepted your friend request` : 'accepted your friend request';
     case 'GROUP_INVITE':
       return 'invited you to join a group';
     case 'GROUP_UPDATE':

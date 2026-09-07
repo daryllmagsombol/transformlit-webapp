@@ -24,6 +24,7 @@ describe('NotificationsService', () => {
         count: jest.fn().mockResolvedValue(0),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         create: jest.fn().mockResolvedValue(mockNotification),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
     };
 
@@ -42,6 +43,7 @@ describe('NotificationsService', () => {
     prisma.notification.count.mockResolvedValue(0);
     prisma.notification.updateMany.mockResolvedValue({ count: 1 });
     prisma.notification.create.mockResolvedValue(mockNotification);
+    prisma.notification.deleteMany.mockResolvedValue({ count: 0 });
   });
 
   // ── listNotifications ──────────────────────────────────────────────────────
@@ -168,6 +170,21 @@ describe('NotificationsService', () => {
       await service.createNotification('user-1', 'NEW_MESSAGE', { messageId: 'msg-1' });
       const call = prisma.notification.create.mock.calls[0][0];
       expect(call.data.createdById).toBeUndefined();
+    });
+  });
+
+  // ── removeFriendRequestNotifications ──────────────────────────────────────
+
+  describe('removeFriendRequestNotifications', () => {
+    it('should atomically delete matching FRIEND_REQUEST notifications by payload path', async () => {
+      await service.removeFriendRequestNotifications('user-1', 'f1');
+      expect(prisma.notification.deleteMany).toHaveBeenCalledWith({
+        where: {
+          userId: 'user-1',
+          type: 'FRIEND_REQUEST',
+          payload: { path: ['friendshipId'], equals: 'f1' },
+        },
+      });
     });
   });
 });
