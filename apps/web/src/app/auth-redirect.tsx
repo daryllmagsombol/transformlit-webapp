@@ -11,16 +11,16 @@ import { LoadingSpinner } from '../components/ui/loading-spinner';
  */
 export default function AuthRedirect({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
   const isHydrated = useAuthStore((s) => s.isHydrated);
 
   useEffect(() => {
-    if (isHydrated && token) {
+    if (isHydrated && user) {
       router.replace('/feed');
     }
-  }, [isHydrated, token, router]);
+  }, [isHydrated, user, router]);
 
-  if (isHydrated && token) {
+  if (isHydrated && user) {
     return <LoadingSpinner showLabel={false} />;
   }
 

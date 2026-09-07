@@ -10,6 +10,9 @@ import { CreateGroupPostInput } from './models/group-post.model.js';
 
 const MAX_COMMENT_LENGTH = 2000;
 
+/** Cap pagination so a malicious client cannot force a deep table scan via a giant offset. */
+const MAX_PAGE_OFFSET = 10_000;
+
 const postInclude = (actorId: string) => ({
   author: { select: { id: true, displayName: true, avatarUrl: true } },
   _count: { select: { likes: true, comments: { where: { deletedAt: null } } } },
@@ -36,12 +39,14 @@ export class GroupPostsService {
 
   async listPosts(groupId: string, actorId: string, offset = 0, limit = 20) {
     await this.assertActiveMember(groupId, actorId);
+    const safeOffset = Math.max(0, Math.min(offset, MAX_PAGE_OFFSET));
+    const safeTake = Math.min(Math.max(limit, 1), 50);
     const posts = await this.prisma.groupPost.findMany({
       where: { groupId, deletedAt: null },
       include: postInclude(actorId),
       orderBy: { createdAt: 'desc' },
-      skip: offset,
-      take: Math.min(limit, 50),
+      skip: safeOffset,
+      take: safeTake,
     });
     return posts.map((p) => this.mapPost(p, actorId));
   }

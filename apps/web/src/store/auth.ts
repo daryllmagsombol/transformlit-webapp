@@ -1,17 +1,13 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { GraphQLUser } from '@transformlit/shared';
-import {
-  setAccessToken,
-  setRefreshToken,
-  clearAuth as clearAuthStorage,
-} from '../lib/auth';
+import { setAccessToken, clearAuth as clearAuthStorage } from '../lib/auth';
 
 interface AuthStore {
   user: GraphQLUser | null;
-  token: string | null;
   isHydrated: boolean;
-  setAuth: (user: GraphQLUser, token: string, refreshToken?: string) => void;
+  setAuth: (user: GraphQLUser, accessToken: string) => void;
+  setUser: (user: GraphQLUser) => void;
   clearAuth: () => void;
 }
 
@@ -19,30 +15,31 @@ export const useAuthStore = create<AuthStore>()(
   persist(
     (set) => ({
       user: null,
-      token: null,
       isHydrated: false,
-      setAuth: (user, token, refreshToken) => {
-        setAccessToken(token);
-        if (refreshToken) setRefreshToken(refreshToken);
-        set({ user, token });
+      setAuth: (user, accessToken) => {
+        // Access token lives in browser memory ONLY (never persisted).
+        setAccessToken(accessToken);
+        set({ user });
       },
+      setUser: (user) => set({ user }),
       clearAuth: () => {
         clearAuthStorage();
-        set({ user: null, token: null });
+        set({ user: null });
       },
     }),
     {
       name: 'auth-storage',
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ user: state.user, token: state.token }),
+      partialize: (state) => ({ user: state.user }),
       merge: (persistedState, currentState) => {
         const persisted = persistedState as Partial<AuthStore> | undefined;
         const current = currentState as AuthStore;
 
-        // If current state has a token (set by setAuth before rehydration completed),
-        // prefer it over the persisted state to avoid overwriting fresh auth data
-        if (current.token) {
-          return { ...current, ...persisted, user: current.user, token: current.token, isHydrated: true };
+        // If the current state already has a user (set by setAuth before
+        // rehydration completed), prefer it over persisted state to avoid
+        // overwriting fresh auth data.
+        if (current.user) {
+          return { ...current, ...persisted, user: current.user, isHydrated: true };
         }
 
         // Normal merge: persisted state fills in missing values, mark hydrated
@@ -52,9 +49,9 @@ export const useAuthStore = create<AuthStore>()(
         if (error) {
           console.error('Failed to rehydrate auth store:', error);
         }
-        if (state?.token) {
-          setAccessToken(state.token);
-        }
+        // No token restoration: the access token is memory-only and the
+        // refresh cookie is httpOnly, so a reload must bootstrap the session
+        // via POST /auth/refresh rather than anything stored client-side.
       },
     },
   ),

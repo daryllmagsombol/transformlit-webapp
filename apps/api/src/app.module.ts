@@ -5,6 +5,12 @@ import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { GraphQLError, GraphQLScalarType, Kind } from 'graphql';
 import { join } from 'node:path';
 import type { Request } from 'express';
+import type { ValidationContext } from 'graphql';
+import depthLimit from 'graphql-depth-limit';
+import {
+  createComplexityRule,
+  type ComplexityEstimatorArgs,
+} from 'graphql-query-complexity';
 
 import { PrismaModule } from './prisma/prisma.module.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -71,6 +77,32 @@ export const DateTimeScalar = new GraphQLScalarType({
   },
 });
 
+/**
+ * Field-level complexity estimator replicating the classic
+ * createComplexityLimitRule costing: scalars/leaves cost 1, composite objects
+ * cost 5 plus their children, and list fields multiply their children by 10.
+ * Combined with a maximum complexity of 1000 this rejects runaway
+ * nested/aliased queries before they reach Prisma.
+ */
+function estimatedComplexity(options: ComplexityEstimatorArgs): number {
+  const child = options.childComplexity || 0;
+  const isList = options.type?.toString().includes(']') ?? false;
+  const isLeaf = !options.node.selectionSet;
+  const base = isLeaf ? 1 : 5;
+  const total = isLeaf ? base : base + child;
+  return isList ? total * 10 : total;
+}
+
+function createQueryCostValidationRules(): ((context: ValidationContext) => unknown)[] {
+  return [
+    depthLimit(10),
+    createComplexityRule({
+      maximumComplexity: 1000,
+      estimators: [estimatedComplexity],
+    }),
+  ];
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -79,7 +111,8 @@ export const DateTimeScalar = new GraphQLScalarType({
       driver: ApolloDriver,
       autoSchemaFile: join(__dirname, 'schema.gql'),
       sortSchema: true,
-      introspection: true,
+      introspection: process.env.NODE_ENV !== 'production',
+      validationRules: createQueryCostValidationRules(),
       buildSchemaOptions: {
         scalarsMap: [{ type: Date, scalar: DateTimeScalar }],
       },

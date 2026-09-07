@@ -10,7 +10,8 @@ export class ChatService {
     private readonly pubSub: PubSubService,
   ) {}
 
-  async listConversations(userId: string) {
+  async listConversations(userId: string, limit = 50) {
+    const safeLimit = Math.min(200, Math.max(1, limit));
     const conversations = await this.prisma.conversation.findMany({
       where: { members: { some: { userId } }, deletedAt: null },
       include: {
@@ -19,7 +20,7 @@ export class ChatService {
         group: true,
       },
       orderBy: { updatedAt: 'desc' },
-      take: 50,
+      take: safeLimit,
     });
 
     const unread = await this.getUnreadCounts(userId);
@@ -70,10 +71,40 @@ export class ChatService {
   }
 
   private async assertMember(conversationId: string, userId: string) {
-    const member = await this.prisma.conversationMember.findUnique({
-      where: { conversationId_userId: { conversationId, userId } },
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { id: true, type: true, groupId: true },
     });
-    if (!member) throw new Error("You don't have access to this conversation");
+    if (!conversation) {
+      throw new Error("You don't have access to this conversation");
+    }
+
+    // Direct conversations are authorized purely by the ConversationMember mirror.
+    // Group conversations are authoritative via the GroupMember table (a member can
+    // exist without a ConversationMember row), so we check GroupMember and lazily
+    // self-heal the mirror so listConversations/unread/memberIds work.
+    if (conversation.type === 'DIRECT' || !conversation.groupId) {
+      const member = await this.prisma.conversationMember.findUnique({
+        where: { conversationId_userId: { conversationId, userId } },
+      });
+      if (!member) throw new Error("You don't have access to this conversation");
+      return;
+    }
+
+    const groupMember = await this.prisma.groupMember.findFirst({
+      where: { groupId: conversation.groupId, userId, status: 'ACTIVE' },
+    });
+    if (!groupMember) {
+      throw new Error("You don't have access to this conversation");
+    }
+
+    // Self-heal: ensure the user has a ConversationMember mirror row for this
+    // group conversation.
+    await this.prisma.conversationMember.upsert({
+      where: { conversationId_userId: { conversationId, userId } },
+      update: {},
+      create: { conversationId, userId },
+    });
   }
 
   async getOrCreateDirectConversation(userId: string, otherUserId: string) {
@@ -132,18 +163,36 @@ export class ChatService {
   }
 
   async getOrCreateGroupConversation(groupId: string, userId: string) {
-    const member = await this.prisma.groupMember.findFirst({
+    const caller = await this.prisma.groupMember.findFirst({
       where: { groupId, userId, status: 'ACTIVE' },
     });
-    if (!member) throw new Error('You must be an active member of this group');
+    if (!caller) throw new Error('You must be an active member of this group');
+
+    const activeMembers = await this.prisma.groupMember.findMany({
+      where: { groupId, status: 'ACTIVE' },
+      select: { userId: true },
+    });
+    const memberIds = activeMembers.map((m) => m.userId);
 
     const existing = await this.prisma.conversation.findFirst({
       where: { type: 'GROUP', groupId, deletedAt: null },
     });
-    if (existing) return existing;
+    if (existing) {
+      // Backfill any ConversationMember rows that are missing (e.g. members who
+      // joined the group after the conversation was created).
+      await this.prisma.conversationMember.createMany({
+        data: memberIds.map((id) => ({ conversationId: existing.id, userId: id })),
+        skipDuplicates: true,
+      });
+      return existing;
+    }
 
     const conv = await this.prisma.conversation.create({
-      data: { type: 'GROUP', groupId },
+      data: {
+        type: 'GROUP',
+        groupId,
+        members: { create: memberIds.map((id) => ({ userId: id })) },
+      },
     });
     return conv;
   }
@@ -194,28 +243,57 @@ export class ChatService {
   ) {
     await this.assertMember(conversationId, userId);
 
+    const safeLimit = Math.min(100, Math.max(1, limit));
+
     const where: any = { conversationId, deletedAt: null };
     if (cursor) {
-      where.createdAt = { lt: new Date(cursor) };
+      const decoded = this.decodeCursor(cursor);
+      where.OR = [
+        { createdAt: { lt: decoded.createdAt } },
+        { createdAt: decoded.createdAt, id: { lt: decoded.id } },
+      ];
     }
 
     const messages = await this.prisma.message.findMany({
       where,
-      take: limit + 1,
-      orderBy: { createdAt: 'desc' },
+      take: safeLimit + 1,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       include: { sender: true },
     });
 
-    const hasNextPage = messages.length > limit;
-    const items = hasNextPage ? messages.slice(0, limit) : messages;
+    const hasNextPage = messages.length > safeLimit;
+    const items = hasNextPage ? messages.slice(0, safeLimit) : messages;
 
     return {
       edges: items.map((m) => ({
         node: m,
-        cursor: m.createdAt.toISOString(),
+        cursor: this.encodeCursor(m.createdAt, m.id),
       })),
       hasNextPage,
     };
+  }
+
+  private encodeCursor(createdAt: Date, id: string): string {
+    return Buffer.from(`${createdAt.toISOString()}|${id}`, 'utf8').toString('base64url');
+  }
+
+  private decodeCursor(cursor: string): { createdAt: Date; id: string } {
+    let raw: string;
+    try {
+      raw = Buffer.from(cursor, 'base64url').toString('utf8');
+    } catch {
+      throw new Error('Invalid cursor');
+    }
+    const separatorIndex = raw.lastIndexOf('|');
+    if (separatorIndex <= 0 || separatorIndex === raw.length - 1) {
+      throw new Error('Invalid cursor');
+    }
+    const createdAt = new Date(raw.slice(0, separatorIndex));
+    const id = raw.slice(separatorIndex + 1);
+    if (Number.isNaN(createdAt.getTime()) || !id) {
+      throw new Error('Invalid cursor');
+    }
+    return { createdAt, id };
   }
 
   async markRead(conversationId: string, userId: string) {

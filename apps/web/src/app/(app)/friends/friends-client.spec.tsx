@@ -7,7 +7,6 @@ const mockAddToast = jest.fn();
 
 let mockAuthState: Record<string, unknown> = {
   user: { id: 'u1', displayName: 'Test User', avatarUrl: null },
-  token: 'test-token',
   isHydrated: true,
 };
 
@@ -65,7 +64,6 @@ describe('FriendsClient', () => {
     mockMutate.mockReset();
     mockAuthState = {
       user: { id: 'u1', displayName: 'Test User', avatarUrl: null },
-      token: 'test-token',
       isHydrated: true,
     };
   });

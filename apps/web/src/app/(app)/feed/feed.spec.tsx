@@ -15,7 +15,6 @@ jest.mock('next/link', () => {
 
 let mockAuthState: Record<string, unknown> = {
   user: { id: '1', displayName: 'Test User', avatarUrl: null },
-  token: 'test-token',
   isHydrated: true,
 };
 
@@ -97,22 +96,21 @@ describe('FeedClient', () => {
     mockQuery.mockReset();
     mockAuthState = {
       user: { id: '1', displayName: 'Test User', avatarUrl: null },
-      token: 'test-token',
       isHydrated: true,
     };
   });
 
   describe('auth guard', () => {
     it('shows loading spinner when not hydrated', () => {
-      mockAuthState = { user: null, token: 'test-token', isHydrated: false };
+      mockAuthState = { user: { id: '1' }, isHydrated: false };
       render(<FeedClient />);
       expect(screen.getByText('Loading…')).toBeInTheDocument();
     });
 
-    it('redirects to login when hydrated but no token instead of showing spinner', () => {
-      mockAuthState = { user: null, token: null, isHydrated: true };
+    it('redirects to login when hydrated but no user instead of showing spinner', () => {
+      mockAuthState = { user: null, isHydrated: true };
       render(<FeedClient />);
-      expect(mockPush).toHaveBeenCalledWith('/login');
+      expect(mockPush).toHaveBeenCalledWith('/login?redirect=%2Ffeed');
     });
   });
 

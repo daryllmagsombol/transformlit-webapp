@@ -1,5 +1,7 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
+import { MAX_FILE_SIZE_BYTES } from '@transformlit/shared';
 import { BooksResolver } from './books.resolver';
 import { BooksService } from './books.service';
 
@@ -46,7 +48,7 @@ const mockHighlight = {
   createdAt: new Date('2024-01-01'),
 };
 
-const mockUser = { id: 'user-1' };
+const mockUser = { id: 'user-1', role: 'MEMBER' };
 
 describe('BooksResolver', () => {
   let resolver: BooksResolver;
@@ -58,6 +60,7 @@ describe('BooksResolver', () => {
       findById: jest.fn().mockResolvedValue(mockBook),
       uploadBook: jest.fn().mockResolvedValue(mockBook),
       updateBook: jest.fn().mockResolvedValue({ ...mockBook, title: 'Updated' }),
+      uploadPdf: jest.fn().mockResolvedValue({ ...mockBook, status: 'PUBLISHED' }),
       deleteBook: jest.fn().mockResolvedValue(undefined),
       getProgress: jest.fn().mockResolvedValue(mockProgress),
       saveProgress: jest.fn().mockResolvedValue(mockProgress),
@@ -145,10 +148,10 @@ describe('BooksResolver', () => {
   // ── updateBook mutation ────────────────────────────────────────────────────
 
   describe('updateBook', () => {
-    it('should delegate to updateBook with id and input', async () => {
+    it('should delegate to updateBook with id, input, and user', async () => {
       const input = { title: 'Updated' };
-      const result = await resolver.updateBook('book-1', input as any);
-      expect(booksService.updateBook).toHaveBeenCalledWith('book-1', input);
+      const result = await resolver.updateBook(mockUser as any, 'book-1', input as any);
+      expect(booksService.updateBook).toHaveBeenCalledWith('book-1', input, 'user-1', 'MEMBER');
       expect(result).toEqual({ ...mockBook, title: 'Updated' });
     });
   });
@@ -157,9 +160,48 @@ describe('BooksResolver', () => {
 
   describe('deleteBook', () => {
     it('should delegate to deleteBook and return true', async () => {
-      const result = await resolver.deleteBook('book-1');
-      expect(booksService.deleteBook).toHaveBeenCalledWith('book-1');
+      const result = await resolver.deleteBook(mockUser as any, 'book-1');
+      expect(booksService.deleteBook).toHaveBeenCalledWith('book-1', 'user-1', 'MEMBER');
       expect(result).toBe(true);
+    });
+  });
+
+  // ── uploadPdf mutation ────────────────────────────────────────────────────
+
+  describe('uploadPdf', () => {
+    const makeFile = (content: Buffer) => ({
+      createReadStream: () => {
+        const { Readable } = require('stream');
+        return Readable.from([content]);
+      },
+    });
+
+    it('should delegate to uploadPdf with buffered content and user', async () => {
+      const pdfContent = Buffer.from('%PDF-1.7 fake');
+      const result = await resolver.uploadPdf(
+        mockUser as any,
+        'book-1',
+        makeFile(pdfContent) as any,
+      );
+      expect(booksService.uploadPdf).toHaveBeenCalledWith(
+        'book-1',
+        pdfContent,
+        '',
+        'user-1',
+        'MEMBER',
+      );
+      expect(result).toEqual({ ...mockBook, status: 'PUBLISHED' });
+    });
+
+    it('should reject when streamed content exceeds the size cap', async () => {
+      const oversized = Buffer.concat([
+        Buffer.from('%PDF-'),
+        Buffer.alloc(MAX_FILE_SIZE_BYTES + 1),
+      ]);
+      await expect(
+        resolver.uploadPdf(mockUser as any, 'book-1', makeFile(oversized) as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(booksService.uploadPdf).not.toHaveBeenCalled();
     });
   });
 
@@ -188,9 +230,9 @@ describe('BooksResolver', () => {
   // ── removeBookmark mutation ────────────────────────────────────────────────
 
   describe('removeBookmark', () => {
-    it('should delegate to removeBookmark and return true', async () => {
-      const result = await resolver.removeBookmark('bm-1');
-      expect(booksService.removeBookmark).toHaveBeenCalledWith('bm-1');
+    it('should delegate to removeBookmark with id and user', async () => {
+      const result = await resolver.removeBookmark(mockUser as any, 'bm-1');
+      expect(booksService.removeBookmark).toHaveBeenCalledWith('bm-1', 'user-1');
       expect(result).toBe(true);
     });
   });
@@ -209,9 +251,9 @@ describe('BooksResolver', () => {
   // ── removeHighlight mutation ───────────────────────────────────────────────
 
   describe('removeHighlight', () => {
-    it('should delegate to removeHighlight and return true', async () => {
-      const result = await resolver.removeHighlight('hl-1');
-      expect(booksService.removeHighlight).toHaveBeenCalledWith('hl-1');
+    it('should delegate to removeHighlight with id and user', async () => {
+      const result = await resolver.removeHighlight(mockUser as any, 'hl-1');
+      expect(booksService.removeHighlight).toHaveBeenCalledWith('hl-1', 'user-1');
       expect(result).toBe(true);
     });
   });

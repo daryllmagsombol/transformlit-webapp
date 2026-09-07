@@ -1,4 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { BlobService } from '../azure/blob.service.js';
 import {
@@ -35,12 +42,34 @@ export class BooksService {
     });
   }
 
-  async updateBook(id: string, input: UpdateBookInput) {
+  async updateBook(
+    id: string,
+    input: UpdateBookInput,
+    actorId: string,
+    actorRole: UserRole,
+  ) {
+    await this.assertCanManageBook(id, actorId, actorRole);
     return this.prisma.book.update({ where: { id }, data: input });
   }
 
-  async uploadPdf(bookId: string, buffer: Buffer, filename: string) {
-    const blobPath = `books/${bookId}/${filename}`;
+  async uploadPdf(
+    bookId: string,
+    buffer: Buffer,
+    _filename: string,
+    actorId: string,
+    actorRole: UserRole,
+  ) {
+    await this.assertCanManageBook(bookId, actorId, actorRole);
+
+    if (buffer.byteLength > MAX_FILE_SIZE_BYTES) {
+      throw new BadRequestException('File exceeds maximum allowed size');
+    }
+    if (buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
+      throw new BadRequestException('Uploaded file is not a PDF');
+    }
+
+    // Never trust the client-supplied filename; always generate a server-side path.
+    const blobPath = `books/${bookId}/${randomUUID()}.pdf`;
     await this.blob.uploadPdf(blobPath, buffer, 'application/pdf');
     return this.prisma.book.update({
       where: { id: bookId },
@@ -51,6 +80,15 @@ export class BooksService {
   async streamPdf(bookId: string, userId: string) {
     const book = await this.prisma.book.findUnique({ where: { id: bookId } });
     if (!book?.blobPath) throw new NotFoundException('PDF not available');
+
+    const hasAccess =
+      book.accessLevel === 'FREE' ||
+      book.createdById === userId ||
+      (await this.prisma.bookAccess.findUnique({
+        where: { bookId_userId: { bookId, userId } },
+      })) !== null;
+
+    if (!hasAccess) throw new ForbiddenException('You do not have access to this book');
     return this.blob.streamPdf(book.blobPath);
   }
 
@@ -83,8 +121,12 @@ export class BooksService {
     });
   }
 
-  async removeBookmark(id: string) {
-    return this.prisma.bookmark.delete({ where: { id } });
+  async removeBookmark(id: string, userId: string) {
+    const result = await this.prisma.bookmark.deleteMany({
+      where: { id, userId },
+    });
+    if (result.count === 0) throw new NotFoundException('Bookmark not found');
+    return true;
   }
 
   // Highlights
@@ -101,11 +143,31 @@ export class BooksService {
     });
   }
 
-  async removeHighlight(id: string) {
-    return this.prisma.highlight.delete({ where: { id } });
+  async removeHighlight(id: string, userId: string) {
+    const result = await this.prisma.highlight.deleteMany({
+      where: { id, userId },
+    });
+    if (result.count === 0) throw new NotFoundException('Highlight not found');
+    return true;
   }
 
-  async deleteBook(id: string) {
+  async deleteBook(id: string, actorId: string, actorRole: UserRole) {
+    await this.assertCanManageBook(id, actorId, actorRole);
     return this.prisma.book.update({ where: { id }, data: { deletedAt: new Date() } });
+  }
+
+  private async assertCanManageBook(
+    bookId: string,
+    actorId: string,
+    actorRole: UserRole,
+  ) {
+    const book = await this.prisma.book.findUnique({ where: { id: bookId } });
+    if (!book) throw new NotFoundException('Book not found');
+
+    const isOwner = book.createdById === actorId;
+    const isStaff = actorRole === UserRole.ADMIN || actorRole === UserRole.MODERATOR;
+    if (!isOwner && !isStaff) {
+      throw new ForbiddenException('You do not have permission to modify this book');
+    }
   }
 }

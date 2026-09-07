@@ -6,6 +6,8 @@ import type { GraphQLUser } from '@transformlit/shared';
 import { UserAvatar } from './user-avatar';
 import { useAuthStore } from '../../store';
 import { clearAuth } from '../../lib/auth';
+import { resetApolloState } from '../../lib/apollo-client';
+import { API_BASE } from '../../lib/constants';
 
 interface UserMenuProps {
   user: GraphQLUser | null;
@@ -23,8 +25,24 @@ export function UserMenu({ user }: UserMenuProps) {
 
   const handleLogout = useCallback(() => {
     handleClose();
+    // Best-effort server-side session invalidation (clears the httpOnly
+    // refresh cookie). Failure must not block the client-side logout.
+    void (async () => {
+      try {
+        await fetch(`${API_BASE}/auth/logout`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+      } catch {
+        // Ignore: client state is cleared regardless.
+      }
+    })();
     clearAuth();
     useAuthStore.getState().clearAuth();
+    // Reset the Apollo cache so data from this session cannot leak into the
+    // next login. Best-effort: resetApolloState swallows errors and the
+    // navigation below is not gated on it.
+    void resetApolloState();
     router.push('/login');
   }, [handleClose, router]);
 

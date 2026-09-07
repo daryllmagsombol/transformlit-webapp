@@ -31,7 +31,7 @@ jest.mock('../../store', () => {
   store.getState = () => state;
   return {
     useUIStore: store,
-    useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector({ user: null, token: null }),
+    useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector({ user: null }),
   };
 });
 

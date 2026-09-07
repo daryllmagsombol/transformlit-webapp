@@ -1,5 +1,7 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { UserRole } from '@transformlit/shared';
 import { FeedService } from './feed.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -115,21 +117,53 @@ describe('FeedService', () => {
 
   describe('getAnnouncement', () => {
     it('should find by id', async () => {
-      await service.getAnnouncement('ann-1');
+      await service.getAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
       expect(prisma.announcement.findUnique).toHaveBeenCalledWith({
         where: { id: 'ann-1' },
       });
     });
 
     it('should return the announcement if found', async () => {
-      const result = await service.getAnnouncement('ann-1');
+      const result = await service.getAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
       expect(result).toEqual(mockAnnouncement);
     });
 
     it('should return null if not found', async () => {
       prisma.announcement.findUnique.mockResolvedValue(null);
-      const result = await service.getAnnouncement('bad-id');
+      const result = await service.getAnnouncement('bad-id', 'user-1', UserRole.ADMIN);
       expect(result).toBeNull();
+    });
+
+    it('should return PUBLISHED announcement to any authenticated member', async () => {
+      const result = await service.getAnnouncement('ann-1', 'user-2', UserRole.MEMBER);
+      expect(result).toEqual(mockAnnouncement);
+    });
+
+    it('should hide a non-PUBLISHED announcement from a member', async () => {
+      prisma.announcement.findUnique.mockResolvedValue({
+        ...mockAnnouncement,
+        status: 'DRAFT',
+      });
+      const result = await service.getAnnouncement('ann-1', 'user-2', UserRole.MEMBER);
+      expect(result).toBeNull();
+    });
+
+    it('should allow the draft owner to read their own draft', async () => {
+      prisma.announcement.findUnique.mockResolvedValue({
+        ...mockAnnouncement,
+        status: 'DRAFT',
+      });
+      const result = await service.getAnnouncement('ann-1', 'user-1', UserRole.MEMBER);
+      expect(result).toEqual({ ...mockAnnouncement, status: 'DRAFT' });
+    });
+
+    it('should allow staff to read non-PUBLISHED announcements', async () => {
+      prisma.announcement.findUnique.mockResolvedValue({
+        ...mockAnnouncement,
+        status: 'DRAFT',
+      });
+      const result = await service.getAnnouncement('ann-1', 'user-2', UserRole.MODERATOR);
+      expect(result).toEqual({ ...mockAnnouncement, status: 'DRAFT' });
     });
   });
 
@@ -185,14 +219,14 @@ describe('FeedService', () => {
     };
 
     it('should convert date strings to Date objects', async () => {
-      await service.updateAnnouncement('ann-1', input);
+      await service.updateAnnouncement('ann-1', input, 'user-1', UserRole.MEMBER);
       const call = prisma.announcement.update.mock.calls[0][0];
       expect(call.data.publishAt).toBeInstanceOf(Date);
       expect(call.data.expiresAt).toBeInstanceOf(Date);
     });
 
     it('should update announcement by id', async () => {
-      await service.updateAnnouncement('ann-1', input);
+      await service.updateAnnouncement('ann-1', input, 'user-1', UserRole.MEMBER);
       expect(prisma.announcement.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'ann-1' } }),
       );
@@ -201,8 +235,41 @@ describe('FeedService', () => {
     it('should return updated announcement', async () => {
       const updated = { ...mockAnnouncement, title: 'Updated Title' };
       prisma.announcement.update.mockResolvedValue(updated);
-      const result = await service.updateAnnouncement('ann-1', input);
+      const result = await service.updateAnnouncement('ann-1', input, 'user-1', UserRole.MEMBER);
       expect(result).toEqual(updated);
+    });
+
+    it('should allow staff to update an announcement they did not create', async () => {
+      const result = await service.updateAnnouncement('ann-1', input, 'user-2', UserRole.ADMIN);
+      expect(result).toEqual(mockAnnouncement);
+      expect(prisma.announcement.update).toHaveBeenCalled();
+    });
+
+    it('should allow the draft creator to update their own announcement', async () => {
+      prisma.announcement.findUnique.mockResolvedValue({
+        ...mockAnnouncement,
+        status: 'DRAFT',
+      });
+      const result = await service.updateAnnouncement('ann-1', input, 'user-1', UserRole.MEMBER);
+      expect(result).toEqual(mockAnnouncement);
+    });
+
+    it('should throw NotFoundException if announcement does not exist', async () => {
+      prisma.announcement.findUnique.mockResolvedValue(null);
+      await expect(
+        service.updateAnnouncement('bad-id', input, 'user-1', UserRole.ADMIN),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw ForbiddenException for a member who is not the creator', async () => {
+      prisma.announcement.findUnique.mockResolvedValue({
+        ...mockAnnouncement,
+        createdById: 'user-1',
+      });
+      await expect(
+        service.updateAnnouncement('ann-1', input, 'user-2', UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.announcement.update).not.toHaveBeenCalled();
     });
   });
 
@@ -210,26 +277,44 @@ describe('FeedService', () => {
 
   describe('publishAnnouncement', () => {
     it('should set status to PUBLISHED', async () => {
-      await service.publishAnnouncement('ann-1', 'user-1');
+      await service.publishAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
       const call = prisma.announcement.update.mock.calls[0][0];
       expect(call.data.status).toBe('PUBLISHED');
     });
 
     it('should set publishedAt to a Date', async () => {
-      await service.publishAnnouncement('ann-1', 'user-1');
+      await service.publishAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
       const call = prisma.announcement.update.mock.calls[0][0];
       expect(call.data.publishedAt).toBeInstanceOf(Date);
     });
 
     it('should set publishedById to userId', async () => {
-      await service.publishAnnouncement('ann-1', 'user-1');
+      await service.publishAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
       const call = prisma.announcement.update.mock.calls[0][0];
       expect(call.data.publishedById).toBe('user-1');
     });
 
     it('should return updated announcement', async () => {
-      const result = await service.publishAnnouncement('ann-1', 'user-1');
+      const result = await service.publishAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
       expect(result).toEqual(mockAnnouncement);
+    });
+
+    it('should allow a moderator to publish', async () => {
+      const result = await service.publishAnnouncement('ann-1', 'user-1', UserRole.MODERATOR);
+      expect(result).toEqual(mockAnnouncement);
+    });
+
+    it('should throw ForbiddenException when a member tries to publish', async () => {
+      await expect(
+        service.publishAnnouncement('ann-1', 'user-1', UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.announcement.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw ForbiddenException with "Only staff can publish"', async () => {
+      await expect(
+        service.publishAnnouncement('ann-1', 'user-1', UserRole.MEMBER),
+      ).rejects.toThrow('Only staff can publish');
     });
   });
 
@@ -237,20 +322,32 @@ describe('FeedService', () => {
 
   describe('unpublishAnnouncement', () => {
     it('should set status to DRAFT', async () => {
-      await service.unpublishAnnouncement('ann-1');
+      await service.unpublishAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
       const call = prisma.announcement.update.mock.calls[0][0];
       expect(call.data.status).toBe('DRAFT');
     });
 
     it('should set publishedAt to null', async () => {
-      await service.unpublishAnnouncement('ann-1');
+      await service.unpublishAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
       const call = prisma.announcement.update.mock.calls[0][0];
       expect(call.data.publishedAt).toBeNull();
     });
 
     it('should return updated announcement', async () => {
-      const result = await service.unpublishAnnouncement('ann-1');
+      const result = await service.unpublishAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
       expect(result).toEqual(mockAnnouncement);
+    });
+
+    it('should allow the creator to unpublish their own announcement', async () => {
+      const result = await service.unpublishAnnouncement('ann-1', 'user-1', UserRole.MEMBER);
+      expect(result).toEqual(mockAnnouncement);
+    });
+
+    it('should throw ForbiddenException for a member who is not the creator', async () => {
+      await expect(
+        service.unpublishAnnouncement('ann-1', 'user-2', UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.announcement.update).not.toHaveBeenCalled();
     });
   });
 
@@ -258,7 +355,7 @@ describe('FeedService', () => {
 
   describe('deleteAnnouncement', () => {
     it('should soft delete by setting deletedAt', async () => {
-      await service.deleteAnnouncement('ann-1');
+      await service.deleteAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
       expect(prisma.announcement.update).toHaveBeenCalledWith({
         where: { id: 'ann-1' },
         data: expect.objectContaining({
@@ -270,8 +367,20 @@ describe('FeedService', () => {
     it('should return updated announcement', async () => {
       const deleted = { ...mockAnnouncement, deletedAt: new Date() };
       prisma.announcement.update.mockResolvedValue(deleted);
-      const result = await service.deleteAnnouncement('ann-1');
+      const result = await service.deleteAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
       expect(result).toEqual(deleted);
+    });
+
+    it('should allow a moderator to delete', async () => {
+      const result = await service.deleteAnnouncement('ann-1', 'user-2', UserRole.MODERATOR);
+      expect(result).toEqual(mockAnnouncement);
+    });
+
+    it('should throw ForbiddenException for a member who is not the creator', async () => {
+      await expect(
+        service.deleteAnnouncement('ann-1', 'user-2', UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.announcement.update).not.toHaveBeenCalled();
     });
   });
 

@@ -17,11 +17,10 @@ import { useAuthStore } from '../store';
 import {
   clearAuth,
   getAccessToken,
-  getRefreshToken,
   isTokenExpiringSoon,
   setAccessToken,
-  setRefreshToken,
 } from './auth';
+import { API_BASE } from './constants';
 
 const httpUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/graphql';
 const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:3005/graphql';
@@ -36,9 +35,8 @@ let refreshPromise: Promise<boolean> | null = null;
 let lastRefreshAttempt = 0;
 const MIN_REFRESH_INTERVAL_MS = 30_000;
 
-interface RefreshPayload {
+interface RestRefreshPayload {
   accessToken: string;
-  refreshToken: string;
   user: GraphQLUser;
 }
 
@@ -50,60 +48,37 @@ function redirectToLogin() {
   }
 }
 
-async function callRefreshMutation(refreshToken: string): Promise<RefreshPayload> {
-  const response = await fetch(httpUrl, {
+/**
+ * Calls the REST refresh endpoint. The httpOnly `transformlit_refresh` cookie
+ * is sent automatically via credentials:'include'; no token is read from JS.
+ */
+async function callRestRefresh(): Promise<RestRefreshPayload> {
+  const response = await fetch(`${API_BASE}/auth/refresh`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({
-      query: `
-        mutation RefreshToken($refreshToken: String!) {
-          refreshToken(refreshToken: $refreshToken) {
-            accessToken
-            refreshToken
-            user { id email displayName avatarUrl role status createdAt }
-          }
-        }
-      `,
-      variables: { refreshToken },
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
   });
 
   if (!response.ok) {
     throw new Error(`Refresh failed: ${response.status}`);
   }
 
-  const result = (await response.json()) as {
-    data?: { refreshToken: RefreshPayload };
-    errors?: Array<{ message?: string }>;
-  };
-
-  if (result.errors?.length) {
-    throw new Error(result.errors[0].message ?? 'Refresh failed');
-  }
-
-  if (!result.data?.refreshToken) {
-    throw new Error('Refresh response missing tokens');
-  }
-
-  return result.data.refreshToken;
+  return (await response.json()) as RestRefreshPayload;
 }
 
 async function doRefreshTokens(): Promise<boolean> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) {
-    redirectToLogin();
-    return false;
+  // Skip if the in-memory access token is still valid.
+  const currentToken = getAccessToken();
+  if (currentToken && !isTokenExpiringSoon(currentToken)) {
+    return true;
   }
 
   lastRefreshAttempt = Date.now();
   try {
-    const payload = await callRefreshMutation(refreshToken);
+    const payload = await callRestRefresh();
     setAccessToken(payload.accessToken);
-    setRefreshToken(payload.refreshToken);
-    useAuthStore
-      .getState()
-      .setAuth(payload.user, payload.accessToken, payload.refreshToken);
+    useAuthStore.getState().setAuth(payload.user, payload.accessToken);
     return true;
   } catch {
     redirectToLogin();
@@ -117,6 +92,26 @@ export function refreshTokens(): Promise<boolean> {
     refreshPromise = null;
   });
   return refreshPromise;
+}
+
+/**
+ * Restores an existing session on cold start / OAuth redirect: if an access
+ * token is already present (memory) it is a no-op; otherwise it tries the REST
+ * refresh endpoint using the httpOnly cookie. On failure the user is treated
+ * as signed out (no hard redirect — callers decide).
+ */
+export async function bootstrapAuth(): Promise<boolean> {
+  if (getAccessToken()) return true;
+  try {
+    const payload = await callRestRefresh();
+    setAccessToken(payload.accessToken);
+    useAuthStore.getState().setAuth(payload.user, payload.accessToken);
+    return true;
+  } catch {
+    clearAuth();
+    useAuthStore.getState().clearAuth();
+    return false;
+  }
 }
 
 function isUnauthorizedError(error: unknown): boolean {
@@ -233,17 +228,17 @@ const errorLink = onError(({ error, operation, forward }) => {
 
   // Login/registration hit unauthenticated endpoints: an "Invalid credentials"
   // (UNAUTHENTICATED) response is a business error, NOT an expired session.
-  // Intercepting it here would try a refresh, find no token, and force a page
-  // reload — destroying the form and any error toast mid-login.
+  // Intercepting it here would try a refresh, find no session, and force a
+  // page reload — destroying the form and any error toast mid-login.
   if (operation.operationName === 'LoginLocal' || operation.operationName === 'RegisterLocal') return;
-  // No session to refresh — let the original error propagate to the caller.
-  if (!getRefreshToken()) return;
 
   const context = operation.getContext();
   if (context.authRetry) return;
   operation.setContext({ ...context, authRetry: true });
 
   return new Observable((subscriber) => {
+    // No-session case: refreshTokens() fails fast via the REST refresh call
+    // (401 without a cookie) and redirects to login.
     refreshTokens()
       .then((success) => {
         if (!success) throw new Error('Session expired');
@@ -307,3 +302,16 @@ export const apolloClient = new ApolloClient({
     query: { fetchPolicy: 'no-cache' },
   },
 });
+
+/**
+ * Resets the Apollo cache so no data from the previous session (or previous
+ * user) survives into the next one. Best-effort by design: a failed reset
+ * must never break the logout/sign-in flow, so errors are swallowed here.
+ */
+export async function resetApolloState(): Promise<void> {
+  try {
+    await apolloClient.resetStore();
+  } catch {
+    // A cache reset failure must not interrupt logout or navigation.
+  }
+}

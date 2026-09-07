@@ -68,9 +68,15 @@ describe('ChatResolver', () => {
   // ── conversations query ─────────────────────────────────────────────────────
 
   describe('conversations', () => {
-    it('should delegate to listConversations with user id', async () => {
+    it('should delegate to listConversations with user id and default limit', async () => {
       const result = await resolver.conversations(mockUser);
-      expect(chatService.listConversations).toHaveBeenCalledWith('user-1');
+      expect(chatService.listConversations).toHaveBeenCalledWith('user-1', undefined);
+      expect(result).toEqual([mockConversation]);
+    });
+
+    it('should forward an explicit limit', async () => {
+      const result = await resolver.conversations(mockUser, 120);
+      expect(chatService.listConversations).toHaveBeenCalledWith('user-1', 120);
       expect(result).toEqual([mockConversation]);
     });
   });

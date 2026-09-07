@@ -31,7 +31,7 @@ type RegisterFormValues = z.infer<typeof registerSchema>;
 export default function RegisterForm() {
   const router = useRouter();
   const setAuth = useAuthStore((s) => s.setAuth);
-  const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
   const isHydrated = useAuthStore((s) => s.isHydrated);
   const { addToast } = useToast();
 
@@ -50,10 +50,10 @@ export default function RegisterForm() {
 
   /* ---------- Redirect if already authenticated ---------- */
   useEffect(() => {
-    if (isHydrated && token) {
+    if (isHydrated && user) {
       router.replace('/feed');
     }
-  }, [isHydrated, token, router]);
+  }, [isHydrated, user, router]);
 
   /* ---------- Submit handler ---------- */
 
@@ -61,41 +61,35 @@ export default function RegisterForm() {
     async (values: RegisterFormValues) => {
       setLoading(true);
       try {
-        const [{ gql }, { apolloClient }] = await Promise.all([
-          import('@apollo/client'),
-          import('../../lib/apollo-client'),
-        ]);
-
-        const result = await apolloClient.mutate<{ registerLocal: { user: GraphQLUser; accessToken: string; refreshToken: string | null } }>({
-          mutation: gql`
-            mutation RegisterLocal($input: RegisterLocalInput!) {
-              registerLocal(input: $input) {
-                user { id email displayName avatarUrl }
-                accessToken
-                refreshToken
-              }
-            }
-          `,
-          variables: {
-            input: {
-              displayName: values.fullName.trim(),
-              email: values.email.trim(),
-              password: values.password,
-            },
-          },
+        const res = await fetch(`${API_BASE}/auth/register`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            displayName: values.fullName.trim(),
+            email: values.email.trim(),
+            password: values.password,
+          }),
         });
 
-        const { user, accessToken, refreshToken } = result.data!.registerLocal;
-        setAuth(user, accessToken, refreshToken ?? undefined);
+        if (!res.ok) {
+          let message = 'Registration failed. Please try again.';
+          try {
+            const body = (await res.json()) as { error?: string; message?: string };
+            message = body?.error ?? body?.message ?? message;
+          } catch {
+            // Non-JSON error body — keep the fallback message.
+          }
+          throw new Error(message);
+        }
+
+        const data = (await res.json()) as { accessToken: string; user: GraphQLUser };
+        setAuth(data.user, data.accessToken);
 
         addToast('Account created! Welcome to Transformlit.', 'success');
         router.push('/feed');
       } catch (err: any) {
-        const message =
-          err?.graphQLErrors?.[0]?.message ??
-          err?.networkError?.result?.errors?.[0]?.message ??
-          err?.message ??
-          'Registration failed. Please try again.';
+        const message = err?.message ?? 'Registration failed. Please try again.';
         addToast(message, 'error');
       } finally {
         setLoading(false);
