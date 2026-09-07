@@ -262,9 +262,22 @@ const wsLink = !isServer
   ? new GraphQLWsLink(
       createClient({
         url: wsUrl,
-        connectionParams: () => {
+        connectionParams: async () => {
+          // Ensure a fresh in-memory access token BEFORE the socket opens.
+          // After a full page load the persisted `user` restores instantly but
+          // the memory-only access token is gone (and it is not persisted), so
+          // an immediate subscribe would send an empty Authorization header and
+          // the WS connection dies — HTTP self-heals via the error link's
+          // 401→refresh, but a WebSocket cannot. Refreshing here (a no-op when
+          // the token is still valid) makes the realtime layer as resilient as
+          // the HTTP layer.
           const token = getAccessToken();
-          return { authorization: token ? `Bearer ${token}` : '' };
+          if (token && !isTokenExpiringSoon(token)) {
+            return { authorization: `Bearer ${token}` };
+          }
+          const ok = await refreshTokens();
+          const fresh = getAccessToken();
+          return { authorization: ok && fresh ? `Bearer ${fresh}` : '' };
         },
         on: {
           // graphql-ws v6 has no `reconnected` event; the `connected` listener

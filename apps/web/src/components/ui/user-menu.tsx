@@ -127,6 +127,7 @@ export function UserMenu({ user }: UserMenuProps) {
         type="button"
         onClick={handleTriggerClick}
         onKeyDown={handleTriggerKeyDown}
+        aria-label="User menu"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? 'user-menu' : undefined}

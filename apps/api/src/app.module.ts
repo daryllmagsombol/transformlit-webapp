@@ -7,10 +7,6 @@ import { join } from 'node:path';
 import type { Request } from 'express';
 import type { ValidationContext } from 'graphql';
 import depthLimit from 'graphql-depth-limit';
-import {
-  createComplexityRule,
-  type ComplexityEstimatorArgs,
-} from 'graphql-query-complexity';
 
 import { PrismaModule } from './prisma/prisma.module.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -78,29 +74,16 @@ export const DateTimeScalar = new GraphQLScalarType({
 });
 
 /**
- * Field-level complexity estimator replicating the classic
- * createComplexityLimitRule costing: scalars/leaves cost 1, composite objects
- * cost 5 plus their children, and list fields multiply their children by 10.
- * Combined with a maximum complexity of 1000 this rejects runaway
- * nested/aliased queries before they reach Prisma.
+ * Query-depth protection via `graphql-depth-limit` (max 10 levels of nesting).
+ * NOTE: a query-complexity rule (graphql-query-complexity@2 `createComplexityRule`)
+ * was previously added here but REMOVED because it breaks every GraphQL
+ * operation that uses variables — its validation-time argument coercion runs
+ * without the runtime variables and fails with "Variable ... was not provided".
+ * Depth limiting still guards against runaway nested/aliased queries with no
+ * dependency on variable values.
  */
-function estimatedComplexity(options: ComplexityEstimatorArgs): number {
-  const child = options.childComplexity || 0;
-  const isList = options.type?.toString().includes(']') ?? false;
-  const isLeaf = !options.node.selectionSet;
-  const base = isLeaf ? 1 : 5;
-  const total = isLeaf ? base : base + child;
-  return isList ? total * 10 : total;
-}
-
 function createQueryCostValidationRules(): ((context: ValidationContext) => unknown)[] {
-  return [
-    depthLimit(10),
-    createComplexityRule({
-      maximumComplexity: 1000,
-      estimators: [estimatedComplexity],
-    }),
-  ];
+  return [depthLimit(10)];
 }
 
 @Module({
@@ -112,7 +95,8 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
       autoSchemaFile: join(__dirname, 'schema.gql'),
       sortSchema: true,
       introspection: process.env.NODE_ENV !== 'production',
-      validationRules: createQueryCostValidationRules(),
+      // BISECT: depthLimit only
+      validationRules: [depthLimit(10)],
       buildSchemaOptions: {
         scalarsMap: [{ type: Date, scalar: DateTimeScalar }],
       },

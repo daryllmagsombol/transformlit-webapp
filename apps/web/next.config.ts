@@ -1,5 +1,12 @@
 import type { NextConfig } from 'next';
 
+// The CSP is environment-aware: in dev the API runs cross-origin on
+// http://localhost:3005 (the Playwright/dev harness), and Next dev + React dev
+// need 'unsafe-eval' for Turbopack HMR / call-stack reconstruction. Production
+// is same-origin (API under the app domain) so it stays strict. next.config is
+// evaluated once per server/start, so NODE_ENV selects the right policy.
+const IS_PROD = process.env.NODE_ENV === 'production';
+
 const CSP_DIRECTIVES = [
   // Default: allow the app itself. Everything else must be listed explicitly.
   "default-src 'self'",
@@ -7,18 +14,27 @@ const CSP_DIRECTIVES = [
   // Without a middleware nonce, Next injects these as inline scripts, so a strict
   // script-src would blank the page. 'unsafe-inline' is the pragmatic tradeoff;
   // upgrading to a per-request nonce (via middleware) would let us drop it.
-  "script-src 'self' 'unsafe-inline'",
+  // Dev additionally needs 'unsafe-eval' for React/Turbopack dev tooling.
+  IS_PROD
+    ? "script-src 'self' 'unsafe-inline'"
+    : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   // Inline <style> (layout fonts variable CSS, app styles) + style attributes.
-  "style-src 'self' 'unsafe-inline'",
-  // Data/API origin + web fonts (next/font/google + Manrope/Material Symbols).
+  // https://fonts.googleapis.com is the <link> stylesheet for Manrope/Material Symbols.
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  // Web font files (next/font/google + Manrope/Material Symbols).
   "font-src 'self' data: https://fonts.gstatic.com https://fonts.googleapis.com",
-  // Bible content/fonts/audio from helloao; seeded group media from GCS + Google avatar CDN.
-  "img-src 'self' data: https://bible.helloao.org https://*.blob.core.windows.net https://lh3.googleusercontent.com",
+  // Bible content/fonts/audio from helloao; seeded group media from GCS +
+  // Google avatar CDN; felt-paper background texture from transparenttextures.
+  "img-src 'self' data: https://bible.helloao.org https://www.transparenttextures.com https://*.blob.core.windows.net https://lh3.googleusercontent.com",
   // Chapter audio is streamed from the dedicated audio host (see thisChapterAudioLinks).
   "media-src 'self' https://bible.helloao.org https://audio.bible.helloao.org",
-  // fetch() / XHR / WS go to the GraphQL API origin (https to the API, wss for
-  // live subscriptions). ws: present for local-only development (localhost:3005).
-  `connect-src 'self' https: wss: ws:`,
+  // fetch() / XHR / WS go to the GraphQL API origin. Prod API is same-origin
+  // ('self') with https/wss for WS. Dev API is cross-origin on
+  // http://localhost:3005, which must be listed explicitly (http: alone is not
+  // granted). ws: covers the dev HMR socket.
+  IS_PROD
+    ? "connect-src 'self' https: wss: ws:"
+    : "connect-src 'self' http://localhost:3005 https: wss: ws:",
   // No third-party frames are embedded.
   "frame-src 'none'",
   // base-uri locked to self; prevents <base> hijacking.

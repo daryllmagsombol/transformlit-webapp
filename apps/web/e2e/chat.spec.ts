@@ -44,10 +44,12 @@ test.describe('Chat flow', () => {
     // Buddy registers and sends admin a friend request.
     const buddyPage = await registerFriend(buddyCtx, email, buddyName);
     await buddyPage.goto('/friends');
-    await buddyPage.getByPlaceholder('Search users...').fill(ADMIN_EMAIL);
+    // Search is displayName-only (email substring search was removed for PII),
+    // so look up the seeded admin by their display name.
+    await buddyPage.getByPlaceholder('Search users...').fill('Admin');
     // Search results have no "Add Friend" button — clicking a result row
     // opens the user profile sheet, which holds the action buttons.
-    await buddyPage.getByText('Admin', { exact: true }).click();
+    await buddyPage.getByText('Admin', { exact: true }).first().click();
     const buddySheet = buddyPage.getByRole('dialog');
     await expect(buddySheet).toBeVisible({ timeout: 10000 });
     await buddySheet.getByRole('button', { name: 'Add Friend' }).click();

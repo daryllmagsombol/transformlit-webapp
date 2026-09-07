@@ -82,10 +82,17 @@ export default function LoginForm() {
         });
 
         if (!res.ok) {
-          let message = res.status === 401 ? 'Invalid email or password' : 'Login failed. Please try again.';
+          let message =
+            res.status === 401
+              ? 'Invalid email or password'
+              : 'Login failed. Please try again.';
           try {
             const body = (await res.json()) as { error?: string; message?: string };
-            message = body?.error ?? body?.message ?? message;
+            // Prefer the human-readable `message` (e.g. "Invalid credentials")
+            // over the generic `error` label ("Unauthorized"). Fall back to
+            // `error` when `message` is absent (some error shapes only set it).
+            if (body?.message) message = body.message;
+            else if (body?.error) message = body.error;
           } catch {
             // Non-JSON error body — keep the fallback message.
           }
