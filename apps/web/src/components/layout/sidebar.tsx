@@ -80,7 +80,7 @@ export function Sidebar() {
               &ldquo;Steady steps lead to deep wisdom.&rdquo;
             </p>
             <button className="mt-4 w-full py-2 bg-primary text-on-primary rounded-md font-display text-small font-bold flex items-center justify-center gap-2 hover:bg-brand-orange-dark transition-colors active:scale-95">
-              <span className="material-symbols-outlined text-[18px]">auto_stories</span>
+              <span className="material-symbols-outlined text-[18px]">auto_stories</span>{' '}
               Track Progress
             </button>
           </div>

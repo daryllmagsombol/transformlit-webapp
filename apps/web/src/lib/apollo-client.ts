@@ -25,7 +25,7 @@ import { API_BASE } from './constants';
 const httpUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/graphql';
 const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:3005/graphql';
 
-const isServer = typeof globalThis.window === 'undefined';
+const isServer = globalThis.window === undefined;
 
 /* ------------------------------------------------------------------ */
 /*  Token refresh helpers                                             */

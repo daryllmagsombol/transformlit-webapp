@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { GraphQLGroupPost, GraphQLGroupPostComment, GraphQLUser } from '@transformlit/shared';
 import {
   resolveImageUrl,
@@ -100,7 +100,7 @@ export function PostCard({ post, canModerate, currentUser, onChanged }: PostCard
   }, [post.id, onChanged, addToast]);
 
   const handleAddComment = useCallback(
-    async (e?: FormEvent) => {
+    async (e?: React.FormEvent<HTMLFormElement>) => {
       e?.preventDefault();
       const trimmed = commentBody.trim();
       if (!trimmed) return;

@@ -22,8 +22,8 @@ const NOTIFICATION_SUBSCRIPTION = gql`
 `;
 
 interface BellIconProps {
-  userId: string;
-  onClick: () => void;
+  readonly userId: string;
+  readonly onClick: () => void;
 }
 
 export function BellIcon({ userId, onClick }: BellIconProps) {

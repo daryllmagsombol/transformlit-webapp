@@ -6,7 +6,7 @@ import { resolveChapterRoute } from '../../../../../../lib/bible/chapter-route';
 import BibleReaderClient from './bible-reader-client';
 
 interface PageProps {
-  params: Promise<{ translation: string; book: string; chapter: string }>;
+  readonly params: Promise<{ readonly translation: string; readonly book: string; readonly chapter: string }>;
 }
 
 /**

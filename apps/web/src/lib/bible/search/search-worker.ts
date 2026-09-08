@@ -1,5 +1,5 @@
 import { buildIndex, type SearchCorpus } from './build-index';
-import { searchCorpus, type SearchResult } from './matcher';
+import { searchCorpus } from './matcher';
 import type { CompleteTranslation } from '../types';
 
 interface BuildMessage {

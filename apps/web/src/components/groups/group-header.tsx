@@ -69,7 +69,7 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
   }, [group.id, isOwner, onChanged, router, addToast]);
 
   const handleShare = useCallback(() => {
-    if (typeof globalThis.window === 'undefined') return;
+    if (globalThis.window === undefined) return;
     navigator.clipboard.writeText(globalThis.window.location.href).then(
       () => addToast('Link copied to clipboard.', 'success'),
       () => addToast('Failed to copy link.', 'error'),

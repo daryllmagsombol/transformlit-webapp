@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import { gql } from '@apollo/client';
 import { useRouter } from 'next/navigation';
 import { apolloClient } from '../../lib/apollo-client';
@@ -79,6 +79,11 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
   const [loading, setLoading] = useState(false);
   const { addToast } = useToast();
   const router = useRouter();
+
+  const skeletonKeys = useMemo(
+    () => Array.from({ length: 3 }, () => `skeleton-${crypto.randomUUID()}`),
+    [],
+  );
 
   const fetchNotifications = useCallback(async () => {
     setLoading(true);
@@ -160,8 +165,8 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
 
   const renderNotificationContent = (): ReactNode => {
     if (loading) {
-      return Array.from({ length: 3 }).map((_, i) => (
-        <div key={`skeleton-${i}`} className="p-4 rounded-lg bg-surface-container-high animate-pulse">
+      return skeletonKeys.map((key) => (
+        <div key={key} className="p-4 rounded-lg bg-surface-container-high animate-pulse">
           <div className="flex gap-3">
             <div className="w-10 h-10 rounded-full bg-surface-container-highest" />
             <div className="flex-1 space-y-2">

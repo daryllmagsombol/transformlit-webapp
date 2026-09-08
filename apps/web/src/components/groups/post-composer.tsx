@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { uploadImage, createGroupPost, resolveImageUrl } from '../../lib/groups';
 import { useToast } from '../ui';
 
@@ -36,7 +36,7 @@ export function PostComposer({ groupId, onPosted }: PostComposerProps) {
   );
 
   const handleSubmit = useCallback(
-    async (e?: FormEvent) => {
+    async (e?: React.FormEvent<HTMLFormElement>) => {
       e?.preventDefault();
       const trimmed = body.trim();
       if (!trimmed && !imageKey) return;

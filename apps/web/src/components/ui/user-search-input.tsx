@@ -24,8 +24,8 @@ interface SearchUser {
 }
 
 interface UserSearchInputProps {
-  onSelectUser: (userId: string) => void;
-  currentUserId: string;
+  readonly onSelectUser: (userId: string) => void;
+  readonly currentUserId: string;
 }
 
 export function UserSearchInput({ onSelectUser, currentUserId }: UserSearchInputProps) {

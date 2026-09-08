@@ -31,10 +31,11 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
   if (!open) return null;
 
   return (
-    <div
+    <dialog
       className="fixed inset-0 z-[80] flex items-center justify-center"
       role="dialog"
       aria-modal="true"
+      open
     >
       <button
          type="button"
@@ -57,6 +58,6 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
         )}
         {children}
       </div>
-    </div>
+    </dialog>
   );
 }
