@@ -10,25 +10,23 @@ const ICON_MAP: Record<string, { icon: string; bgClass: string; textClass: strin
 };
 
 interface NotificationItemProps {
-  type: string;
-  body: string;
-  timestamp: string;
-  read: boolean;
-  onPress: () => void;
-  children?: React.ReactNode;
+  readonly type: string;
+  readonly body: string;
+  readonly timestamp: string;
+  readonly read: boolean;
+  readonly onPress: () => void;
+  readonly children?: React.ReactNode;
 }
 
 export function NotificationItem({ type, body, timestamp, read, onPress, children }: NotificationItemProps) {
   const config = ICON_MAP[type] ?? { icon: 'notifications', bgClass: 'bg-surface-container', textClass: 'text-on-surface-variant' };
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
       onClick={onPress}
-      onKeyDown={(e) => e.key === 'Enter' && onPress()}
       aria-label={`Notification: ${body}`}
-      className={`p-4 rounded-xl hover:bg-surface-container transition-colors cursor-pointer border border-transparent hover:border-outline-variant relative ${
+      className={`p-4 rounded-xl hover:bg-surface-container transition-colors cursor-pointer border border-transparent hover:border-outline-variant relative text-left w-full ${
         read ? 'bg-paper' : 'bg-surface-container'
       }`}
     >
@@ -45,6 +43,6 @@ export function NotificationItem({ type, body, timestamp, read, onPress, childre
           {children}
         </div>
       </div>
-    </div>
+    </button>
   );
 }

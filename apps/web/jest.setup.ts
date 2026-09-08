@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom';
 
 // Mock window.matchMedia for responsive sidebar logic
-Object.defineProperty(window, 'matchMedia', {
+Object.defineProperty(globalThis.window, 'matchMedia', {
   writable: true,
   value: (query: string) => ({
     matches: false,

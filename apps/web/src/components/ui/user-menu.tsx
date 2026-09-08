@@ -10,7 +10,7 @@ import { resetApolloState } from '../../lib/apollo-client';
 import { API_BASE } from '../../lib/constants';
 
 interface UserMenuProps {
-  user: GraphQLUser | null;
+  readonly user: GraphQLUser | null;
 }
 
 export function UserMenu({ user }: UserMenuProps) {
@@ -100,10 +100,7 @@ export function UserMenu({ user }: UserMenuProps) {
   const handleTriggerClick = () => setOpen((prev) => !prev);
 
   const handleTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setOpen(true);
-    } else if (event.key === 'ArrowUp') {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       setOpen(true);
     }

@@ -107,6 +107,16 @@ export default function FriendsClient() {
   const [profileSheetUserId, setProfileSheetUserId] = useState<string | null>(null);
   const [declineConfirmId, setDeclineConfirmId] = useState<string | null>(null);
 
+  const suggestedSkeletonKeys = useMemo(
+    () => Array.from({ length: 3 }, () => crypto.randomUUID()),
+    [],
+  );
+
+  const friendSkeletonKeys = useMemo(
+    () => Array.from({ length: 3 }, () => crypto.randomUUID()),
+    [],
+  );
+
   const loadData = useCallback(async () => {
     try {
       const [friendsResult, requestsResult, suggestionsResult] = await Promise.all([
@@ -169,17 +179,10 @@ export default function FriendsClient() {
     }
   };
 
-  if (!isReady) return <LoadingSpinner />;
-
   const getFriendInfo = (f: FriendData) => {
     if (f.requesterId === currentUserId) return f.addressee;
     return f.requester;
   };
-
-  const suggestedSkeletonKeys = useMemo(
-    () => Array.from({ length: 3 }, () => crypto.randomUUID()),
-    [],
-  );
 
   const renderSuggestedFriends = () => {
     if (loading) {
@@ -209,10 +212,31 @@ export default function FriendsClient() {
     );
   };
 
-  const friendSkeletonKeys = useMemo(
-    () => Array.from({ length: 3 }, () => crypto.randomUUID()),
-    [],
+  const onlineFriendIds = useMemo(
+    () => new Set(friends.slice(0, 2).map((f) => f.id)),
+    [friends],
   );
+
+  const friendItems = useMemo(
+    () =>
+      friends.map((f) => {
+        const friend = getFriendInfo(f);
+        const isOnline = onlineFriendIds.has(f.id);
+        return { f, friend, isOnline };
+      }),
+    [friends, onlineFriendIds],
+  );
+
+  const getStatusBadge = (isOnline: boolean) => {
+    if (isOnline) {
+      return (
+        <span className="inline-flex items-center bg-success text-white text-micro rounded-full px-2 py-0.5 font-small">
+          ONLINE
+        </span>
+      );
+    }
+    return undefined;
+  };
 
   const renderFriendsList = () => {
     if (loading) {
@@ -235,39 +259,24 @@ export default function FriendsClient() {
         </div>
       );
     }
-    const onlineFriendIds = useMemo(
-      () => new Set(friends.slice(0, 2).map((f) => f.id)),
-      [friends],
-    );
 
     return (
       <div className="space-y-3">
-        {friends.map((f) => {
-          const friend = getFriendInfo(f);
-          function getStatusBadge() {
-            if (onlineFriendIds.has(f.id)) {
-              return (
-                <span className="inline-flex items-center bg-success text-white text-micro rounded-full px-2 py-0.5 font-small">
-                  ONLINE
-                </span>
-              );
-            }
-            return undefined;
-          }
-          return (
-            <FriendCard
-              key={f.id}
-              name={friend.displayName}
-              bio={friend.bio}
-              avatarUrl={friend.avatarUrl}
-              onPress={() => setProfileSheetUserId(friend.id)}
-              statusBadge={getStatusBadge()}
-            />
-          );
-        })}
+        {friendItems.map(({ f, friend, isOnline }) => (
+          <FriendCard
+            key={f.id}
+            name={friend.displayName}
+            bio={friend.bio}
+            avatarUrl={friend.avatarUrl}
+            onPress={() => setProfileSheetUserId(friend.id)}
+            statusBadge={getStatusBadge(isOnline)}
+          />
+        ))}
       </div>
     );
   };
+
+  if (!isReady) return <LoadingSpinner />;
 
   return (
     <div className="space-y-10">

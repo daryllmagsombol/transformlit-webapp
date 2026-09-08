@@ -13,14 +13,14 @@ import type {
 import { mapWordSpans, type VerseContentItem } from '../../lib/bible/words';
 
 interface VerseListProps {
-  content: ChapterContent[];
-  footnotes: ChapterFootnote[];
-  words?: ChapterWords;
-  selectedVerse?: number | null;
-  highlightedVerse?: number | null;
-  onVerseClick?: (verse: number) => void;
-  onFootnoteClick?: (note: ChapterFootnote) => void;
-  onWordClick?: (verse: number, word: ChapterWord) => void;
+  readonly content: ChapterContent[];
+  readonly footnotes: ChapterFootnote[];
+  readonly words?: ChapterWords;
+  readonly selectedVerse?: number | null;
+  readonly highlightedVerse?: number | null;
+  readonly onVerseClick?: (verse: number) => void;
+  readonly onFootnoteClick?: (note: ChapterFootnote) => void;
+  readonly onWordClick?: (verse: number, word: ChapterWord) => void;
 }
 
 const POEM_INDENTS = ['pl-0', 'pl-2', 'pl-4', 'pl-6', 'pl-8'];

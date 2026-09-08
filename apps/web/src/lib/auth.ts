@@ -27,7 +27,7 @@ interface JwtPayload {
 
 export function decodeJwt(token: string): JwtPayload | null {
   try {
-    const base64 = token.split('.')[1]?.replaceAll(/-/g, '+').replaceAll(/_/g, '/');
+    const base64 = token.split('.')[1]?.replaceAll('-', '+').replaceAll('_', '/');
     if (!base64) return null;
     const json = atob(base64);
     return JSON.parse(json) as JwtPayload;

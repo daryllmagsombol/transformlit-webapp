@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { gql } from '@apollo/client';
-import { useParams, useRouter } from 'next/navigation';
 import { apolloClient } from '../../../../lib/apollo-client';
+import { useParams, useRouter } from 'next/navigation';
 import { startDirectConversation } from '../../../../lib/chat-queries';
 import { useRequireAuth } from '../../../../lib/hooks/use-require-auth';
 import { useAuthStore } from '../../../../store';
@@ -274,7 +274,7 @@ export default function UserProfileClient() {
         <section>
           <h2 className="font-micro text-micro uppercase tracking-widest text-on-surface-variant mb-4 flex items-center gap-2">
             <span className="material-symbols-outlined text-base">group</span>
-            Mutual Friends
+            {' '}Mutual Friends
           </h2>
           <div className="flex gap-5 overflow-x-auto pb-2 -mx-4 px-4">
             {profile.mutualFriends.map((friend) => (
@@ -319,18 +319,11 @@ export default function UserProfileClient() {
           <h2 className="font-display font-headline-h2 text-on-surface mb-6">Active Groups</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {profile.groups.map((g, idx) => (
-              <div
+              <button
+                type="button"
                 key={g.id}
                 onClick={() => router.push(`/groups/${g.slug}`)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    router.push(`/groups/${g.slug}`);
-                  }
-                }}
-                tabIndex={0}
-                role="button"
-                className="p-4 bg-paper rounded-lg border border-outline-variant flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                className="p-4 bg-paper rounded-lg border border-outline-variant flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full text-left"
               >
                 <div className="w-14 h-14 rounded-lg bg-secondary-container flex items-center justify-center flex-shrink-0">
                   <span className="material-symbols-outlined text-on-secondary-container">auto_stories</span>
@@ -341,7 +334,7 @@ export default function UserProfileClient() {
                     {g.memberCount} members · {idx < 2 ? 'Active now' : 'Active today'}
                   </p>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </section>

@@ -4,11 +4,11 @@ import { useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 
 interface SheetProps {
-  open: boolean;
-  onClose: () => void;
-  side?: 'bottom' | 'right';
-  title?: string;
-  children: React.ReactNode;
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly side?: 'bottom' | 'right';
+  readonly title?: string;
+  readonly children: React.ReactNode;
 }
 
 export function Sheet({ open, onClose, side = 'bottom', title, children }: SheetProps) {

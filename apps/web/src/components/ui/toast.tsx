@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, ReactNode } from 'react';
 
 interface Toast {
   id: string;
@@ -24,8 +24,8 @@ function ToastItem({
   toast,
   onDismiss,
 }: {
-  toast: Toast;
-  onDismiss: (id: string) => void;
+  readonly toast: Toast;
+  readonly onDismiss: (id: string) => void;
 }) {
   const colorMap = { success: 'bg-success', error: 'bg-error', info: 'bg-accent' };
   return (
@@ -46,7 +46,7 @@ function ToastItem({
   );
 }
 
-export function ToastProvider({ children }: { children: ReactNode }) {
+export function ToastProvider({ children }: { readonly children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const removeToast = useCallback((id: string) => {
@@ -66,8 +66,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer);
   }, [toasts]);
 
+  const contextValue = useMemo(() => ({ addToast }), [addToast]);
+
   return (
-    <ToastContext.Provider value={{ addToast }}>
+    <ToastContext.Provider value={contextValue}>
       {children}
       <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2" aria-live="polite">
         {toasts.map((t) => (

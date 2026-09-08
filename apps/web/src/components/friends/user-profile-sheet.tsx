@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { gql } from '@apollo/client';
-import { useRouter } from 'next/navigation';
 import { apolloClient } from '../../lib/apollo-client';
+import { useRouter } from 'next/navigation';
 import { startDirectConversation } from '../../lib/chat-queries';
 import { useToast, UserAvatar, Modal } from '../ui';
 
@@ -71,10 +71,10 @@ interface ButtonState {
 }
 
 interface UserProfileSheetProps {
-  userId: string;
-  open: boolean;
-  onClose: () => void;
-  currentUserId: string;
+  readonly userId: string;
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly currentUserId: string;
 }
 
 function deriveButtonState(
@@ -181,7 +181,7 @@ export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserP
   };
 
   const handleMessage = async () => {
-    if (!friendship || friendship.status !== 'ACCEPTED') return;
+    if (friendship?.status !== 'ACCEPTED') return;
     setActionLoading(true);
     try {
       const conversationId = await startDirectConversation(userId);

@@ -4,8 +4,8 @@ import { useBibleSearch } from '../../lib/hooks/use-bible-search';
 import { SearchResultItem } from './search-result-item';
 
 interface SearchPanelProps {
-  translation: string;
-  onResult: (href: string) => void;
+  readonly translation: string;
+  readonly onResult: (href: string) => void;
 }
 
 export function SearchPanel({ translation, onResult }: SearchPanelProps) {
@@ -47,7 +47,7 @@ export function SearchPanel({ translation, onResult }: SearchPanelProps) {
       {indexing === false && query.trim() && results.length > 0 && (
         <div className="flex flex-col gap-2">
           <p className="font-micro text-micro text-on-surface-variant">
-            {results.length} match{results.length !== 1 ? 'es' : ''} in {translation}
+            {results.length} match{results.length === 1 ? '' : 'es'} in {translation}
           </p>
           {results.map((r) => (
             <SearchResultItem key={`${r.b}-${r.c}-${r.v}`} result={r} translation={translation} onNavigate={onResult} />

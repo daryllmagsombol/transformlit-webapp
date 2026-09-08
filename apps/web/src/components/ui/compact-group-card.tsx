@@ -1,12 +1,11 @@
 'use client';
 
 interface CompactGroupCardProps {
-  name: string;
-  description?: string | null;
-  icon: string;
-  iconBg: string;
-  iconColor?: string;
-  onClick?: () => void;
+  readonly name: string;
+  readonly description?: string | null;
+  readonly icon: string;
+  readonly iconBg: string;
+  readonly onClick?: () => void;
 }
 
 export function CompactGroupCard({
@@ -16,21 +15,11 @@ export function CompactGroupCard({
   iconBg,
   onClick,
 }: CompactGroupCardProps) {
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    const isActivationKey = e.key === 'Enter' || e.key === ' ';
-    if (isActivationKey) {
-      e.preventDefault();
-      onClick?.();
-    }
-  };
-
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      onKeyDown={handleKeyDown}
-      tabIndex={0}
-      role="button"
-      className="bg-surface-container-low p-5 rounded-2xl border border-outline-variant flex items-center gap-4 hover:bg-surface-container transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      className="bg-surface-container-low p-5 rounded-2xl border border-outline-variant flex items-center gap-4 hover:bg-surface-container transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full text-left"
     >
       <div
         className={`w-16 h-16 rounded-xl flex-shrink-0 flex items-center justify-center ${iconBg}`}
@@ -43,6 +32,6 @@ export function CompactGroupCard({
           <p className="font-small text-small text-on-surface-variant">{description}</p>
         )}
       </div>
-    </div>
+    </button>
   );
 }

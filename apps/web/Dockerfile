@@ -1,5 +1,4 @@
-# TODO: re-resolve digest periodically (pinned 2026-09-07 from Docker Hub registry API)
-FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
 WORKDIR /workspace
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:3005/graphql
@@ -19,11 +18,10 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
-RUN pnpm exec turbo run build --filter=@transformlit/web...
-
 # Install/build run as root (pnpm workspace install requires it);
 # only the runtime tree is handed over to the non-root `node` user before CMD.
-RUN chown -R node:node /workspace
+RUN pnpm exec turbo run build --filter=@transformlit/web... && \
+    chown -R node:node /workspace
 USER node
 
 ENV NODE_ENV=production

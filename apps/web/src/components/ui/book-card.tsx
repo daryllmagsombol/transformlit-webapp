@@ -3,10 +3,10 @@
 import type { GraphQLBook } from '@transformlit/shared';
 
 interface BookCardProps {
-  book: GraphQLBook;
-  onRead?: () => void;
-  onBuy?: () => void;
-  statusPill?: React.ReactNode;
+  readonly book: GraphQLBook;
+  readonly onRead?: () => void;
+  readonly onBuy?: () => void;
+  readonly statusPill?: React.ReactNode;
 }
 
 export function BookCard({ book, onRead, onBuy, statusPill }: BookCardProps) {

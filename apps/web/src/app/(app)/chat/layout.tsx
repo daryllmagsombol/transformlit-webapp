@@ -1,6 +1,6 @@
 import { ConversationList } from '../../../components/chat/conversation-list';
 
-export default function ChatLayout({ children }: { children: React.ReactNode }) {
+export default function ChatLayout({ children }: { readonly children: React.ReactNode }) {
   return (
     <div className="py-6 md:py-8">
       <div className="md:grid md:grid-cols-[320px_1fr] md:gap-6 md:items-start">

@@ -5,8 +5,8 @@ import { uploadImage, createGroupPost, resolveImageUrl } from '../../lib/groups'
 import { useToast } from '../ui';
 
 interface PostComposerProps {
-  groupId: string;
-  onPosted: () => void;
+  readonly groupId: string;
+  readonly onPosted: () => void;
 }
 
 export function PostComposer({ groupId, onPosted }: PostComposerProps) {

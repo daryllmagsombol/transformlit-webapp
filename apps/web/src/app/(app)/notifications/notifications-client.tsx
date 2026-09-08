@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { gql } from '@apollo/client';
-import { useRouter } from 'next/navigation';
 import { apolloClient } from '../../../lib/apollo-client';
+import { useRouter } from 'next/navigation';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
 import { relativeTime } from '../../../lib/time';
 import { useToast, NotificationItem, LoadingSpinner } from '../../../components/ui';
@@ -102,6 +102,11 @@ export default function NotificationsClient() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const notificationSkeletonKeys = useMemo(
+    () => Array.from({ length: 5 }, () => crypto.randomUUID()),
+    [],
+  );
+
   const fetchNotifications = useCallback(async () => {
     try {
       const { data } = await apolloClient.query<{ notifications: Notification[] }>({
@@ -189,14 +194,7 @@ export default function NotificationsClient() {
     }
   };
 
-  if (!isReady) return <LoadingSpinner />;
-
   const grouped = groupByDate(notifications);
-
-  const notificationSkeletonKeys = useMemo(
-    () => Array.from({ length: 5 }, () => crypto.randomUUID()),
-    [],
-  );
 
   const renderNotificationsContent = () => {
     if (loading) {

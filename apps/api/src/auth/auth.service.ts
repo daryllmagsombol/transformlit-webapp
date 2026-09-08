@@ -67,7 +67,7 @@ export class AuthService {
       where: { emailNormalized },
     });
 
-    if (!user || !user.passwordHash) {
+    if (!user?.passwordHash) {
       throw new UnauthorizedException('Invalid credentials');
     }
 

@@ -8,18 +8,16 @@ class IndexedDBKV implements KVStore {
   private dbPromise: Promise<IDBDatabase> | null = null;
 
   private db(): Promise<IDBDatabase> {
-    if (!this.dbPromise) {
-      this.dbPromise = new Promise((resolve, reject) => {
-        const req = indexedDB.open('transformlit-bible', 1);
-        req.onupgradeneeded = () => {
-          if (!req.result.objectStoreNames.contains('kv')) {
-            req.result.createObjectStore('kv');
-          }
-        };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-    }
+    this.dbPromise ??= new Promise((resolve, reject) => {
+      const req = indexedDB.open('transformlit-bible', 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains('kv')) {
+          req.result.createObjectStore('kv');
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(new Error(req.error?.message ?? 'IndexedDB request failed'));
+    });
     return this.dbPromise;
   }
 
@@ -30,7 +28,7 @@ class IndexedDBKV implements KVStore {
           const tx = db.transaction('kv', mode);
           const req = op(tx.objectStore('kv'));
           req.onsuccess = () => resolve(req.result);
-          req.onerror = () => reject(req.error);
+          req.onerror = () => reject(new Error(req.error?.message ?? 'IndexedDB request failed'));
         }),
     );
   }
@@ -50,7 +48,7 @@ class IndexedDBKV implements KVStore {
 }
 
 class MemoryKV implements KVStore {
-  private map = new Map<string, unknown>();
+  private readonly map = new Map<string, unknown>();
   async get<T>(key: string): Promise<T | null> {
     return (this.map.get(key) as T | undefined) ?? null;
   }
@@ -69,9 +67,7 @@ export function setKVStore(store: KVStore): void {
 }
 
 export function getKVStore(): KVStore {
-  if (!kvStore) {
-    kvStore = typeof indexedDB !== 'undefined' ? new IndexedDBKV() : new MemoryKV();
-  }
+  kvStore ??= typeof indexedDB === 'undefined' ? new MemoryKV() : new IndexedDBKV();
   return kvStore;
 }
 

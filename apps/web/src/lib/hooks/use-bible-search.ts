@@ -15,7 +15,7 @@ export function useBibleSearch(translation: string) {
   const setIndexStatus = useBibleStore((s) => s.setIndexStatus);
 
   const getClient = useCallback(() => {
-    if (!clientRef.current) clientRef.current = new SearchClient();
+    clientRef.current ??= new SearchClient();
     return clientRef.current;
   }, []);
 

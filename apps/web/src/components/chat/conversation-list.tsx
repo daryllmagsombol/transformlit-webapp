@@ -90,7 +90,7 @@ export function ConversationList() {
           href="/friends"
           className="font-display font-headline-h4 px-6 h-11 rounded-md bg-brand-orange-dark text-on-primary flex items-center gap-2 shadow-sm hover:brightness-110 active:scale-95 transition-all"
         >
-          <span className="material-symbols-outlined text-[20px]">group</span>
+          <span className="material-symbols-outlined text-[20px]">group</span>{' '}
           Find friends
         </Link>
       </div>

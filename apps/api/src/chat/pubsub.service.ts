@@ -79,7 +79,7 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
           const existing = this.listeners.get(triggerName) ?? [];
           existing.push({ resolve: resolve as (v: IteratorResult<unknown>) => void });
           this.listeners.set(triggerName, existing);
-        }) as Promise<IteratorResult<T>>,
+        }),
       return: async () => {
         // listener cleanup happens naturally since it won't receive more events
         return { value: undefined as unknown, done: true };

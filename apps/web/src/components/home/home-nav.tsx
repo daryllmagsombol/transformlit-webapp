@@ -24,7 +24,7 @@ export function HomeNav() {
       <nav className="mx-auto max-w-[1200px] px-6 h-16 grid grid-cols-[1fr_auto_1fr] items-center gap-4">
         {/* col 1: logo, left */}
         <Link href="/" className="justify-self-start font-display text-headline-h3 font-bold text-ink-black inline-flex items-center gap-2">
-          <span aria-hidden className="inline-block h-4 w-4 rounded-sm bg-brand" />
+          <span aria-hidden className="inline-block h-4 w-4 rounded-sm bg-brand" />{' '}
           Transform Lit
         </Link>
 

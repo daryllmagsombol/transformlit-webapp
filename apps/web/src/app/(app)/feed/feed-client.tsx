@@ -143,7 +143,7 @@ export default function FeedClient() {
             <section className="bg-surface-container-low rounded-xl border border-outline-variant p-6">
               <h2 className="font-display text-headline-h4 text-on-surface mb-6 flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary">diversity_3</span>
-                Latest Groups Update
+                {' '}Latest Groups Update
               </h2>
               <div className="flex flex-col gap-6">
                 {groups.slice(0, 3).map((g) => {

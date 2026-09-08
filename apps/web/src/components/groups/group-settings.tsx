@@ -20,8 +20,8 @@ const settingsSchema = z.object({
 type SettingsFormValues = z.infer<typeof settingsSchema>;
 
 interface GroupSettingsProps {
-  group: GraphQLGroup;
-  onChanged: () => void;
+  readonly group: GraphQLGroup;
+  readonly onChanged: () => void;
 }
 
 export function GroupSettings({ group, onChanged }: GroupSettingsProps) {

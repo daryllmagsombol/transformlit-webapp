@@ -8,8 +8,8 @@ import { PostComposer } from './post-composer';
 import { PostCard } from './post-card';
 
 interface GroupPostsProps {
-  group: GraphQLGroup;
-  onChanged: () => void;
+  readonly group: GraphQLGroup;
+  readonly onChanged: () => void;
 }
 
 export function GroupPosts({ group, onChanged }: GroupPostsProps) {

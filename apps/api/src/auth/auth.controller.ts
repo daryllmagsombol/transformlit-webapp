@@ -79,9 +79,10 @@ export class AuthController {
       const tokens = await this.authService.refreshTokens(raw);
       this.setRefreshCookie(res, tokens.refreshToken);
       return { accessToken: tokens.accessToken, user: tokens.user } as AuthResponse;
-    } catch (error) {
+    } catch {
       // Reuse/invalid/expired token — surface a clean 401. The refresh cookie is
       // left for the caller to clear via /auth/logout if they choose.
+      // Exception is re-thrown as UnauthorizedException
       throw new UnauthorizedException('Invalid refresh token');
     }
   }

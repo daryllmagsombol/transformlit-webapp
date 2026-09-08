@@ -3,8 +3,8 @@
 import { useRef, useState } from 'react';
 
 interface AudioPlayerProps {
-  links: Record<string, string>;
-  onEnded: () => void;
+  readonly links: Record<string, string>;
+  readonly onEnded: () => void;
 }
 
 const SPEEDS = [1, 1.5, 2];
@@ -60,7 +60,7 @@ export function AudioPlayer({ links, onEnded }: AudioPlayerProps) {
         </div>
         <div className="flex items-center justify-between">
           <label className="flex items-center gap-1 text-micro text-on-surface-variant">
-            Reader
+            Reader{' '}
             <select
               className="bg-transparent text-on-surface font-small text-small min-h-[44px]"
               value={reader}

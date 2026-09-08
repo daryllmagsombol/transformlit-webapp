@@ -151,7 +151,7 @@ export class GroupPostsService {
 
   private async assertActiveMember(groupId: string, userId: string) {
     const membership = await this.groups.getMembershipFor(groupId, userId);
-    if (!membership || membership.status !== 'ACTIVE') {
+    if (membership?.status !== 'ACTIVE') {
       throw new ForbiddenException('Only active members can do this');
     }
   }

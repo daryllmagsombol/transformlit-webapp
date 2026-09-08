@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { gql } from '@apollo/client';
+import { apolloClient } from '../../../lib/apollo-client';
 import { useRouter } from 'next/navigation';
 import type { GraphQLGroup } from '@transformlit/shared';
 import { useToast, GroupCard, CategoryChip, FeaturedGroupCard, CompactGroupCard, LoadingSpinner } from '../../../components/ui';
-import { apolloClient } from '../../../lib/apollo-client';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
 import { GROUP_CATEGORIES } from '../../../lib/constants';
 

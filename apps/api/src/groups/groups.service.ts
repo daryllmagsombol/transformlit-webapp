@@ -239,9 +239,8 @@ export class GroupsService {
   private async assertCanModerate(groupId: string, actorId: string) {
     const membership = await this.getMembershipFor(groupId, actorId);
     if (
-      !membership ||
-      membership.status !== 'ACTIVE' ||
-      (membership.role !== 'OWNER' && membership.role !== 'MODERATOR')
+      membership?.status !== 'ACTIVE' ||
+      (membership?.role !== 'OWNER' && membership?.role !== 'MODERATOR')
     ) {
       throw new ForbiddenException('You need to be an owner or moderator');
     }

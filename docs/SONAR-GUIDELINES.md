@@ -402,22 +402,18 @@ Replace deprecated Zod string methods with the new syntax:
 
 | ❌ Deprecated | ✅ Replacement |
 |---------------|----------------|
-| `.email()` `.url()` `.uuid()` etc. | `z.email()` `z.url()` `z.uuid()` etc. |
+| `.email()` `.url()` `.uuid()` | `z.email()` `z.url()` `z.uuid()` |
+| `.datetime()` | `z.iso.datetime()` (NOT `z.datetime()` — does not exist in Zod 4) |
 | `.min(5, 'message')` | `.min(5, { message: 'message' })` |
 | `.max(10, 'message')` | `.max(10, { message: 'message' })` |
 | `.regex(/pattern/)` | `.regex(/pattern/)` (unchanged) |
 
 ### Apollo Client deprecations
-Replace legacy Apollo Client APIs:
-
-| ❌ Deprecated | ✅ Replacement |
-|---------------|----------------|
-| `createHttpLink` | `createHttpLink` (still valid, but check version) |
-| `split` | `split` (still valid) |
-| `setContext` | `setContext` (still valid) |
-| `onError` | `onError` (still valid) |
-| Legacy `query()` signature | Use `useQuery` hook |
-| Legacy `mutate()` signature | Use `useMutation` hook |
+Pinned version is Apollo Client v4.2.12 — imperative `apolloClient.query`/`apolloClient.mutate`
+and `createHttpLink`/`split`/`setContext`/`onError` links remain valid. Do NOT migrate call
+sites to `useQuery`/`useMutation` hooks to satisfy the deprecation lint: `useLazyQuery` in
+this version does not support `onCompleted`/`variables` in options, and imperative calls are
+still supported. Report these findings as accepted deviations, not errors.
 
 ### React deprecations
 | ❌ Deprecated | ✅ Replacement |

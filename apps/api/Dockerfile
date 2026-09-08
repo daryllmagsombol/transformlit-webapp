@@ -1,5 +1,4 @@
-# TODO: re-resolve digest periodically (pinned 2026-09-07 from Docker Hub registry API)
-FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
 WORKDIR /workspace
 
 RUN npm install -g pnpm@10

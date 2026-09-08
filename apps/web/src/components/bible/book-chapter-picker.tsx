@@ -7,12 +7,12 @@ import { isOldTestament } from '../../lib/bible/refs';
 import type { TranslationBook } from '../../lib/bible/types';
 
 interface BookChapterPickerProps {
-  open: boolean;
-  onClose: () => void;
-  books: TranslationBook[];
-  translation: string;
-  bookId: string;
-  chapter: number;
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly books: TranslationBook[];
+  readonly translation: string;
+  readonly bookId: string;
+  readonly chapter: number;
 }
 
 export function BookChapterPicker({ open, onClose, books, translation, bookId, chapter }: BookChapterPickerProps) {

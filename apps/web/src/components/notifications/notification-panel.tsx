@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { gql } from '@apollo/client';
 import { useRouter } from 'next/navigation';
 import { apolloClient } from '../../lib/apollo-client';
@@ -53,9 +53,9 @@ interface Notification {
 }
 
 interface NotificationPanelProps {
-  open: boolean;
-  onClose: () => void;
-  userId: string;
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly userId: string;
 }
 
 function getNotificationBody(notification: Notification): string {
@@ -158,20 +158,70 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
     }
   };
 
+  const renderNotificationContent = (): ReactNode => {
+    if (loading) {
+      return Array.from({ length: 3 }).map((_, i) => (
+        <div key={`skeleton-${i}`} className="p-4 rounded-lg bg-surface-container-high animate-pulse">
+          <div className="flex gap-3">
+            <div className="w-10 h-10 rounded-full bg-surface-container-highest" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 bg-surface-container-highest rounded w-3/4" />
+              <div className="h-3 bg-surface-container-highest rounded w-1/4" />
+            </div>
+          </div>
+        </div>
+      ));
+    }
+    if (notifications.length > 0) {
+      return notifications.map((n) => (
+        <NotificationItem
+          key={n.id}
+          type={n.type}
+          body={getNotificationBody(n)}
+          timestamp={relativeTime(n.createdAt)}
+          read={!!n.readAt}
+          onPress={() => handleNotificationPress(n)}
+        >
+          {n.type === 'FRIEND_REQUEST' && (
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleAcceptFriendRequest(n);
+                }}
+                className="px-2.5 py-1 bg-brand-orange-dark text-on-primary text-small font-medium rounded-lg hover:brightness-110 active:scale-95 transition-all"
+              >
+                Accept
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleRejectFriendRequest(n);
+                }}
+                className="px-2.5 py-1 bg-surface-container-highest text-on-surface-variant border border-outline-variant text-small font-medium rounded-lg hover:bg-outline-variant/20 active:scale-95 transition-all"
+              >
+                Decline
+              </button>
+            </div>
+          )}
+        </NotificationItem>
+      ));
+    }
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-on-surface-variant">
+        <span className="material-symbols-outlined text-4xl mb-2">notifications_off</span>
+        <p className="font-body-mobile">No notifications yet.</p>
+      </div>
+    );
+  };
+
   return (
     <>
       {open && (
-        <div
-          className="fixed inset-0 bg-ink-black/60 backdrop-blur-[2px] z-[60]"
+        <button
+          type="button"
+          className="fixed inset-0 bg-ink-black/60 backdrop-blur-[2px] z-[60] cursor-default"
           onClick={onClose}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              onClose();
-            }
-          }}
-          role="button"
-          tabIndex={0}
           aria-label="Close notifications"
         />
       )}
@@ -189,58 +239,7 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {loading ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="p-4 rounded-lg bg-surface-container-high animate-pulse">
-                  <div className="flex gap-3">
-                    <div className="w-10 h-10 rounded-full bg-surface-container-highest" />
-                    <div className="flex-1 space-y-2">
-                      <div className="h-4 bg-surface-container-highest rounded w-3/4" />
-                      <div className="h-3 bg-surface-container-highest rounded w-1/4" />
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : notifications.length > 0 ? (
-              notifications.map((n) => (
-                <NotificationItem
-                  key={n.id}
-                  type={n.type}
-                  body={getNotificationBody(n)}
-                  timestamp={relativeTime(n.createdAt)}
-                  read={!!n.readAt}
-                  onPress={() => handleNotificationPress(n)}
-                >
-                  {n.type === 'FRIEND_REQUEST' && (
-                    <div className="flex items-center gap-2 mt-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleAcceptFriendRequest(n);
-                        }}
-                        className="px-2.5 py-1 bg-brand-orange-dark text-on-primary text-small font-medium rounded-lg hover:brightness-110 active:scale-95 transition-all"
-                      >
-                        Accept
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRejectFriendRequest(n);
-                        }}
-                        className="px-2.5 py-1 bg-surface-container-highest text-on-surface-variant border border-outline-variant text-small font-medium rounded-lg hover:bg-outline-variant/20 active:scale-95 transition-all"
-                      >
-                        Decline
-                      </button>
-                    </div>
-                  )}
-                </NotificationItem>
-              ))
-            ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-on-surface-variant">
-                <span className="material-symbols-outlined text-4xl mb-2">notifications_off</span>
-                <p className="font-body-mobile">No notifications yet.</p>
-              </div>
-            )}
+            {renderNotificationContent()}
           </div>
 
           <div className="p-4 border-t border-outline-variant text-center bg-surface-container-lowest space-y-2">

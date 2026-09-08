@@ -25,7 +25,7 @@ import { API_BASE } from './constants';
 const httpUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/graphql';
 const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:3005/graphql';
 
-const isServer = typeof window === 'undefined';
+const isServer = typeof globalThis.window === 'undefined';
 
 /* ------------------------------------------------------------------ */
 /*  Token refresh helpers                                             */
@@ -224,39 +224,39 @@ const proactiveRefreshLink = new ApolloLink((operation, forward) => {
  * and retries the failed request with the new access token.
  */
 const errorLink = onError(({ error, operation, forward }) => {
-  if (!isUnauthorizedError(error)) return;
+  if (isUnauthorizedError(error)) {
+    // Login/registration hit unauthenticated endpoints: an "Invalid credentials"
+    // (UNAUTHENTICATED) response is a business error, NOT an expired session.
+    // Intercepting it here would try a refresh, find no session, and force a
+    // page reload — destroying the form and any error toast mid-login.
+    const isLoginOrRegister = operation.operationName === 'LoginLocal' || operation.operationName === 'RegisterLocal';
+    if (isLoginOrRegister) return;
 
-  // Login/registration hit unauthenticated endpoints: an "Invalid credentials"
-  // (UNAUTHENTICATED) response is a business error, NOT an expired session.
-  // Intercepting it here would try a refresh, find no session, and force a
-  // page reload — destroying the form and any error toast mid-login.
-  const isLoginOrRegister = operation.operationName === 'LoginLocal' || operation.operationName === 'RegisterLocal';
-  if (isLoginOrRegister) return;
+    const context = operation.getContext();
+    if (context.authRetry) return;
+    operation.setContext({ ...context, authRetry: true });
 
-  const context = operation.getContext();
-  if (context.authRetry) return;
-  operation.setContext({ ...context, authRetry: true });
-
-  return new Observable((subscriber) => {
-    // No-session case: refreshTokens() fails fast via the REST refresh call
-    // (401 without a cookie) and redirects to login.
-    refreshTokens()
-      .then((success) => {
-        if (!success) throw new Error('Session expired');
-        const token = getAccessToken();
-        operation.setContext(({ headers = {} }) => ({
-          headers: {
-            ...headers,
-            authorization: token ? `Bearer ${token}` : '',
-          },
-        }));
-        return forward(operation);
-      })
-      .then((observable) => {
-        observable.subscribe(subscriber);
-      })
-      .catch((err) => subscriber.error(err));
-  });
+    return new Observable((subscriber) => {
+      // No-session case: refreshTokens() fails fast via the REST refresh call
+      // (401 without a cookie) and redirects to login.
+      refreshTokens()
+        .then((success) => {
+          if (!success) throw new Error('Session expired');
+          const token = getAccessToken();
+          operation.setContext(({ headers = {} }) => ({
+            headers: {
+              ...headers,
+              authorization: token ? `Bearer ${token}` : '',
+            },
+          }));
+          return forward(operation);
+        })
+        .then((observable) => {
+          observable.subscribe(subscriber);
+        })
+        .catch((err) => subscriber.error(err));
+    });
+  }
 });
 
 const wsLink = isServer
@@ -293,8 +293,9 @@ const wsLink = isServer
     );
 
 const splitLink =
-  !isServer && wsLink
-    ? split(
+  isServer || wsLink === null
+    ? httpLink
+    : split(
         ({ query }) => {
           const definition = getMainDefinition(query);
           return (
@@ -304,8 +305,7 @@ const splitLink =
         },
         wsLink,
         httpLink,
-      )
-    : httpLink;
+      );
 
 export const apolloClient = new ApolloClient({
   link: ApolloLink.from([errorLink, proactiveRefreshLink, authLink, splitLink]),

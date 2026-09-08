@@ -30,17 +30,10 @@ export function Sidebar() {
     <>
       {/* Mobile overlay */}
       {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/30 z-40 md:hidden"
+        <button
+          type="button"
+          className="fixed inset-0 bg-black/30 z-40 md:hidden cursor-default"
           onClick={() => setSidebarOpen(false)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              setSidebarOpen(false);
-            }
-          }}
-          role="button"
-          tabIndex={0}
           aria-label="Close sidebar"
         />
       )}
@@ -99,14 +92,14 @@ export function Sidebar() {
             href="/settings"
             className="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-highest transition-all text-micro uppercase tracking-wider"
           >
-            <span className="material-symbols-outlined text-lg">settings</span>
+            <span className="material-symbols-outlined text-lg">settings</span>{' '}
             Settings
           </Link>
           <Link
             href="/help"
             className="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-highest transition-all text-micro uppercase tracking-wider"
           >
-            <span className="material-symbols-outlined text-lg">help</span>
+            <span className="material-symbols-outlined text-lg">help</span>{' '}
             Help
           </Link>
           <ThemeToggle />
