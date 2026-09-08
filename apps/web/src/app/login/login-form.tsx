@@ -32,6 +32,8 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 export default function LoginForm() {
   const router = useRouter();
   const setAuth = useAuthStore((s) => s.setAuth);
+  const user = useAuthStore((s) => s.user);
+  const isHydrated = useAuthStore((s) => s.isHydrated);
   const { addToast } = useToast();
 
   const [loading, setLoading] = useState(false);
@@ -64,6 +66,13 @@ export default function LoginForm() {
       cancelled = true;
     };
   }, [router]);
+
+  /* ---------- Redirect already-authenticated users ---------- */
+  useEffect(() => {
+    if (isHydrated && user) {
+      router.replace('/feed');
+    }
+  }, [isHydrated, user, router]);
 
   /* ---------- Submit handler ---------- */
 
