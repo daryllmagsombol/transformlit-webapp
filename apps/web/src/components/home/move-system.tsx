@@ -6,18 +6,18 @@ import { BOOKS } from './content';
 
 export function MoveSystem() {
   const reduce = useReducedMotion();
-  const hiddenInitial = !reduce;
+  const hiddenInitial = reduce;
 
   const gridVariants = {
     hidden: {},
     visible: { transition: { when: 'beforeChildren' as const, delayChildren: stagger(0.1) } },
   };
-  const cardVariants: Variants = !hiddenInitial
-    ? {}
-    : {
+  const cardVariants: Variants = hiddenInitial
+    ? {
         hidden: { opacity: 0, y: 24 },
         visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' as const } },
-      };
+      }
+    : {};
 
   return (
     <section id="move-system" className="bg-surface-container-low">

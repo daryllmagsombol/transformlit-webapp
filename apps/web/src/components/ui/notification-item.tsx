@@ -29,10 +29,10 @@ export function NotificationItem({ type, body, timestamp, read, onPress, childre
       onKeyDown={(e) => e.key === 'Enter' && onPress()}
       aria-label={`Notification: ${body}`}
       className={`p-4 rounded-xl hover:bg-surface-container transition-colors cursor-pointer border border-transparent hover:border-outline-variant relative ${
-        !read ? 'bg-surface-container' : 'bg-paper'
+        read ? 'bg-paper' : 'bg-surface-container'
       }`}
     >
-      {!read && <span className="absolute top-4 right-4 w-2 h-2 bg-info rounded-full" />}
+      {read ? null : <span className="absolute top-4 right-4 w-2 h-2 bg-info rounded-full" />}
       <div className="flex gap-3">
         <div className={`w-10 h-10 rounded-full ${config.bgClass} flex items-center justify-center flex-shrink-0`}>
           <span className={`material-symbols-outlined ${config.textClass} text-[20px]`}>

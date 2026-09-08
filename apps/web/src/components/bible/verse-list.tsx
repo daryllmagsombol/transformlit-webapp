@@ -31,10 +31,11 @@ function baseAt(content: VerseContentItem[], index: number): number {
   for (let i = 0; i < index; i++) {
     const item = content[i];
     if (typeof item === 'string') total += item.length;
-    else if (item && 'text' in item && typeof (item as FormattedText).text === 'string')
-      total += (item as FormattedText).text.length;
-    else if (item && 'heading' in item && typeof (item as InlineHeading).heading === 'string')
-      total += (item as InlineHeading).heading.length;
+    else if (item && 'text' in item && typeof item.text === 'string')
+      total += item.text.length;
+    else if (item && 'heading' in item && typeof item.heading === 'string')
+      total += item.heading.length;
+    // Note: `in` checks on discriminated unions narrow the type without `as`.
   }
   return total;
 }
@@ -62,6 +63,50 @@ function renderInline(
   return <span key={key} className="font-display font-bold">{item.heading}</span>;
 }
 
+function renderWordSpans(
+  text: string,
+  pieceStart: number,
+  spans: ReturnType<typeof mapWordSpans>,
+  verseNumber: number,
+  onWordClick?: (verse: number, word: ChapterWord) => void,
+) {
+  const pieceSpans = spans.filter(
+    (s) => s.start >= pieceStart && s.end <= pieceStart + text.length,
+  );
+  if (pieceSpans.length === 0) return text;
+  let cursor = 0;
+  return (
+    <>
+      {pieceSpans.map((span) => {
+        const el = (
+          <Fragment key={`span-${span.start}-${span.end}`}>
+            {text.slice(cursor, span.start - pieceStart)}
+            <button
+              type="button"
+              className="inline-target underline decoration-dotted underline-offset-2 text-primary"
+              onClick={() => onWordClick?.(verseNumber, span.word)}
+            >
+              {text.slice(span.start - pieceStart, span.end - pieceStart)}
+            </button>
+          </Fragment>
+        );
+        cursor = span.end - pieceStart;
+        return el;
+      })}
+      {text.slice(cursor)}
+    </>
+  );
+}
+
+function buildFormattedClassName(formatted: FormattedText): string {
+  return [
+    formatted.poem ? POEM_INDENTS[Math.min(formatted.poem, POEM_INDENTS.length - 1)] : '',
+    formatted.wordsOfJesus ? 'text-brand-orange-dark dark:text-primary-fixed' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
 export function VerseList({
   content,
   footnotes,
@@ -75,29 +120,32 @@ export function VerseList({
   const callerFor = (noteId: number): string => {
     const note = footnotes.find((f) => f.noteId === noteId);
     if (!note) return '';
-    if (note.caller === '+' || note.caller === null) return String.fromCharCode(97 + noteId);
+    if (note.caller === '+' || note.caller === null) return String.fromCodePoint(97 + noteId);
     return note.caller;
   };
 
   return (
     <div className="font-body text-body leading-relaxed text-on-surface space-y-4">
-      {content.map((item, i) => {
+      {content.map((item) => {
         if (item.type === 'heading') {
           return (
-            <h2 key={i} className="font-display text-headline-h3 font-bold text-on-surface pt-4 text-center">
+            <h2 key={`heading-${item.content.join(' ')}`} className="font-display text-headline-h3 font-bold text-on-surface pt-4 text-center">
               {item.content.join(' ')}
             </h2>
           );
         }
-        if (item.type === 'line_break') return <div key={i} className="h-3" />;
+        if (item.type === 'line_break') return <div key={`lb-${item.type}`} className="h-3" />;
         if (item.type === 'hebrew_subtitle') {
+          const subtitleText = item.content
+            .map((piece) => {
+              if (typeof piece === 'string') return piece;
+              if ('text' in piece) return piece.text;
+              return '';
+            })
+            .join(' ');
           return (
-            <p key={i} className="italic text-on-surface-variant text-center text-small">
-              {item.content
-                .map((piece) =>
-                  typeof piece === 'string' ? piece : 'text' in piece ? piece.text : '',
-                )
-                .join(' ')}
+            <p key={`subtitle-${subtitleText}`} className="italic text-on-surface-variant text-center text-small">
+              {subtitleText}
             </p>
           );
         }
@@ -110,7 +158,7 @@ export function VerseList({
 
         return (
           <div
-            key={i}
+            key={`verse-${item.number}`}
             id={`v${item.number}`}
             className={`flex gap-3 scroll-mt-24 rounded-lg px-3 py-2 ${
               isSelected || isHighlighted
@@ -127,79 +175,34 @@ export function VerseList({
               {item.number}
             </button>
             <p className="flex-1">
-              {item.content.map((piece, j) => {
+              {item.content.map((piece) => {
                 // typeof guard FIRST — `in` on a string primitive throws TypeError
                 if (typeof piece === 'string') {
                   const text = piece;
-                  const pieceStart = baseAt(item.content, j);
-                  const pieceSpans = spans.filter(
-                    (s) => s.start >= pieceStart && s.end <= pieceStart + text.length,
-                  );
-                  if (pieceSpans.length === 0) return text;
-                  let cursor = 0;
+                  const pieceIndex = item.content.indexOf(piece);
+                  const pieceStart = baseAt(item.content, pieceIndex);
                   return (
-                    <Fragment key={j}>
-                      {pieceSpans.map((span, k) => {
-                        const el = (
-                          <Fragment key={k}>
-                            {text.slice(cursor, span.start - pieceStart)}
-                            <button
-                              type="button"
-                              className="inline-target underline decoration-dotted underline-offset-2 text-primary"
-                              onClick={() => onWordClick?.(item.number, span.word)}
-                            >
-                              {text.slice(span.start - pieceStart, span.end - pieceStart)}
-                            </button>
-                          </Fragment>
-                        );
-                        cursor = span.end - pieceStart;
-                        return el;
-                      })}
-                      {text.slice(cursor)}
+                    <Fragment key={`text-${text.slice(0, 30)}`}>
+                      {renderWordSpans(text, pieceStart, spans, item.number, onWordClick)}
                     </Fragment>
                   );
                 }
-                if ('lineBreak' in piece) return <br key={j} />;
+                if ('lineBreak' in piece) return <br key={`br-${item.content.indexOf(piece)}`} />;
                 if ('noteId' in piece) {
-                  return renderInline(piece, callerFor, j, onFootnoteClick);
+                  return renderInline(piece, callerFor, item.content.indexOf(piece), onFootnoteClick);
                 }
                 if ('heading' in piece) {
-                  return renderInline(piece, callerFor, j, onFootnoteClick);
+                  return renderInline(piece, callerFor, item.content.indexOf(piece), onFootnoteClick);
                 }
                 // FormattedText: wrap word spans, keep wordsOfJesus/poem styling on the wrapper
-                const formatted = piece as FormattedText;
-                const text = formatted.text;
-                const pieceStart = baseAt(item.content, j);
-                const pieceSpans = spans.filter(
-                  (s) => s.start >= pieceStart && s.end <= pieceStart + text.length,
-                );
-                const className = [
-                  formatted.poem ? POEM_INDENTS[Math.min(formatted.poem, POEM_INDENTS.length - 1)] : '',
-                  formatted.wordsOfJesus ? 'text-brand-orange-dark dark:text-primary-fixed' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ');
-                let cursor = 0;
+                // Type narrowed by prior guards (string, lineBreak, noteId, heading)
+                const text = piece.text;
+                const pieceIndex = item.content.indexOf(piece);
+                const pieceStart = baseAt(item.content, pieceIndex);
+                const className = buildFormattedClassName(piece);
                 return (
-                  <span key={j} className={className}>
-                    {pieceSpans.length === 0
-                      ? text
-                      : pieceSpans.map<React.ReactNode>((span, k) => {
-                          const el = (
-                            <Fragment key={k}>
-                              {text.slice(cursor, span.start - pieceStart)}
-                              <button
-                                type="button"
-                                className="inline-target underline decoration-dotted underline-offset-2 text-primary"
-                                onClick={() => onWordClick?.(item.number, span.word)}
-                              >
-                                {text.slice(span.start - pieceStart, span.end - pieceStart)}
-                              </button>
-                            </Fragment>
-                          );
-                          cursor = span.end - pieceStart;
-                          return el;
-                        }).concat(text.slice(cursor))}
+                  <span key={`formatted-${text.slice(0, 30)}`} className={className}>
+                    {renderWordSpans(text, pieceStart, spans, item.number, onWordClick)}
                   </span>
                 );
               })}

@@ -50,19 +50,25 @@ export function GroupPosts({ group, onChanged }: GroupPostsProps) {
         </div>
       )}
 
-      {loading ? (
-        <div className="space-y-4">
-          <div className="h-40 bg-surface-container rounded-xl animate-pulse" />
-          <div className="h-40 bg-surface-container rounded-xl animate-pulse" />
-        </div>
-      ) : posts.length === 0 ? (
-        <div className="bg-paper-warm rounded-xl shadow-sm border border-outline-variant p-8 text-center">
-          <p className="font-body text-body text-on-surface-variant">
-            No posts yet — be the first to share.
-          </p>
-        </div>
-      ) : (
-        posts.map((post) => (
+      {(() => {
+        if (loading) {
+          return (
+            <div className="space-y-4">
+              <div className="h-40 bg-surface-container rounded-xl animate-pulse" />
+              <div className="h-40 bg-surface-container rounded-xl animate-pulse" />
+            </div>
+          );
+        }
+        if (posts.length === 0) {
+          return (
+            <div className="bg-paper-warm rounded-xl shadow-sm border border-outline-variant p-8 text-center">
+              <p className="font-body text-body text-on-surface-variant">
+                No posts yet — be the first to share.
+              </p>
+            </div>
+          );
+        }
+        return posts.map((post) => (
           <PostCard
             key={post.id}
             post={post}
@@ -70,8 +76,8 @@ export function GroupPosts({ group, onChanged }: GroupPostsProps) {
             currentUser={currentUser}
             onChanged={loadPosts}
           />
-        ))
-      )}
+        ));
+      })()}
     </div>
   );
 }

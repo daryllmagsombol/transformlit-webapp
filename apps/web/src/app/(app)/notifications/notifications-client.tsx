@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { gql } from '@apollo/client';
 import { useRouter } from 'next/navigation';
 import { apolloClient } from '../../../lib/apollo-client';
@@ -61,8 +61,14 @@ interface Notification {
 function getBody(n: Notification): string {
   const name = (n.payload?.fromName as string | undefined)?.trim();
   switch (n.type) {
-    case 'FRIEND_REQUEST': return name ? `${name} sent you a friend request` : 'sent you a friend request';
-    case 'FRIEND_ACCEPTED': return name ? `${name} accepted your friend request` : 'accepted your friend request';
+    case 'FRIEND_REQUEST': {
+      if (name) return `${name} sent you a friend request`;
+      return 'sent you a friend request';
+    }
+    case 'FRIEND_ACCEPTED': {
+      if (name) return `${name} accepted your friend request`;
+      return 'accepted your friend request';
+    }
     case 'GROUP_INVITE': return 'invited you to join a group';
     case 'GROUP_UPDATE': return 'New discussion in your group';
     default: return 'You have a new notification';
@@ -123,7 +129,7 @@ export default function NotificationsClient() {
       setNotifications((prev) =>
         prev.map((n) => (n.id === notification.id ? { ...n, readAt: new Date().toISOString() } : n))
       );
-      window.dispatchEvent(new CustomEvent('notifications-cleared'));
+      globalThis.window.dispatchEvent(new CustomEvent('notifications-cleared'));
     } catch {
       // Silent fail
     }
@@ -137,7 +143,7 @@ export default function NotificationsClient() {
     try {
       await apolloClient.mutate({ mutation: MARK_ALL_READ });
       setNotifications((prev) => prev.map((n) => ({ ...n, readAt: new Date().toISOString() })));
-      window.dispatchEvent(new CustomEvent('notifications-cleared'));
+      globalThis.window.dispatchEvent(new CustomEvent('notifications-cleared'));
     } catch {
       addToast('Failed to mark all as read.', 'error');
     }
@@ -157,7 +163,7 @@ export default function NotificationsClient() {
       });
       addToast('Friend request accepted!', 'success');
       setNotifications((prev) => prev.filter((n) => n.id !== notification.id));
-      window.dispatchEvent(new CustomEvent('notifications-cleared'));
+      globalThis.window.dispatchEvent(new CustomEvent('notifications-cleared'));
     } catch {
       addToast('Failed to accept friend request.', 'error');
     }
@@ -177,7 +183,7 @@ export default function NotificationsClient() {
       });
       addToast('Friend request declined.', 'info');
       setNotifications((prev) => prev.filter((n) => n.id !== notification.id));
-      window.dispatchEvent(new CustomEvent('notifications-cleared'));
+      globalThis.window.dispatchEvent(new CustomEvent('notifications-cleared'));
     } catch {
       addToast('Failed to decline friend request.', 'error');
     }
@@ -186,6 +192,89 @@ export default function NotificationsClient() {
   if (!isReady) return <LoadingSpinner />;
 
   const grouped = groupByDate(notifications);
+
+  const notificationSkeletonKeys = useMemo(
+    () => Array.from({ length: 5 }, () => crypto.randomUUID()),
+    [],
+  );
+
+  const renderNotificationsContent = () => {
+    if (loading) {
+      return (
+        <div className="space-y-3">
+          {notificationSkeletonKeys.map((key) => (
+            <div key={key} className="h-16 bg-surface-container-high rounded-xl animate-pulse" />
+          ))}
+        </div>
+      );
+    }
+    if (notifications.length === 0) {
+      return (
+        <div className="py-16 flex flex-col items-center text-center">
+          <span className="material-symbols-outlined text-[80px] text-primary opacity-40 mb-4">
+            notifications_off
+          </span>
+          <h3 className="font-display font-headline-h3 text-on-surface mb-2">All caught up!</h3>
+          <p className="font-body text-on-surface-variant max-w-xs">
+            Your inbox is quiet. We&apos;ll let you know when something new happens.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-10">
+        {Array.from(grouped.entries()).map(([group, items]) => (
+          <section key={group}>
+            <div className="flex items-center gap-2 mb-4">
+              <h2 className="font-display text-headline-h4 text-on-surface-variant">
+                {group}
+              </h2>
+              {group === 'Today' && (
+                <span className="inline-flex items-center bg-brand-orange-dark text-white font-small text-micro rounded-full px-2 py-0.5">
+                  {items.length}
+                </span>
+              )}
+            </div>
+            <div className="space-y-3">
+              {items.map((n) => (
+                <NotificationItem
+                  key={n.id}
+                  type={n.type}
+                  body={getBody(n)}
+                  timestamp={relativeTime(n.createdAt)}
+                  read={!!n.readAt}
+                  onPress={() => handlePress(n)}
+                >
+                  {n.type === 'FRIEND_REQUEST' && (
+                    <div className="flex items-center gap-2 mt-3">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAcceptFriendRequest(n);
+                        }}
+                        className="px-3 py-1.5 bg-brand-orange-dark text-on-primary text-small font-medium rounded-lg hover:brightness-110 active:scale-95 transition-all"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRejectFriendRequest(n);
+                        }}
+                        className="px-3 py-1.5 bg-surface-container-highest text-on-surface-variant border border-outline-variant text-small font-medium rounded-lg hover:bg-outline-variant/20 active:scale-95 transition-all"
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  )}
+                </NotificationItem>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="max-w-[800px] mx-auto py-8">
@@ -202,75 +291,7 @@ export default function NotificationsClient() {
         )}
       </div>
 
-      {loading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="h-16 bg-surface-container-high rounded-xl animate-pulse" />
-          ))}
-        </div>
-      ) : notifications.length > 0 ? (
-        <div className="space-y-10">
-          {Array.from(grouped.entries()).map(([group, items]) => (
-            <section key={group}>
-              <div className="flex items-center gap-2 mb-4">
-                <h2 className="font-display text-headline-h4 text-on-surface-variant">
-                  {group}
-                </h2>
-                {group === 'Today' && (
-                  <span className="inline-flex items-center bg-brand-orange-dark text-white font-small text-micro rounded-full px-2 py-0.5">
-                    {items.length}
-                  </span>
-                )}
-              </div>
-              <div className="space-y-3">
-                {items.map((n) => (
-                  <NotificationItem
-                    key={n.id}
-                    type={n.type}
-                    body={getBody(n)}
-                    timestamp={relativeTime(n.createdAt)}
-                    read={!!n.readAt}
-                    onPress={() => handlePress(n)}
-                  >
-                    {n.type === 'FRIEND_REQUEST' && (
-                      <div className="flex items-center gap-2 mt-3">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAcceptFriendRequest(n);
-                          }}
-                          className="px-3 py-1.5 bg-brand-orange-dark text-on-primary text-small font-medium rounded-lg hover:brightness-110 active:scale-95 transition-all"
-                        >
-                          Accept
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRejectFriendRequest(n);
-                          }}
-                          className="px-3 py-1.5 bg-surface-container-highest text-on-surface-variant border border-outline-variant text-small font-medium rounded-lg hover:bg-outline-variant/20 active:scale-95 transition-all"
-                        >
-                          Decline
-                        </button>
-                      </div>
-                    )}
-                  </NotificationItem>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      ) : (
-        <div className="py-16 flex flex-col items-center text-center">
-          <span className="material-symbols-outlined text-[80px] text-primary opacity-40 mb-4">
-            notifications_off
-          </span>
-          <h3 className="font-display font-headline-h3 text-on-surface mb-2">All caught up!</h3>
-          <p className="font-body text-on-surface-variant max-w-xs">
-            Your inbox is quiet. We&apos;ll let you know when something new happens.
-          </p>
-        </div>
-      )}
+      {renderNotificationsContent()}
     </div>
   );
 }

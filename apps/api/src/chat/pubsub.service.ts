@@ -9,7 +9,7 @@ interface PubSubTrigger {
 @Injectable()
 export class PubSubService implements OnModuleInit, OnModuleDestroy {
   private pool!: Pool;
-  private listeners = new Map<string, PubSubTrigger[]>();
+  private readonly listeners = new Map<string, PubSubTrigger[]>();
 
   constructor(private readonly config: ConfigService) {}
 
@@ -82,9 +82,9 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
         }) as Promise<IteratorResult<T>>,
       return: async () => {
         // listener cleanup happens naturally since it won't receive more events
-        return { value: undefined as any, done: true };
+        return { value: undefined as unknown, done: true };
       },
-      throw: async () => ({ value: undefined as any, done: true }),
+      throw: async () => ({ value: undefined as unknown, done: true }),
     };
   }
 }

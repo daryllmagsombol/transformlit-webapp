@@ -124,8 +124,8 @@ export class GroupsService {
   async create(userId: string, input: CreateGroupInput) {
     const slug = input.name
       .toLowerCase()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9-]/g, '');
+      .replaceAll(/\s+/g, '-')
+      .replaceAll(/[^a-z0-9-]/g, '');
     const group = await this.prisma.group.create({
       data: {
         name: input.name,

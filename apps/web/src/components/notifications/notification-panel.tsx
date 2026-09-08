@@ -103,7 +103,7 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
     try {
       await apolloClient.mutate({ mutation: MARK_ALL_READ });
       setNotifications((prev) => prev.map((n) => ({ ...n, readAt: new Date().toISOString() })));
-      window.dispatchEvent(new CustomEvent('notifications-cleared'));
+      globalThis.window.dispatchEvent(new CustomEvent('notifications-cleared'));
     } catch {
       addToast('Failed to mark all as read.', 'error');
     }
@@ -132,7 +132,7 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
       });
       addToast('Friend request accepted!', 'success');
       setNotifications((prev) => prev.filter((n) => n.id !== notification.id));
-      window.dispatchEvent(new CustomEvent('notifications-cleared'));
+      globalThis.window.dispatchEvent(new CustomEvent('notifications-cleared'));
     } catch {
       addToast('Failed to accept friend request.', 'error');
     }
@@ -152,7 +152,7 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
       });
       addToast('Friend request declined.', 'info');
       setNotifications((prev) => prev.filter((n) => n.id !== notification.id));
-      window.dispatchEvent(new CustomEvent('notifications-cleared'));
+      globalThis.window.dispatchEvent(new CustomEvent('notifications-cleared'));
     } catch {
       addToast('Failed to decline friend request.', 'error');
     }
@@ -161,7 +161,19 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
   return (
     <>
       {open && (
-        <div className="fixed inset-0 bg-ink-black/60 backdrop-blur-[2px] z-[60]" onClick={onClose} />
+        <div
+          className="fixed inset-0 bg-ink-black/60 backdrop-blur-[2px] z-[60]"
+          onClick={onClose}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onClose();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label="Close notifications"
+        />
       )}
 
       <div className={`fixed bottom-0 left-0 w-full h-[60vh] rounded-t-2xl md:top-0 md:bottom-auto md:left-auto md:right-0 md:h-full md:w-[400px] md:rounded-none bg-surface shadow-2xl z-[70] border-l border-outline-variant transform transition-transform duration-300 ease-in-out ${open ? 'translate-x-0 md:translate-y-0' : 'translate-x-full md:translate-y-full md:translate-x-0'}`}>

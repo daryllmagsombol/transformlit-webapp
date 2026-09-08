@@ -44,7 +44,7 @@ export function SearchPanel({ translation, onResult }: SearchPanelProps) {
 
       {error && <p className="text-error text-small">{error}</p>}
 
-      {!indexing && query.trim() && results.length > 0 && (
+      {indexing === false && query.trim() && results.length > 0 && (
         <div className="flex flex-col gap-2">
           <p className="font-micro text-micro text-on-surface-variant">
             {results.length} match{results.length !== 1 ? 'es' : ''} in {translation}
@@ -55,7 +55,7 @@ export function SearchPanel({ translation, onResult }: SearchPanelProps) {
         </div>
       )}
 
-      {!indexing && query.trim() && results.length === 0 && !error && (
+      {indexing === false && query.trim() && results.length === 0 && error === null && (
         <p className="text-on-surface-variant text-small">No matches.</p>
       )}
     </div>

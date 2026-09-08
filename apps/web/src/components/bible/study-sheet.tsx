@@ -48,7 +48,7 @@ export function StudySheet({
 
   const crossRefs: CrossRefReference[] = verse !== null ? (byVerse[verse] ?? []) : [];
 
-  const reference = verse !== null ? `${bookName} ${chapter}:${verse}` : bookName;
+  const reference = verse === null ? bookName : `${bookName} ${chapter}:${verse}`;
 
   const copy = useCallback(async () => {
     try {

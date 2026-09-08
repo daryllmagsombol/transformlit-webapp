@@ -40,7 +40,7 @@ export class ChatResolver {
     @Args('cursor', { nullable: true }) cursor?: string,
     @Args('limit', { type: () => Int, defaultValue: 25 }) limit?: number,
   ) {
-    return this.chatService.getMessages(conversationId, cursor, limit, user.id);
+    return this.chatService.getMessages(conversationId, user.id, cursor, limit);
   }
 
   @Mutation(() => Message, { name: 'sendMessage' })

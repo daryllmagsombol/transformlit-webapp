@@ -64,11 +64,44 @@ interface UserProfileData {
   };
 }
 
+interface ButtonState {
+  buttonLabel: string;
+  buttonDisabled: boolean;
+  buttonVariant: 'primary' | 'secondary' | 'disabled';
+}
+
 interface UserProfileSheetProps {
   userId: string;
   open: boolean;
   onClose: () => void;
   currentUserId: string;
+}
+
+function deriveButtonState(
+  friendship: { id: string; requesterId: string; addresseeId: string; status: string } | null,
+  currentUserId: string,
+): ButtonState {
+  let buttonLabel = 'Add Friend';
+  let buttonDisabled = false;
+  let buttonVariant: 'primary' | 'secondary' | 'disabled' = 'primary';
+
+  if (friendship) {
+    if (friendship.status === 'ACCEPTED') {
+      buttonLabel = 'Friends';
+      buttonDisabled = true;
+      buttonVariant = 'disabled';
+    } else if (friendship.status === 'PENDING') {
+      if (friendship.requesterId === currentUserId) {
+        buttonLabel = 'Request Sent';
+        buttonDisabled = true;
+        buttonVariant = 'disabled';
+      } else {
+        buttonLabel = 'Accept Request';
+      }
+    }
+  }
+
+  return { buttonLabel, buttonDisabled, buttonVariant };
 }
 
 export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserProfileSheetProps) {
@@ -164,26 +197,16 @@ export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserP
   const isOwnProfile = userId === currentUserId;
   const user = profile?.user;
 
-  // Derive button state
-  let buttonLabel = 'Add Friend';
-  let buttonDisabled = false;
-  let buttonVariant: 'primary' | 'secondary' | 'disabled' = 'primary';
+  const { buttonLabel, buttonDisabled, buttonVariant } = deriveButtonState(friendship, currentUserId);
 
-  if (friendship) {
-    if (friendship.status === 'ACCEPTED') {
-      buttonLabel = 'Friends';
-      buttonDisabled = true;
-      buttonVariant = 'disabled';
-    } else if (friendship.status === 'PENDING') {
-      if (friendship.requesterId === currentUserId) {
-        buttonLabel = 'Request Sent';
-        buttonDisabled = true;
-        buttonVariant = 'disabled';
-      } else {
-        buttonLabel = 'Accept Request';
-        buttonVariant = 'primary';
-      }
-    }
+  function getButtonClassName(): string {
+    if (buttonVariant === 'primary') return 'bg-brand-orange-dark text-white hover:brightness-110';
+    if (buttonVariant === 'disabled') return 'bg-surface-container-highest text-on-surface-variant cursor-not-allowed';
+    return 'bg-white text-brand-orange-dark border-2 border-brand-orange-dark';
+  }
+
+  function getButtonIcon(): string {
+    return friendship?.status === 'ACCEPTED' ? 'check' : 'person_add';
   }
 
   return (
@@ -251,16 +274,10 @@ export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserP
                 <button
                   onClick={handleAction}
                   disabled={buttonDisabled || actionLoading}
-                  className={`w-full py-3 rounded-lg font-bold shadow-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:opacity-50 ${
-                    buttonVariant === 'primary'
-                      ? 'bg-brand-orange-dark text-white hover:brightness-110'
-                      : buttonVariant === 'disabled'
-                      ? 'bg-surface-container-highest text-on-surface-variant cursor-not-allowed'
-                      : 'bg-white text-brand-orange-dark border-2 border-brand-orange-dark'
-                  }`}
+                  className={`w-full py-3 rounded-lg font-bold shadow-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:opacity-50 ${getButtonClassName()}`}
                 >
                   <span className="material-symbols-outlined">
-                    {friendship?.status === 'ACCEPTED' ? 'check' : 'person_add'}
+                    {getButtonIcon()}
                   </span>
                   {actionLoading ? 'Loading...' : buttonLabel}
                 </button>

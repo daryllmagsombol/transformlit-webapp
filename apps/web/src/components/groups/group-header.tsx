@@ -70,7 +70,7 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
 
   const handleShare = useCallback(() => {
     if (typeof window === 'undefined') return;
-    navigator.clipboard.writeText(window.location.href).then(
+    navigator.clipboard.writeText(globalThis.window.location.href).then(
       () => addToast('Link copied to clipboard.', 'success'),
       () => addToast('Failed to copy link.', 'error'),
     );
@@ -169,20 +169,26 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
       {/* Tabs */}
       <div className="bg-surface-container rounded-full p-1 inline-flex w-full md:w-auto">
         {TABS.map((tab) => {
-          const disabled = tab === 'members' ? !isActiveMember && !isOwner && group.myRole !== 'MODERATOR' : tab === 'settings' && !isOwner;
+          function isTabDisabled(): boolean {
+            if (tab === 'members') return !isActiveMember && !isOwner && group.myRole !== 'MODERATOR';
+            if (tab === 'settings') return !isOwner;
+            return false;
+          }
+          function getTabClassName(): string {
+            const base = 'flex-1 md:flex-none px-4 py-2 rounded-full font-small text-small font-semibold capitalize transition-colors min-w-[80px]';
+            const active = activeTab === tab
+              ? 'bg-primary-container text-on-primary-container'
+              : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high';
+            const disabledClass = isTabDisabled() ? 'opacity-40 cursor-not-allowed' : '';
+            return `${base} ${active} ${disabledClass}`;
+          }
           return (
             <button
               key={tab}
               type="button"
-              onClick={() => !disabled && onTabChange(tab)}
-              disabled={disabled}
-              className={`
-                flex-1 md:flex-none px-4 py-2 rounded-full font-small text-small font-semibold capitalize transition-colors min-w-[80px]
-                ${activeTab === tab
-                  ? 'bg-primary-container text-on-primary-container'
-                  : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'}
-                ${disabled ? 'opacity-40 cursor-not-allowed' : ''}
-              `}
+              onClick={() => !isTabDisabled() && onTabChange(tab)}
+              disabled={isTabDisabled()}
+              className={getTabClassName()}
             >
               {tab}
             </button>

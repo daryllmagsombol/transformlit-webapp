@@ -32,18 +32,17 @@ export const useAuthStore = create<AuthStore>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ user: state.user }),
       merge: (persistedState, currentState) => {
-        const persisted = persistedState as Partial<AuthStore> | undefined;
-        const current = currentState as AuthStore;
+        const persisted = persistedState as Partial<AuthStore>;
 
         // If the current state already has a user (set by setAuth before
         // rehydration completed), prefer it over persisted state to avoid
         // overwriting fresh auth data.
-        if (current.user) {
-          return { ...current, ...persisted, user: current.user, isHydrated: true };
+        if (currentState.user) {
+          return { ...currentState, ...persisted, user: currentState.user, isHydrated: true };
         }
 
         // Normal merge: persisted state fills in missing values, mark hydrated
-        return { ...current, ...persisted, isHydrated: true };
+        return { ...currentState, ...persisted, isHydrated: true };
       },
       onRehydrateStorage: () => (state, error) => {
         if (error) {

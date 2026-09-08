@@ -16,10 +16,21 @@ export function CompactGroupCard({
   iconBg,
   onClick,
 }: CompactGroupCardProps) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const isActivationKey = e.key === 'Enter' || e.key === ' ';
+    if (isActivationKey) {
+      e.preventDefault();
+      onClick?.();
+    }
+  };
+
   return (
     <div
       onClick={onClick}
-      className="bg-surface-container-low p-5 rounded-2xl border border-outline-variant flex items-center gap-4 hover:bg-surface-container transition-colors cursor-pointer"
+      onKeyDown={handleKeyDown}
+      tabIndex={0}
+      role="button"
+      className="bg-surface-container-low p-5 rounded-2xl border border-outline-variant flex items-center gap-4 hover:bg-surface-container transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
     >
       <div
         className={`w-16 h-16 rounded-xl flex-shrink-0 flex items-center justify-center ${iconBg}`}

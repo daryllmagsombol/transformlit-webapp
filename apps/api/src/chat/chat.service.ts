@@ -237,9 +237,9 @@ export class ChatService {
 
   async getMessages(
     conversationId: string,
-    cursor: string | undefined,
-    limit = 25,
     userId: string,
+    cursor?: string,
+    limit = 25,
   ) {
     await this.assertMember(conversationId, userId);
 

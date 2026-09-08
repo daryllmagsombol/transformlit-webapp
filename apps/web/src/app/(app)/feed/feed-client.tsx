@@ -148,23 +148,27 @@ export default function FeedClient() {
               <div className="flex flex-col gap-6">
                 {groups.slice(0, 3).map((g) => {
                   const meta = getGroupMeta(g.slug, timeAgo(g.createdAt));
+                  function getAvatarContent() {
+                    if (meta.imageUrl) {
+                      return <img className="w-full h-full object-cover" src={meta.imageUrl} alt={g.name} />;
+                    }
+                    return <span className="text-xs font-bold text-on-surface-variant">{g.name.charAt(0).toUpperCase()}</span>;
+                  }
+                  function getActivityContent() {
+                    if (g.slug === 'the-bereans') {
+                      return <>discussed <span className="italic text-primary">Acts 17</span> and shared 12 new reflections.</>;
+                    }
+                    return meta.activityText(g.name, g.memberCount);
+                  }
                   return (
                     <div key={g.id} className="flex gap-4">
                       <div className="w-10 h-10 rounded-full bg-surface-container-highest border border-outline-variant shrink-0 flex items-center justify-center overflow-hidden">
-                        {meta.imageUrl ? (
-                          <img className="w-full h-full object-cover" src={meta.imageUrl} alt={g.name} />
-                        ) : (
-                          <span className="text-xs font-bold text-on-surface-variant">{g.name.charAt(0).toUpperCase()}</span>
-                        )}
+                        {getAvatarContent()}
                       </div>
                       <div className="flex-1">
                         <p className="font-small text-small text-on-surface-variant leading-snug">
                           <strong className="text-on-surface">{g.name}</strong>{' '}
-                          {g.slug === 'the-bereans' ? (
-                            <>discussed <span className="italic text-primary">Acts 17</span> and shared 12 new reflections.</>
-                          ) : (
-                            meta.activityText(g.name, g.memberCount)
-                          )}
+                          {getActivityContent()}
                         </p>
                         <span className="font-micro text-micro text-outline">{meta.timeLabel}</span>
                       </div>

@@ -156,7 +156,7 @@ export function UserMenu({ user }: UserMenuProps) {
             </div>
           </div>
 
-          <div className="my-1 border-t border-outline-variant" role="separator" />
+          <hr className="my-1 border-t border-outline-variant" />
 
           <button
             ref={itemRef}

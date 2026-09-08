@@ -99,7 +99,9 @@ export class AuthController {
   @Public()
   @Get('google')
   @UseGuards(GoogleOAuthStartGuard)
-  googleAuth() {}
+  googleAuth(): void {
+    // OAuth flow is handled by the guard; this method intentionally left empty
+  }
 
   @Public()
   @Get('google/callback')
@@ -111,7 +113,9 @@ export class AuthController {
   @Public()
   @Get('facebook')
   @UseGuards(FacebookOAuthStartGuard)
-  facebookAuth() {}
+  facebookAuth(): void {
+    // OAuth flow is handled by the guard; this method intentionally left empty
+  }
 
   @Public()
   @Get('facebook/callback')
@@ -123,7 +127,9 @@ export class AuthController {
   @Public()
   @Get('microsoft')
   @UseGuards(MicrosoftOAuthStartGuard)
-  microsoftAuth() {}
+  microsoftAuth(): void {
+    // OAuth flow is handled by the guard; this method intentionally left empty
+  }
 
   @Public()
   @Get('microsoft/callback')

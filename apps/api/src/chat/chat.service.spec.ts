@@ -74,7 +74,7 @@ describe('ChatService authorization', () => {
 
   it('rejects getMessages for a non-member', async () => {
     prisma.conversationMember.findUnique.mockResolvedValueOnce(null);
-    await expect(service.getMessages('c1', undefined, 25, userA)).rejects.toThrow(
+    await expect(service.getMessages('c1', userA, undefined, 25)).rejects.toThrow(
       "You don't have access to this conversation",
     );
     expect(prisma.message.findMany).not.toHaveBeenCalled();
@@ -106,7 +106,7 @@ describe('ChatService authorization', () => {
 
   it('rejects access to a missing conversation', async () => {
     prisma.conversation.findUnique.mockResolvedValue(null);
-    await expect(service.getMessages('nope', undefined, 25, userA)).rejects.toThrow(
+    await expect(service.getMessages('nope', userA, undefined, 25)).rejects.toThrow(
       "You don't have access to this conversation",
     );
     expect(prisma.conversationMember.findUnique).not.toHaveBeenCalled();
@@ -276,7 +276,7 @@ describe('ChatService authorization', () => {
       // Cursor for a message at 2024-01-04T00:00:00.000Z / id 'm4'
       const cursor = Buffer.from('2024-01-04T00:00:00.000Z|m4', 'utf8').toString('base64url');
 
-      const result = await service.getMessages('c1', cursor, 500, userA);
+      const result = await service.getMessages('c1', userA, cursor, 500);
 
       expect(prisma.message.findMany).toHaveBeenCalledWith({
         where: {
@@ -306,7 +306,7 @@ describe('ChatService authorization', () => {
       ];
       prisma.message.findMany.mockResolvedValueOnce(messages.slice(0, 2));
 
-      const page1 = await service.getMessages('c1', undefined, 2, userA);
+      const page1 = await service.getMessages('c1', userA, undefined, 2);
       expect(page1.edges.length).toBe(2);
       expect(page1.hasNextPage).toBe(false);
       const cursor = page1.edges[1].cursor;
@@ -317,7 +317,7 @@ describe('ChatService authorization', () => {
 
       // Page 2 uses the composite cursor from page 1.
       prisma.message.findMany.mockResolvedValueOnce([]);
-      await service.getMessages('c1', cursor, 2, userA);
+      await service.getMessages('c1', userA, cursor, 2);
       expect(prisma.message.findMany).toHaveBeenLastCalledWith(
         expect.objectContaining({
           where: {
@@ -336,14 +336,14 @@ describe('ChatService authorization', () => {
     });
 
     it('throws Invalid cursor for malformed cursors', async () => {
-      await expect(service.getMessages('c1', 'not-base64!@#$%', 25, userA)).rejects.toThrow(
+      await expect(service.getMessages('c1', userA, 'not-base64!@#$%', 25)).rejects.toThrow(
         'Invalid cursor',
       );
     });
 
     it('throws Invalid cursor when the date portion is NaN', async () => {
       const cursor = Buffer.from('not-a-date|m1', 'utf8').toString('base64url');
-      await expect(service.getMessages('c1', cursor, 25, userA)).rejects.toThrow(
+      await expect(service.getMessages('c1', userA, cursor, 25)).rejects.toThrow(
         'Invalid cursor',
       );
       expect(prisma.message.findMany).not.toHaveBeenCalled();
@@ -352,7 +352,7 @@ describe('ChatService authorization', () => {
     it('treats same-timestamp messages as a stable total order via id', async () => {
       prisma.message.findMany.mockResolvedValueOnce([]);
       const cursor = Buffer.from('2024-01-01T00:00:00.000Z|m-bbb', 'utf8').toString('base64url');
-      const result = await service.getMessages('c1', cursor, 25, userA);
+      const result = await service.getMessages('c1', userA, cursor, 25);
       expect(result.edges).toEqual([]);
       expect(prisma.message.findMany).toHaveBeenCalledWith(
         expect.objectContaining({

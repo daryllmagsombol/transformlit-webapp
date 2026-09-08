@@ -1,8 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { gql } from '@apollo/client';
-import { useRouter } from 'next/navigation';
 import { apolloClient } from '../../../lib/apollo-client';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
 import { useAuthStore } from '../../../store';
@@ -97,7 +96,6 @@ export default function FriendsClient() {
   const { isReady } = useRequireAuth();
   const currentUserId = useAuthStore((s) => s.user?.id);
   const { addToast } = useToast();
-  const router = useRouter();
 
   const [friends, setFriends] = useState<FriendData[]>([]);
   const [requests, setRequests] = useState<RequestData[]>([]);
@@ -178,6 +176,99 @@ export default function FriendsClient() {
     return f.requester;
   };
 
+  const suggestedSkeletonKeys = useMemo(
+    () => Array.from({ length: 3 }, () => crypto.randomUUID()),
+    [],
+  );
+
+  const renderSuggestedFriends = () => {
+    if (loading) {
+      return (
+        <div className="flex gap-4 overflow-x-auto pb-4">
+          {suggestedSkeletonKeys.map((key) => (
+            <div key={key} className="min-w-[200px] h-48 bg-surface-container-high rounded-xl animate-pulse flex-shrink-0" />
+          ))}
+        </div>
+      );
+    }
+    if (suggestions.length === 0) {
+      return <p className="font-body text-on-surface-variant">No suggestions right now — check back soon.</p>;
+    }
+    return (
+      <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 md:mx-0 md:px-0 snap-x">
+        {suggestions.map((s) => (
+          <SuggestedFriendCard
+            key={s.id}
+            name={s.displayName}
+            tag={s.bio || 'Community member'}
+            avatarUrl={s.avatarUrl}
+            onAdd={() => handleSuggest(s.id)}
+          />
+        ))}
+      </div>
+    );
+  };
+
+  const friendSkeletonKeys = useMemo(
+    () => Array.from({ length: 3 }, () => crypto.randomUUID()),
+    [],
+  );
+
+  const renderFriendsList = () => {
+    if (loading) {
+      return (
+        <div className="space-y-3">
+          {friendSkeletonKeys.map((key) => (
+            <div key={key} className="h-16 bg-surface-container-high rounded-xl animate-pulse" />
+          ))}
+        </div>
+      );
+    }
+    if (friends.length === 0) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <span className="material-symbols-outlined text-[80px] text-primary opacity-40">person_search</span>
+          <h3 className="font-display text-headline-h2 text-on-surface-variant mb-2">Finding your circle?</h3>
+          <p className="font-body max-w-sm text-on-surface-variant mb-8">
+            Your friends list is empty. Search for fellow readers to connect!
+          </p>
+        </div>
+      );
+    }
+    const onlineFriendIds = useMemo(
+      () => new Set(friends.slice(0, 2).map((f) => f.id)),
+      [friends],
+    );
+
+    return (
+      <div className="space-y-3">
+        {friends.map((f) => {
+          const friend = getFriendInfo(f);
+          function getStatusBadge() {
+            if (onlineFriendIds.has(f.id)) {
+              return (
+                <span className="inline-flex items-center bg-success text-white text-micro rounded-full px-2 py-0.5 font-small">
+                  ONLINE
+                </span>
+              );
+            }
+            return undefined;
+          }
+          return (
+            <FriendCard
+              key={f.id}
+              name={friend.displayName}
+              bio={friend.bio}
+              avatarUrl={friend.avatarUrl}
+              onPress={() => setProfileSheetUserId(friend.id)}
+              statusBadge={getStatusBadge()}
+            />
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-10">
       {/* Search */}
@@ -222,27 +313,7 @@ export default function FriendsClient() {
       {/* Suggested Friends */}
       <section>
         <h3 className="font-display text-headline-h2 text-on-surface mb-4">Suggested Friends</h3>
-        {loading ? (
-          <div className="flex gap-4 overflow-x-auto pb-4">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="min-w-[200px] h-48 bg-surface-container-high rounded-xl animate-pulse flex-shrink-0" />
-            ))}
-          </div>
-        ) : suggestions.length > 0 ? (
-          <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 md:mx-0 md:px-0 snap-x">
-            {suggestions.map((s) => (
-              <SuggestedFriendCard
-                key={s.id}
-                name={s.displayName}
-                tag={s.bio || 'Community member'}
-                avatarUrl={s.avatarUrl}
-                onAdd={() => handleSuggest(s.id)}
-              />
-            ))}
-          </div>
-        ) : (
-          <p className="font-body text-on-surface-variant">No suggestions right now — check back soon.</p>
-        )}
+        {renderSuggestedFriends()}
       </section>
 
       {/* Friends List */}
@@ -258,43 +329,7 @@ export default function FriendsClient() {
             Manage
           </button>
         </div>
-        {loading ? (
-          <div className="space-y-3">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="h-16 bg-surface-container-high rounded-xl animate-pulse" />
-            ))}
-          </div>
-        ) : friends.length > 0 ? (
-          <div className="space-y-3">
-            {friends.map((f, index) => {
-              const friend = getFriendInfo(f);
-              return (
-                <FriendCard
-                  key={f.id}
-                  name={friend.displayName}
-                  bio={friend.bio}
-                  avatarUrl={friend.avatarUrl}
-                  onPress={() => setProfileSheetUserId(friend.id)}
-                  statusBadge={
-                    index < 2 ? (
-                      <span className="inline-flex items-center bg-success text-white text-micro rounded-full px-2 py-0.5 font-small">
-                        ONLINE
-                      </span>
-                    ) : undefined
-                  }
-                />
-              );
-            })}
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <span className="material-symbols-outlined text-[80px] text-primary opacity-40">person_search</span>
-            <h3 className="font-display text-headline-h2 text-on-surface-variant mb-2">Finding your circle?</h3>
-            <p className="font-body max-w-sm text-on-surface-variant mb-8">
-              Your friends list is empty. Search for fellow readers to connect!
-            </p>
-          </div>
-        )}
+        {renderFriendsList()}
       </section>
 
       {/* User Profile Sheet */}

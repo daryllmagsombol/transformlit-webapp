@@ -17,7 +17,7 @@ export function Sidebar() {
 
   // Open sidebar on desktop, close on mobile — respond to resize across breakpoint
   useEffect(() => {
-    const mq = window.matchMedia('(min-width: 768px)');
+    const mq = globalThis.window.matchMedia('(min-width: 768px)');
     const handler = (e: MediaQueryListEvent | MediaQueryList) => {
       setSidebarOpen(e.matches);
     };
@@ -33,6 +33,15 @@ export function Sidebar() {
         <div
           className="fixed inset-0 bg-black/30 z-40 md:hidden"
           onClick={() => setSidebarOpen(false)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setSidebarOpen(false);
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label="Close sidebar"
         />
       )}
 

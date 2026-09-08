@@ -90,7 +90,7 @@ export function GroupSettings({ group, onChanged }: GroupSettingsProps) {
   );
 
   const handleDelete = useCallback(async () => {
-    if (!window.confirm('Delete this group permanently? This cannot be undone.')) return;
+    if (!globalThis.window.confirm('Delete this group permanently? This cannot be undone.')) return;
     try {
       await deleteGroup(group.id);
       addToast('Group deleted.', 'info');
@@ -107,7 +107,7 @@ export function GroupSettings({ group, onChanged }: GroupSettingsProps) {
 
         {/* Cover image */}
         <div className="space-y-2">
-          <label className="font-small text-small font-semibold text-on-surface">Cover image</label>
+          <label htmlFor="group-cover" className="font-small text-small font-semibold text-on-surface">Cover image</label>
           <div className="flex items-center gap-4">
             {coverUrl ? (
               <img
@@ -130,6 +130,7 @@ export function GroupSettings({ group, onChanged }: GroupSettingsProps) {
               {uploading ? 'Uploading…' : 'Upload new image'}
             </button>
             <input
+              id="group-cover"
               ref={fileInputRef}
               type="file"
               accept="image/jpeg,image/png,image/webp,image/gif"

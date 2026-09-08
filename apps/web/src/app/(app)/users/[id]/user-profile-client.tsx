@@ -134,15 +134,16 @@ export default function UserProfileClient() {
   };
 
   const handleMessage = async () => {
-    if (!friendship || friendship.status !== 'ACCEPTED') return;
-    setActionLoading(true);
-    try {
-      const conversationId = await startDirectConversation(userId);
-      router.push(`/chat/${conversationId}`);
-    } catch {
-      addToast('You can only message your friends.', 'error');
-    } finally {
-      setActionLoading(false);
+    if (friendship?.status === 'ACCEPTED') {
+      setActionLoading(true);
+      try {
+        const conversationId = await startDirectConversation(userId);
+        router.push(`/chat/${conversationId}`);
+      } catch {
+        addToast('You can only message your friends.', 'error');
+      } finally {
+        setActionLoading(false);
+      }
     }
   };
 
@@ -176,9 +177,17 @@ export default function UserProfileClient() {
         buttonDisabled = true;
       } else {
         buttonLabel = 'Accept Request';
-        buttonDisabled = false;
       }
     }
+  }
+
+  function getButtonClassName(): string {
+    if (buttonDisabled) return 'bg-surface-container-high text-on-surface-variant cursor-not-allowed';
+    return 'bg-brand-orange-dark text-on-primary hover:translate-y-[-2px]';
+  }
+
+  function getButtonIcon(): string {
+    return friendship?.status === 'ACCEPTED' ? 'check' : 'person_add';
   }
 
   const BOOK_STATUS_PILLS: { label: string; colorClass: string }[] = [
@@ -230,17 +239,14 @@ export default function UserProfileClient() {
                 <button
                   onClick={buttonOnClick}
                   disabled={buttonDisabled || actionLoading}
-                  className={`font-display font-headline-h4 px-6 h-11 rounded-md flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50 ${
-                    buttonDisabled
-                      ? 'bg-surface-container-high text-on-surface-variant cursor-not-allowed'
-                      : 'bg-brand-orange-dark text-on-primary hover:translate-y-[-2px]'
-                  }`}
+                  className={`font-display font-headline-h4 px-6 h-11 rounded-md flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50 ${getButtonClassName()}`}
                 >
                   <span className="material-symbols-outlined text-[20px]">
-                    {friendship?.status === 'ACCEPTED' ? 'check' : 'person_add'}
+                    {getButtonIcon()}
                   </span>
                   {actionLoading ? 'Loading...' : buttonLabel}
                 </button>
+
                 {friendship?.status === 'ACCEPTED' && (
                   <button
                     onClick={() => void handleMessage()}
@@ -316,7 +322,15 @@ export default function UserProfileClient() {
               <div
                 key={g.id}
                 onClick={() => router.push(`/groups/${g.slug}`)}
-                className="p-4 bg-paper rounded-lg border border-outline-variant flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    router.push(`/groups/${g.slug}`);
+                  }
+                }}
+                tabIndex={0}
+                role="button"
+                className="p-4 bg-paper rounded-lg border border-outline-variant flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               >
                 <div className="w-14 h-14 rounded-lg bg-secondary-container flex items-center justify-center flex-shrink-0">
                   <span className="material-symbols-outlined text-on-secondary-container">auto_stories</span>

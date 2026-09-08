@@ -46,8 +46,8 @@ export function BellIcon({ userId, onClick }: BellIconProps) {
   // Listen for clear event from notification panel/page
   useEffect(() => {
     const handleClear = () => fetchCount();
-    window.addEventListener('notifications-cleared', handleClear);
-    return () => window.removeEventListener('notifications-cleared', handleClear);
+    globalThis.window.addEventListener('notifications-cleared', handleClear);
+    return () => globalThis.window.removeEventListener('notifications-cleared', handleClear);
   }, [fetchCount]);
 
   // Own the live subscription in a ref keyed ONLY on userId. There is no

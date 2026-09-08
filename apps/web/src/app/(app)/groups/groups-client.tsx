@@ -55,7 +55,7 @@ export default function GroupsClient() {
   const [discoverGroups, setDiscoverGroups] = useState<GraphQLGroup[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [joining, setJoining] = useState<Set<string>>(new Set());
+  const [, setJoining] = useState<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     try {
@@ -98,13 +98,115 @@ export default function GroupsClient() {
     [addToast, loadData],
   );
 
+  const renderActiveGroups = () => {
+    if (loading) {
+      return (
+        <div className="flex gap-6 overflow-x-auto pb-4">
+          <div className="min-w-[300px] h-72 bg-surface-container-high rounded-xl animate-pulse" />
+          <div className="min-w-[300px] h-72 bg-surface-container-high rounded-xl animate-pulse" />
+        </div>
+      );
+    }
+    if (myGroups.length === 0) {
+      return (
+        <p className="font-body text-body text-on-surface-variant text-center py-12">
+          You haven&apos;t joined any groups yet. Discover one below!
+        </p>
+      );
+    }
+    return (
+      <div className="bento-grid">
+        {myGroups.map((g) => (
+          <GroupCard
+            key={g.id}
+            name={g.name}
+            slug={g.slug}
+            description={g.description}
+            coverImageUrl={g.coverImageUrl}
+            memberCount={g.memberCount}
+            category={g.category}
+          />
+        ))}
+      </div>
+    );
+  };
+
+  const renderDiscoverGroups = () => {
+    if (loading) {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+          <div className="md:col-span-8 h-64 bg-surface-container-high rounded-2xl animate-pulse" />
+          <div className="md:col-span-4 space-y-6">
+            <div className="h-20 bg-surface-container-high rounded-2xl animate-pulse" />
+            <div className="h-20 bg-surface-container-high rounded-2xl animate-pulse" />
+          </div>
+        </div>
+      );
+    }
+    if (discoverGroups.length === 0) {
+      function getEmptyMessage(): string {
+        if (selectedCategory) return 'No discoverable groups found in this category.';
+        return 'No discoverable groups found.';
+      }
+      return (
+        <p className="font-body text-body text-on-surface-variant text-center py-12">
+          {getEmptyMessage()}
+        </p>
+      );
+    }
+
+    const featuredDiscover = discoverGroups.find((g) => g.featured);
+    const sideDiscover = discoverGroups.filter((g) => !g.featured);
+
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+        {/* Featured card (larger) */}
+        {featuredDiscover ? (
+          <FeaturedGroupCard
+            name={featuredDiscover.name}
+            slug={featuredDiscover.slug}
+            description={featuredDiscover.description}
+            coverImageUrl={featuredDiscover.coverImageUrl}
+            memberCount={featuredDiscover.memberCount}
+            onJoin={() => handleJoinGroup(featuredDiscover.id)}
+            onDetails={() => router.push(`/groups/${featuredDiscover.slug}`)}
+          />
+        ) : (
+          <div className="md:col-span-8 bg-surface-container-low rounded-2xl p-8 text-center border border-outline-variant">
+            <p className="font-body text-body text-on-surface-variant">
+              No featured groups in this category.
+            </p>
+          </div>
+        )}
+
+        {/* Side cards (smaller) */}
+        <div className="md:col-span-4 flex flex-col gap-6">
+          {sideDiscover.slice(0, 3).map((g) => {
+            const meta = compactGroupMeta(g.category);
+            return (
+              <CompactGroupCard
+                key={g.id}
+                name={g.name}
+                description={meta.subtitle}
+                icon={meta.icon}
+                iconBg={meta.bg}
+                onClick={() => handleJoinGroup(g.id)}
+              />
+            );
+          })}
+          {sideDiscover.length === 0 && (
+            <p className="font-small text-small text-on-surface-variant text-center py-8">
+              No more groups to discover here.
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   if (!isReady) {
     return <LoadingSpinner />;
   }
-
-  // Split discover into featured (first featured group) + rest
-  const featuredDiscover = discoverGroups.find((g) => g.featured);
-  const sideDiscover = discoverGroups.filter((g) => !g.featured);
 
   return (
     <>
@@ -138,30 +240,7 @@ export default function GroupsClient() {
           </button>
         </div>
 
-        {loading ? (
-          <div className="flex gap-6 overflow-x-auto pb-4">
-            <div className="min-w-[300px] h-72 bg-surface-container-high rounded-xl animate-pulse" />
-            <div className="min-w-[300px] h-72 bg-surface-container-high rounded-xl animate-pulse" />
-          </div>
-        ) : myGroups.length > 0 ? (
-          <div className="bento-grid">
-            {myGroups.map((g) => (
-              <GroupCard
-                key={g.id}
-                name={g.name}
-                slug={g.slug}
-                description={g.description}
-                coverImageUrl={g.coverImageUrl}
-                memberCount={g.memberCount}
-                category={g.category}
-              />
-            ))}
-          </div>
-        ) : (
-          <p className="font-body text-body text-on-surface-variant text-center py-12">
-            You haven&apos;t joined any groups yet. Discover one below!
-          </p>
-        )}
+        {renderActiveGroups()}
       </section>
 
       {/* ═══════════════════════════════════════════════════════════
@@ -193,62 +272,7 @@ export default function GroupsClient() {
         </div>
 
         {/* Suggested Groups: Featured + Side cards */}
-        {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-            <div className="md:col-span-8 h-64 bg-surface-container-high rounded-2xl animate-pulse" />
-            <div className="md:col-span-4 space-y-6">
-              <div className="h-20 bg-surface-container-high rounded-2xl animate-pulse" />
-              <div className="h-20 bg-surface-container-high rounded-2xl animate-pulse" />
-            </div>
-          </div>
-        ) : discoverGroups.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-            {/* Featured card (larger) */}
-            {featuredDiscover ? (
-              <FeaturedGroupCard
-                name={featuredDiscover.name}
-                slug={featuredDiscover.slug}
-                description={featuredDiscover.description}
-                coverImageUrl={featuredDiscover.coverImageUrl}
-                memberCount={featuredDiscover.memberCount}
-                onJoin={() => handleJoinGroup(featuredDiscover.id)}
-                onDetails={() => router.push(`/groups/${featuredDiscover.slug}`)}
-              />
-            ) : (
-              <div className="md:col-span-8 bg-surface-container-low rounded-2xl p-8 text-center border border-outline-variant">
-                <p className="font-body text-body text-on-surface-variant">
-                  No featured groups in this category.
-                </p>
-              </div>
-            )}
-
-            {/* Side cards (smaller) */}
-            <div className="md:col-span-4 flex flex-col gap-6">
-              {sideDiscover.slice(0, 3).map((g) => {
-                const meta = compactGroupMeta(g.category);
-                return (
-                  <CompactGroupCard
-                    key={g.id}
-                    name={g.name}
-                    description={meta.subtitle}
-                    icon={meta.icon}
-                    iconBg={meta.bg}
-                    onClick={() => handleJoinGroup(g.id)}
-                  />
-                );
-              })}
-              {sideDiscover.length === 0 && (
-                <p className="font-small text-small text-on-surface-variant text-center py-8">
-                  No more groups to discover here.
-                </p>
-              )}
-            </div>
-          </div>
-        ) : (
-          <p className="font-body text-body text-on-surface-variant text-center py-12">
-            No discoverable groups found{selectedCategory ? ' in this category' : ''}.
-          </p>
-        )}
+        {renderDiscoverGroups()}
       </section>
     </>
   );

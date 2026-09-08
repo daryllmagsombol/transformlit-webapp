@@ -44,7 +44,7 @@ function redirectToLogin() {
   clearAuth();
   useAuthStore.getState().clearAuth();
   if (!isServer) {
-    window.location.href = '/login';
+    globalThis.window.location.href = '/login';
   }
 }
 
@@ -230,7 +230,8 @@ const errorLink = onError(({ error, operation, forward }) => {
   // (UNAUTHENTICATED) response is a business error, NOT an expired session.
   // Intercepting it here would try a refresh, find no session, and force a
   // page reload — destroying the form and any error toast mid-login.
-  if (operation.operationName === 'LoginLocal' || operation.operationName === 'RegisterLocal') return;
+  const isLoginOrRegister = operation.operationName === 'LoginLocal' || operation.operationName === 'RegisterLocal';
+  if (isLoginOrRegister) return;
 
   const context = operation.getContext();
   if (context.authRetry) return;
@@ -258,8 +259,9 @@ const errorLink = onError(({ error, operation, forward }) => {
   });
 });
 
-const wsLink = !isServer
-  ? new GraphQLWsLink(
+const wsLink = isServer
+  ? null
+  : new GraphQLWsLink(
       createClient({
         url: wsUrl,
         connectionParams: async () => {
@@ -288,8 +290,7 @@ const wsLink = !isServer
           },
         },
       }),
-    )
-  : null;
+    );
 
 const splitLink =
   !isServer && wsLink

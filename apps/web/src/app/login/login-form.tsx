@@ -126,12 +126,12 @@ export default function LoginForm() {
   /* ---------- Social login handlers ---------- */
 
   const handleGoogleLogin = useCallback(() => {
-    window.location.href = `${API_BASE}/auth/google`;
+    globalThis.window.location.href = `${API_BASE}/auth/google`;
   }, []);
 
   const handleSocialLogin = useCallback(
     (provider: string) => {
-      window.location.href = `${API_BASE}/auth/${provider.toLowerCase()}`;
+      globalThis.window.location.href = `${API_BASE}/auth/${provider.toLowerCase()}`;
     },
     [],
   );

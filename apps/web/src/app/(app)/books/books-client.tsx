@@ -141,6 +141,66 @@ export default function BooksClient() {
     }, 600);
   }, [addToast]);
 
+  const bookSkeletonKeys = useMemo(
+    () => Array.from({ length: 10 }, () => crypto.randomUUID()),
+    [],
+  );
+
+  const renderBooksContent = () => {
+    if (loading) {
+      return (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
+          {bookSkeletonKeys.map((key) => (
+            <BookCardSkeleton key={key} />
+          ))}
+        </div>
+      );
+    }
+
+    if (filteredBooks.length === 0) {
+      function getEmptyMessage(): string {
+        if (filter === 'ALL') return 'The library is empty right now. Check back soon for new titles.';
+        return 'No books match the selected filter. Try another category.';
+      }
+      return (
+        <div className="bg-surface-container-low rounded-xl border border-outline-variant p-10 md:p-16 text-center">
+          <div className="w-16 h-16 rounded-full bg-primary-container/20 flex items-center justify-center mx-auto mb-4">
+            <span className="material-symbols-outlined text-primary text-3xl">menu_book</span>
+          </div>
+          <h3 className="font-display text-headline-h3 text-on-surface mb-2">No books found</h3>
+          <p className="font-body text-body text-on-surface-variant">
+            {getEmptyMessage()}
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
+          {filteredBooks.map((book) => (
+            <BookCard
+              key={book.id}
+              book={book}
+              onRead={handleRead}
+              onBuy={handleBuy}
+            />
+          ))}
+        </div>
+
+        <div className="mt-10 flex justify-center">
+          <button
+            onClick={handleLoadMore}
+            disabled={loadMoreLoading}
+            className="px-8 py-3 border-2 border-primary text-primary rounded-lg font-display text-headline-h4 font-bold hover:bg-primary hover:text-on-primary transition-colors active:scale-95 disabled:opacity-50"
+          >
+            {loadMoreLoading ? 'Loading...' : 'Discover More Books'}
+          </button>
+        </div>
+      </>
+    );
+  };
+
   if (!isReady) {
     return <LoadingSpinner />;
   }
@@ -236,48 +296,7 @@ export default function BooksClient() {
           </div>
         </div>
 
-        {loading ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-            {Array.from({ length: 10 }).map((_, i) => (
-              <BookCardSkeleton key={i} />
-            ))}
-          </div>
-        ) : filteredBooks.length > 0 ? (
-          <>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-              {filteredBooks.map((book) => (
-                <BookCard
-                  key={book.id}
-                  book={book}
-                  onRead={handleRead}
-                  onBuy={handleBuy}
-                />
-              ))}
-            </div>
-
-            <div className="mt-10 flex justify-center">
-              <button
-                onClick={handleLoadMore}
-                disabled={loadMoreLoading}
-                className="px-8 py-3 border-2 border-primary text-primary rounded-lg font-display text-headline-h4 font-bold hover:bg-primary hover:text-on-primary transition-colors active:scale-95 disabled:opacity-50"
-              >
-                {loadMoreLoading ? 'Loading...' : 'Discover More Books'}
-              </button>
-            </div>
-          </>
-        ) : (
-          <div className="bg-surface-container-low rounded-xl border border-outline-variant p-10 md:p-16 text-center">
-            <div className="w-16 h-16 rounded-full bg-primary-container/20 flex items-center justify-center mx-auto mb-4">
-              <span className="material-symbols-outlined text-primary text-3xl">menu_book</span>
-            </div>
-            <h3 className="font-display text-headline-h3 text-on-surface mb-2">No books found</h3>
-            <p className="font-body text-body text-on-surface-variant">
-              {filter === 'ALL'
-                ? 'The library is empty right now. Check back soon for new titles.'
-                : 'No books match the selected filter. Try another category.'}
-            </p>
-          </div>
-        )}
+        {renderBooksContent()}
       </section>
 
       {/* ═══════════════════════════════════════════════════════════

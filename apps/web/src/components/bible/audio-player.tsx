@@ -40,7 +40,9 @@ export function AudioPlayer({ links, onEnded }: AudioPlayerProps) {
         onTimeUpdate={(e) => setProgress(e.currentTarget.currentTime)}
         onDurationChange={(e) => setProgress(0)}
         hidden
-      />
+      >
+        <track kind="captions" label="English captions" />
+      </audio>
       <button
         type="button"
         onClick={toggle}

@@ -4,7 +4,6 @@ import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { GraphQLError, GraphQLScalarType, Kind } from 'graphql';
 import { join } from 'node:path';
-import type { Request } from 'express';
 import type { ValidationContext } from 'graphql';
 import depthLimit from 'graphql-depth-limit';
 

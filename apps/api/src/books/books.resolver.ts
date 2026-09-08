@@ -53,7 +53,7 @@ export class BooksResolver {
     @Args('bookId') bookId: string,
     @Args('file', { type: () => GraphQLUpload }) file: FileUpload,
   ) {
-    const { createReadStream } = await file;
+    const { createReadStream } = file;
     const buffer = await new Promise<Buffer>((resolve, reject) => {
       const chunks: Buffer[] = [];
       let size = 0;

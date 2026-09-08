@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type { GraphQLGroupPost, GraphQLGroupPostComment, GraphQLUser } from '@transformlit/shared';
 import {
   resolveImageUrl,
@@ -88,7 +88,7 @@ export function PostCard({ post, canModerate, currentUser, onChanged }: PostCard
   }, [liked, likeCount, post.id, addToast]);
 
   const handleDeletePost = useCallback(async () => {
-    if (!window.confirm('Delete this post?')) return;
+    if (!globalThis.window.confirm('Delete this post?')) return;
     try {
       await deleteGroupPost(post.id);
       onChanged();
@@ -98,7 +98,7 @@ export function PostCard({ post, canModerate, currentUser, onChanged }: PostCard
   }, [post.id, onChanged, addToast]);
 
   const handleAddComment = useCallback(
-    async (e?: React.FormEvent) => {
+    async (e?: FormEvent) => {
       e?.preventDefault();
       const trimmed = commentBody.trim();
       if (!trimmed) return;
@@ -118,7 +118,7 @@ export function PostCard({ post, canModerate, currentUser, onChanged }: PostCard
 
   const handleDeleteComment = useCallback(
     async (commentId: string) => {
-      if (!window.confirm('Delete this comment?')) return;
+      if (!globalThis.window.confirm('Delete this comment?')) return;
       try {
         await deleteGroupPostComment(commentId);
         await loadComments();

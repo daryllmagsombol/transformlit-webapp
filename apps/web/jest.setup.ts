@@ -17,9 +17,15 @@ Object.defineProperty(window, 'matchMedia', {
 
 // Mock IntersectionObserver for motion's whileInView (jsdom lacks it)
 class MockIntersectionObserver {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
+  observe() {
+    // Intentionally empty
+  }
+  unobserve() {
+    // Intentionally empty
+  }
+  disconnect() {
+    // Intentionally empty
+  }
   takeRecords() {
     return [];
   }
