@@ -36,7 +36,7 @@ export function PostComposer({ groupId, onPosted }: PostComposerProps) {
   );
 
   const handleSubmit = useCallback(
-    async (e?: React.FormEvent<HTMLFormElement>) => {
+    async (e?: React.SyntheticEvent<HTMLFormElement>) => {
       e?.preventDefault();
       const trimmed = body.trim();
       if (!trimmed && !imageKey) return;

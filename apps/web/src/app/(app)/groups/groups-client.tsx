@@ -55,7 +55,7 @@ export default function GroupsClient() {
   const [discoverGroups, setDiscoverGroups] = useState<GraphQLGroup[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [_joining, setJoining] = useState<Set<string>>(new Set());
+  const [joining, setJoining] = useState<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     try {

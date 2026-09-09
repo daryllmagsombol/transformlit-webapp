@@ -100,7 +100,7 @@ export function PostCard({ post, canModerate, currentUser, onChanged }: PostCard
   }, [post.id, onChanged, addToast]);
 
   const handleAddComment = useCallback(
-    async (e?: React.FormEvent<HTMLFormElement>) => {
+    async (e?: React.SyntheticEvent<HTMLFormElement>) => {
       e?.preventDefault();
       const trimmed = commentBody.trim();
       if (!trimmed) return;

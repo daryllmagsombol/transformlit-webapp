@@ -2,14 +2,13 @@ import {
   ApolloClient,
   ApolloLink,
   InMemoryCache,
-  createHttpLink,
-  split,
+  CombinedGraphQLErrors,
 } from '@apollo/client';
-import { setContext } from '@apollo/client/link/context';
-import { onError } from '@apollo/client/link/error';
-import { CombinedGraphQLErrors } from '@apollo/client/errors';
+import { HttpLink } from '@apollo/client/link/http';
+import { SetContextLink } from '@apollo/client/link/context';
+import { ErrorLink } from '@apollo/client/link/error';
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
-import { getMainDefinition } from '@apollo/client/utilities';
+import { OperationTypeNode } from 'graphql';
 import { Observable } from 'rxjs';
 import { createClient } from 'graphql-ws';
 import type { GraphQLUser } from '@transformlit/shared';
@@ -177,16 +176,16 @@ function notifyWsReconnected(): void {
 /*  Apollo links                                                      */
 /* ------------------------------------------------------------------ */
 
-const httpLink = createHttpLink({
+const httpLink = new HttpLink({
   uri: httpUrl,
   credentials: 'include',
 });
 
-const authLink = setContext((_, { headers }) => {
+const authLink = new SetContextLink((prevContext, _operation) => {
   const token = isServer ? null : getAccessToken();
   return {
     headers: {
-      ...headers,
+      ...((prevContext as { headers?: Record<string, string> })?.headers ?? {}),
       authorization: token ? `Bearer ${token}` : '',
     },
   };
@@ -223,7 +222,7 @@ const proactiveRefreshLink = new ApolloLink((operation, forward) => {
  * Intercepts 401/UNAUTHENTICATED responses, performs a rotating refresh,
  * and retries the failed request with the new access token.
  */
-const errorLink = onError(({ error, operation, forward }) => {
+const errorLink = new ErrorLink(({ error, operation, forward }) => {
   if (isUnauthorizedError(error)) {
     // Login/registration hit unauthenticated endpoints: an "Invalid credentials"
     // (UNAUTHENTICATED) response is a business error, NOT an expired session.
@@ -295,13 +294,9 @@ const wsLink = isServer
 const splitLink =
   isServer || wsLink === null
     ? httpLink
-    : split(
-        ({ query }) => {
-          const definition = getMainDefinition(query);
-          return (
-            definition.kind === 'OperationDefinition' &&
-            definition.operation === 'subscription'
-          );
+    : ApolloLink.split(
+        ({ operationType }) => {
+          return operationType === OperationTypeNode.SUBSCRIPTION;
         },
         wsLink,
         httpLink,

@@ -12,11 +12,8 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 RUN pnpm --filter=@transformlit/api run db:generate && \
-    pnpm exec turbo run build --filter=@transformlit/api...
-
-# Install/build run as root (pnpm workspace install + prisma generate require it);
-# only the runtime tree is handed over to the non-root `node` user before CMD.
-RUN chown -R node:node /workspace
+    pnpm exec turbo run build --filter=@transformlit/api... && \
+    chown -R node:node /workspace
 USER node
 
 ENV NODE_ENV=production

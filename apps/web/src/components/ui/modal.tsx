@@ -33,7 +33,6 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
   return (
     <dialog
       className="fixed inset-0 z-[80] flex items-center justify-center"
-      role="dialog"
       aria-modal="true"
       open
     >
