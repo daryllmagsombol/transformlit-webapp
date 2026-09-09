@@ -33,7 +33,7 @@ const conv = (id: string, unread = 0, name = 'Bob') => ({
 
 beforeEach(() => {
   useChatStore.getState().reset();
-  useAuthStore.setState({ user: { id: 'u1' } as any, token: 't', isHydrated: true });
+  useAuthStore.setState({ user: { id: 'u1' } as any, isHydrated: true });
   mockAddToast.mockClear();
   (chatQueries.fetchConversations as jest.Mock).mockClear();
 });

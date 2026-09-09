@@ -4,13 +4,12 @@ import { useRouter } from 'next/navigation';
 import { GROUP_CATEGORIES } from '../../lib/constants';
 
 interface GroupCardProps {
-  name: string;
-  slug?: string;
-  description?: string | null;
-  coverImageUrl?: string | null;
-  memberCount: number;
-  category?: string | null;
-  featured?: boolean;
+  readonly name: string;
+  readonly slug?: string;
+  readonly description?: string | null;
+  readonly coverImageUrl?: string | null;
+  readonly memberCount: number;
+  readonly category?: string | null;
 }
 
 export function GroupCard({
@@ -51,7 +50,7 @@ export function GroupCard({
         <div className="flex items-center gap-2 text-on-surface-variant mb-4">
           <span className="material-symbols-outlined text-sm">group</span>
           <span className="font-small text-small">
-            {memberCount.toLocaleString()} Member{memberCount !== 1 ? 's' : ''}
+            {memberCount.toLocaleString()} Member{memberCount === 1 ? '' : 's'}
           </span>
         </div>
 

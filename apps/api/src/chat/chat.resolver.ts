@@ -16,8 +16,11 @@ export class ChatResolver {
 
   @Query(() => [Conversation], { name: 'conversations' })
   @UseGuards(JwtAuthGuard)
-  async conversations(@CurrentUser() user: { id: string }) {
-    return this.chatService.listConversations(user.id);
+  async conversations(
+    @CurrentUser() user: { id: string },
+    @Args('limit', { type: () => Int, defaultValue: 50, nullable: true }) limit?: number,
+  ) {
+    return this.chatService.listConversations(user.id, limit);
   }
 
   @Mutation(() => Conversation, { name: 'startDirectConversation' })
@@ -37,7 +40,7 @@ export class ChatResolver {
     @Args('cursor', { nullable: true }) cursor?: string,
     @Args('limit', { type: () => Int, defaultValue: 25 }) limit?: number,
   ) {
-    return this.chatService.getMessages(conversationId, cursor, limit, user.id);
+    return this.chatService.getMessages(conversationId, user.id, cursor, limit);
   }
 
   @Mutation(() => Message, { name: 'sendMessage' })

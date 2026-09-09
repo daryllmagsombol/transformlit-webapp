@@ -122,7 +122,7 @@ export default function BibleClient() {
             translation={translation}
             onResult={(href) => {
               // router push preserves SPA state + the api module cache; hash scroll runs post-load in the reader
-              void router.push(href);
+              router.push(href);
             }}
           />
         ) : (

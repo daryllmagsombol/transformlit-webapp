@@ -5,8 +5,8 @@ import { CURATED_TRANSLATIONS } from '../../lib/bible/config';
 import { useBibleStore } from '../../store/bible-store';
 
 interface TranslationPickerProps {
-  open: boolean;
-  onClose: () => void;
+  readonly open: boolean;
+  readonly onClose: () => void;
 }
 
 const GROUPS = [

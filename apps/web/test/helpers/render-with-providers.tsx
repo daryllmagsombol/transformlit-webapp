@@ -1,7 +1,9 @@
 import { ReactElement, ReactNode } from 'react';
 import { render, type RenderOptions, type RenderResult } from '@testing-library/react';
 import { MockedProvider } from '@apollo/client/testing/react';
-import type { MockedResponse } from '@apollo/client/testing';
+import { MockLink } from '@apollo/client/testing';
+
+type MockedResponse = MockLink.MockedResponse;
 import { ThemeProvider } from 'next-themes';
 
 interface WrapperOptions {

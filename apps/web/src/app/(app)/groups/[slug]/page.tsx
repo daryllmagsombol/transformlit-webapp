@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: 'Group — Transformlit' };
 export default async function GroupDetailPage({
   params,
 }: {
-  params: Promise<{ slug: string }>;
+  readonly params: Promise<{ readonly slug: string }>;
 }) {
   const { slug } = await params;
   return <GroupDetailClient slug={slug} />;

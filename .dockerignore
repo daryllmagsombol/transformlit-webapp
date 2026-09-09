@@ -4,7 +4,9 @@ dist
 .next
 .turbo
 .env
-.env.local
+.env.*
+**/.env
+**/.env.*
 __generated__
 infra/**/.terraform
 **/coverage

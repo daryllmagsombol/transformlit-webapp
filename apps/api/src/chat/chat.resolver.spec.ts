@@ -68,9 +68,15 @@ describe('ChatResolver', () => {
   // ── conversations query ─────────────────────────────────────────────────────
 
   describe('conversations', () => {
-    it('should delegate to listConversations with user id', async () => {
+    it('should delegate to listConversations with user id and default limit', async () => {
       const result = await resolver.conversations(mockUser);
-      expect(chatService.listConversations).toHaveBeenCalledWith('user-1');
+      expect(chatService.listConversations).toHaveBeenCalledWith('user-1', undefined);
+      expect(result).toEqual([mockConversation]);
+    });
+
+    it('should forward an explicit limit', async () => {
+      const result = await resolver.conversations(mockUser, 120);
+      expect(chatService.listConversations).toHaveBeenCalledWith('user-1', 120);
       expect(result).toEqual([mockConversation]);
     });
   });
@@ -80,7 +86,7 @@ describe('ChatResolver', () => {
   describe('messages', () => {
     it('should delegate to getMessages with conversationId', async () => {
       const result = await resolver.messages(mockUser, 'conv-1');
-      expect(chatService.getMessages).toHaveBeenCalledWith('conv-1', undefined, undefined, 'user-1');
+      expect(chatService.getMessages).toHaveBeenCalledWith('conv-1', 'user-1', undefined, undefined);
       expect(result).toEqual({
         edges: [{ node: mockMessage, cursor: '2024-01-01T12:00:00.000Z' }],
         totalCount: 1,
@@ -90,7 +96,7 @@ describe('ChatResolver', () => {
 
     it('should pass cursor and limit when provided', async () => {
       const result = await resolver.messages(mockUser, 'conv-1', '2024-01-01T00:00:00.000Z', 10);
-      expect(chatService.getMessages).toHaveBeenCalledWith('conv-1', '2024-01-01T00:00:00.000Z', 10, 'user-1');
+      expect(chatService.getMessages).toHaveBeenCalledWith('conv-1', 'user-1', '2024-01-01T00:00:00.000Z', 10);
       expect(result).toBeDefined();
     });
   });

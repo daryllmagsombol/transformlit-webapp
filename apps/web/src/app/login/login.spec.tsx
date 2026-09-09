@@ -2,13 +2,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
-let mockSearchParams: Record<string, string | null> = {};
+const mockRouter = { push: mockPush, replace: mockReplace };
 
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: mockPush, replace: mockReplace }),
-  useSearchParams: () => ({
-    get: (key: string) => mockSearchParams[key] ?? null,
-  }),
+  useRouter: () => mockRouter,
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 jest.mock('next/link', () => {
@@ -20,34 +18,26 @@ jest.mock('next/link', () => {
 let mockSetAuth = jest.fn();
 let mockAuthState: Record<string, unknown> = {
   user: null,
-  token: null,
   isHydrated: false,
   setAuth: mockSetAuth,
+  clearAuth: jest.fn(),
 };
 
 jest.mock('../../store', () => ({
-  useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector(mockAuthState),
+  useAuthStore: Object.assign(
+    (selector: (s: Record<string, unknown>) => unknown) => selector(mockAuthState),
+    {
+      getState: () => mockAuthState,
+    }
+  ),
 }));
 
-jest.mock('../../lib/auth', () => ({
-  setAccessToken: jest.fn(),
-  setRefreshToken: jest.fn(),
-  removeAccessToken: jest.fn(),
-  removeRefreshToken: jest.fn(),
-}));
-
-const mockMutate = jest.fn();
-const mockQuery = jest.fn();
-
-jest.mock('@apollo/client', () => ({
-  gql: (strings: TemplateStringsArray) => strings[0],
-}));
+const mockBootstrapAuth = jest.fn();
 
 jest.mock('../../lib/apollo-client', () => ({
-  apolloClient: {
-    mutate: mockMutate,
-    query: mockQuery,
-  },
+  apolloClient: {},
+  bootstrapAuth: () => mockBootstrapAuth(),
+  resetApolloState: jest.fn(),
 }));
 
 const mockAddToast = jest.fn();
@@ -91,24 +81,42 @@ jest.mock('../../lib/constants', () => ({
   API_BASE: 'http://localhost:3005',
 }));
 
+const mockFetch = jest.fn();
+global.fetch = mockFetch as unknown as typeof fetch;
+
 import LoginForm from './login-form';
+
+const loginUser = { id: '1', email: 'test@example.com', displayName: 'Test', avatarUrl: null };
+
+function fillForm() {
+  fireEvent.change(screen.getByLabelText('Email Address'), {
+    target: { value: 'test@example.com' },
+  });
+  fireEvent.change(screen.getByLabelText('Password'), {
+    target: { value: 'password123' },
+  });
+}
+
+function submit() {
+  fireEvent.submit(screen.getByText('Log In').closest('form')!);
+}
 
 describe('LoginForm', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPush.mockClear();
     mockReplace.mockClear();
-    mockSearchParams = {};
     mockSetAuth.mockClear();
+    mockBootstrapAuth.mockReset();
+    mockBootstrapAuth.mockResolvedValue(false);
+    mockAddToast.mockClear();
+    mockFetch.mockReset();
     mockAuthState = {
       user: null,
-      token: null,
       isHydrated: false,
       setAuth: mockSetAuth,
+      clearAuth: jest.fn(),
     };
-    mockMutate.mockReset();
-    mockQuery.mockReset();
-    mockAddToast.mockClear();
   });
 
   describe('rendering', () => {
@@ -148,10 +156,35 @@ describe('LoginForm', () => {
     });
   });
 
+  describe('session bootstrap', () => {
+    it('calls bootstrapAuth on mount to detect the OAuth httpOnly cookie', async () => {
+      render(<LoginForm />);
+      await waitFor(() => expect(mockBootstrapAuth).toHaveBeenCalledTimes(1));
+    });
+
+    it('redirects to /feed when bootstrap finds an existing session', async () => {
+      mockBootstrapAuth.mockResolvedValue(true);
+      mockAuthState = { ...mockAuthState, isHydrated: true, user: loginUser };
+
+      render(<LoginForm />);
+
+      await waitFor(() => {
+        expect(mockReplace).toHaveBeenCalledWith('/feed');
+      });
+    });
+
+    it('stays on the login page when bootstrap finds no session', async () => {
+      render(<LoginForm />);
+      await waitFor(() => expect(mockBootstrapAuth).toHaveBeenCalledTimes(1));
+      expect(mockReplace).not.toHaveBeenCalled();
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+  });
+
   describe('validation', () => {
     it('shows error when submitting empty form', async () => {
       render(<LoginForm />);
-      fireEvent.submit(screen.getByText('Log In').closest('form')!);
+      submit();
       await waitFor(() => {
         expect(screen.getAllByRole('alert').length).toBeGreaterThanOrEqual(2);
       });
@@ -165,7 +198,7 @@ describe('LoginForm', () => {
       fireEvent.change(screen.getByLabelText('Password'), {
         target: { value: 'password123' },
       });
-      fireEvent.submit(screen.getByText('Log In').closest('form')!);
+      submit();
       await waitFor(() => {
         expect(screen.getByText('Please enter a valid email address')).toBeInTheDocument();
       });
@@ -179,126 +212,90 @@ describe('LoginForm', () => {
       fireEvent.change(screen.getByLabelText('Password'), {
         target: { value: 'abc' },
       });
-      fireEvent.submit(screen.getByText('Log In').closest('form')!);
+      submit();
       await waitFor(() => {
         expect(screen.getByText('Password must be at least 6 characters')).toBeInTheDocument();
       });
     });
 
-    it('does not call mutation when validation fails', async () => {
+    it('does not call fetch when validation fails', async () => {
       render(<LoginForm />);
-      fireEvent.submit(screen.getByText('Log In').closest('form')!);
+      submit();
       await waitFor(() => {
         expect(screen.getAllByRole('alert').length).toBeGreaterThanOrEqual(1);
       });
-      expect(mockMutate).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 
   describe('successful login', () => {
-    it('calls GraphQL loginLocal mutation on valid submit', async () => {
-      mockMutate.mockResolvedValue({
-        data: {
-          loginLocal: {
-            user: { id: '1', email: 'test@example.com', displayName: 'Test', avatarUrl: null },
-            accessToken: 'access-tok',
-            refreshToken: 'refresh-tok',
-          },
-        },
+    it('calls POST /auth/login with credentials on valid submit', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ accessToken: 'access-tok', user: loginUser }),
       });
 
       render(<LoginForm />);
-
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Log In').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
-        expect(mockMutate).toHaveBeenCalledTimes(1);
+        expect(mockFetch).toHaveBeenCalledTimes(1);
       });
 
-      expect(mockMutate).toHaveBeenCalledWith(
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3005/auth/login',
         expect.objectContaining({
-          variables: {
-            input: { email: 'test@example.com', password: 'password123' },
-          },
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: 'test@example.com',
+            password: 'password123',
+          }),
         }),
       );
     });
 
     it('redirects to /feed after successful login', async () => {
-      mockMutate.mockResolvedValue({
-        data: {
-          loginLocal: {
-            user: { id: '1', email: 'test@example.com', displayName: 'Test', avatarUrl: null },
-            accessToken: 'access-tok',
-            refreshToken: 'refresh-tok',
-          },
-        },
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ accessToken: 'access-tok', user: loginUser }),
       });
 
       render(<LoginForm />);
-
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Log In').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
         expect(mockPush).toHaveBeenCalledWith('/feed');
       });
     });
 
-    it('calls setAuth with user and tokens on success', async () => {
-      const user = { id: '1', email: 'test@example.com', displayName: 'Test', avatarUrl: null };
-      mockMutate.mockResolvedValue({
-        data: {
-          loginLocal: { user, accessToken: 'access-tok', refreshToken: 'refresh-tok' },
-        },
+    it('calls setAuth with user and access token on success', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ accessToken: 'access-tok', user: loginUser }),
       });
 
       render(<LoginForm />);
-
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Log In').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
-        expect(mockSetAuth).toHaveBeenCalledWith(user, 'access-tok', 'refresh-tok');
+        expect(mockSetAuth).toHaveBeenCalledWith(loginUser, 'access-tok');
       });
     });
 
     it('shows success toast on login', async () => {
-      mockMutate.mockResolvedValue({
-        data: {
-          loginLocal: {
-            user: { id: '1', email: 'test@example.com', displayName: 'Test', avatarUrl: null },
-            accessToken: 'access-tok',
-            refreshToken: 'refresh-tok',
-          },
-        },
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ accessToken: 'access-tok', user: loginUser }),
       });
 
       render(<LoginForm />);
-
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Log In').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
         expect(mockAddToast).toHaveBeenCalledWith('Welcome back!', 'success');
@@ -307,77 +304,45 @@ describe('LoginForm', () => {
   });
 
   describe('failed login', () => {
-    it('displays error toast when mutation fails', async () => {
-      mockMutate.mockRejectedValue({
-        graphQLErrors: [{ message: 'Invalid credentials' }],
-      });
+    it('displays an error toast when the request fails', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 401 });
 
       render(<LoginForm />);
-
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Log In').closest('form')!);
-
-      await waitFor(() => {
-        expect(mockAddToast).toHaveBeenCalledWith('Invalid credentials', 'error');
-      });
-    });
-
-    it('shows default error message when no specific message available', async () => {
-      mockMutate.mockRejectedValue({});
-
-      render(<LoginForm />);
-
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Log In').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
         expect(mockAddToast).toHaveBeenCalledWith('Invalid email or password', 'error');
       });
     });
 
-    it('does not redirect on failed login', async () => {
-      mockMutate.mockRejectedValue({
-        graphQLErrors: [{ message: 'Invalid credentials' }],
+    it('shows the server-provided error message when the body parses', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: 'Account disabled' }),
       });
 
       render(<LoginForm />);
-
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Log In').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
-        expect(mockAddToast).toHaveBeenCalledWith('Invalid credentials', 'error');
+        expect(mockAddToast).toHaveBeenCalledWith('Account disabled', 'error');
       });
-      expect(mockPush).not.toHaveBeenCalled();
     });
-  });
 
-  describe('already authenticated', () => {
-    it('does not auto-redirect from the form component', () => {
-      mockAuthState = {
-        user: { id: '1' },
-        token: 'existing-token',
-        isHydrated: true,
-        setAuth: mockSetAuth,
-      };
+    it('does not redirect on failed login', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 401 });
 
       render(<LoginForm />);
-      expect(mockReplace).not.toHaveBeenCalled();
+      fillForm();
+      submit();
+
+      await waitFor(() => {
+        expect(mockAddToast).toHaveBeenCalledWith('Invalid email or password', 'error');
+      });
+      expect(mockPush).not.toHaveBeenCalled();
     });
   });
 });

@@ -14,7 +14,7 @@ export default {
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
     '\\.(jpg|jpeg|png|gif|webp|svg)$': '<rootDir>/test/__mocks__/fileMock.ts',
   },
-  testRegex: '.*\\.spec\\.(ts|tsx)$',
+  testRegex: String.raw`.*\.spec\.(ts|tsx)$`,
   testPathIgnorePatterns: ['/node_modules/', '/e2e/'],
   passWithNoTests: true,
   collectCoverageFrom: [

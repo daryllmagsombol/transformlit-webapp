@@ -43,7 +43,6 @@ enum AnnouncementStatus {
 
 type AuthPayload {
   accessToken: String!
-  refreshToken: String!
   user: User!
 }
 
@@ -280,7 +279,6 @@ type Mutation {
   markConversationRead(conversationId: String!): Boolean!
   markNotificationRead(notificationId: String!): Boolean!
   publishAnnouncement(id: String!): Announcement!
-  refreshToken(refreshToken: String!): AuthPayload!
   registerLocal(input: RegisterLocalInput!): AuthPayload!
   rejectFriendRequest(friendshipId: String!): Friendship!
   removeBookmark(id: String!): Boolean!

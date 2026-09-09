@@ -3,13 +3,13 @@
 import { useRouter } from 'next/navigation';
 
 interface FeaturedGroupCardProps {
-  name: string;
-  slug?: string;
-  description?: string | null;
-  coverImageUrl?: string | null;
-  memberCount: number;
-  onJoin?: () => void;
-  onDetails?: () => void;
+  readonly name: string;
+  readonly slug?: string;
+  readonly description?: string | null;
+  readonly coverImageUrl?: string | null;
+  readonly memberCount: number;
+  readonly onJoin?: () => void;
+  readonly onDetails?: () => void;
 }
 
 export function FeaturedGroupCard({

@@ -1,24 +1,24 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuthStore } from '../../store';
 import type { GraphQLUser } from '@transformlit/shared';
-import { setAccessToken, setRefreshToken, removeAccessToken, removeRefreshToken } from '../../lib/auth';
 import { useToast, TextInput, SpinnerIcon, MailIcon, LockIcon, EyeIcon, EyeOffIcon, AutoStoriesIcon, GoogleIcon, FacebookIcon, MicrosoftIcon } from '../../components/ui';
 import { Footer } from '../../components/layout';
 import { API_BASE } from '../../lib/constants';
+import { bootstrapAuth } from '../../lib/apollo-client';
 
 /* ------------------------------------------------------------------ */
 /*  Zod schema                                                        */
 /* ------------------------------------------------------------------ */
 
 const loginSchema = z.object({
-  email: z.string().email('Please enter a valid email address'),
+  email: z.email('Please enter a valid email address'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   rememberMe: z.boolean().optional(),
 });
@@ -31,16 +31,13 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 export default function LoginForm() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const setAuth = useAuthStore((s) => s.setAuth);
-  const token = useAuthStore((s) => s.token);
-  const { addToast } = useToast();
-
+  const user = useAuthStore((s) => s.user);
   const isHydrated = useAuthStore((s) => s.isHydrated);
+  const { addToast } = useToast();
 
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [oauthHandled, setOauthHandled] = useState(false);
 
   const {
     register,
@@ -52,53 +49,30 @@ export default function LoginForm() {
     reValidateMode: 'onChange',
   });
 
-  /* ---------- Google OAuth callback handler ---------- */
-  /* When the backend redirects back to /login?token=...&refresh=...
-     after a successful Google sign-in, parse those params, store the
-     tokens, fetch the current user via the `me` query, then navigate   */
+  /* ---------- Session bootstrap ---------- */
+  /* OAuth providers now redirect back to /login with NO tokens in the URL;
+     the API sets an httpOnly refresh cookie instead. On mount, ask the API
+     whether a session exists and, if so, navigate to the feed. */
   useEffect(() => {
-    if (oauthHandled || token) return; // already authenticated or already processed
-
-    const urlToken = searchParams.get('token');
-    const urlRefresh = searchParams.get('refresh');
-
-    if (!urlToken || !urlRefresh) return;
-
-    setOauthHandled(true);
-
+    let cancelled = false;
     (async () => {
-      try {
-        // Temporarily store the access token so the authLink middleware
-        // picks it up for the `me` query below.
-        setAccessToken(urlToken);
-        setRefreshToken(urlRefresh);
-
-        const [{ gql }, { apolloClient }] = await Promise.all([
-          import('@apollo/client'),
-          import('../../lib/apollo-client'),
-        ]);
-
-        // Fetch user profile using the freshly stored access token
-        const { data } = await apolloClient.query<{ me: GraphQLUser }>({
-          query: gql`
-            query Me { me { id email displayName avatarUrl } }
-          `,
-        });
-
-        setAuth(data!.me, urlToken, urlRefresh);
-        addToast('Welcome back!', 'success');
-        // Replace history so the OAuth tokens do not remain in the
-        // browser history entry for /login.
+      const signedIn = await bootstrapAuth();
+      if (cancelled) return;
+      if (signedIn && useAuthStore.getState().user) {
         router.replace('/feed');
-      } catch {
-        // If the `me` query fails (e.g. expired token), clear tokens
-        // and let the user log in manually.
-        removeAccessToken();
-        removeRefreshToken();
-        addToast('Google sign-in failed. Please try again.', 'error');
       }
     })();
-  }, [searchParams, token, oauthHandled, router, setAuth, addToast]);
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
+  /* ---------- Redirect already-authenticated users ---------- */
+  useEffect(() => {
+    if (isHydrated && user) {
+      router.replace('/feed');
+    }
+  }, [isHydrated, user, router]);
 
   /* ---------- Submit handler ---------- */
 
@@ -106,35 +80,41 @@ export default function LoginForm() {
     async (values: LoginFormValues) => {
       setLoading(true);
       try {
-        const [{ gql }, { apolloClient }] = await Promise.all([
-          import('@apollo/client'),
-          import('../../lib/apollo-client'),
-        ]);
-
-        const result = await apolloClient.mutate<{ loginLocal: { user: GraphQLUser; accessToken: string; refreshToken: string | null } }>({
-          mutation: gql`
-            mutation LoginLocal($input: LoginLocalInput!) {
-              loginLocal(input: $input) {
-                user { id email displayName avatarUrl }
-                accessToken
-                refreshToken
-              }
-            }
-          `,
-          variables: { input: { email: values.email.trim(), password: values.password } },
+        const res = await fetch(`${API_BASE}/auth/login`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: values.email.trim(),
+            password: values.password,
+          }),
         });
 
-        const { user, accessToken, refreshToken } = result.data!.loginLocal;
-        setAuth(user, accessToken, refreshToken ?? undefined);
+        if (!res.ok) {
+          let message =
+            res.status === 401
+              ? 'Invalid email or password'
+              : 'Login failed. Please try again.';
+          try {
+            const body = (await res.json()) as { error?: string; message?: string };
+            // Prefer the human-readable `message` (e.g. "Invalid credentials")
+            // over the generic `error` label ("Unauthorized"). Fall back to
+            // `error` when `message` is absent (some error shapes only set it).
+            if (body?.message) message = body.message;
+            else if (body?.error) message = body.error;
+          } catch {
+            // Non-JSON error body — keep the fallback message.
+          }
+          throw new Error(message);
+        }
+
+        const data = (await res.json()) as { accessToken: string; user: GraphQLUser };
+        setAuth(data.user, data.accessToken);
 
         addToast('Welcome back!', 'success');
         router.push('/feed');
       } catch (err: any) {
-        const message =
-          err?.graphQLErrors?.[0]?.message ??
-          err?.networkError?.result?.errors?.[0]?.message ??
-          err?.message ??
-          'Invalid email or password';
+        const message = err?.message ?? 'Invalid email or password';
         addToast(message, 'error');
       } finally {
         setLoading(false);
@@ -146,12 +126,12 @@ export default function LoginForm() {
   /* ---------- Social login handlers ---------- */
 
   const handleGoogleLogin = useCallback(() => {
-    window.location.href = `${API_BASE}/auth/google`;
+    globalThis.window.location.href = `${API_BASE}/auth/google`;
   }, []);
 
   const handleSocialLogin = useCallback(
     (provider: string) => {
-      window.location.href = `${API_BASE}/auth/${provider.toLowerCase()}`;
+      globalThis.window.location.href = `${API_BASE}/auth/${provider.toLowerCase()}`;
     },
     [],
   );

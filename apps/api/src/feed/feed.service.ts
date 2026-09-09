@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { UserRole } from '@transformlit/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   PublishAnnouncementInput,
@@ -24,8 +25,18 @@ export class FeedService {
     });
   }
 
-  async getAnnouncement(id: string) {
-    return this.prisma.announcement.findUnique({ where: { id } });
+  async getAnnouncement(id: string, actorId?: string, actorRole?: UserRole) {
+    const announcement = await this.prisma.announcement.findUnique({
+      where: { id },
+    });
+    if (!announcement) return null;
+    const isStaff =
+      actorRole === UserRole.ADMIN || actorRole === UserRole.MODERATOR;
+    const isOwner = announcement.createdById === actorId;
+    if (announcement.status !== 'PUBLISHED' && !isStaff && !isOwner) {
+      return null;
+    }
+    return announcement;
   }
 
   async createAnnouncement(input: PublishAnnouncementInput, userId: string) {
@@ -39,7 +50,13 @@ export class FeedService {
     });
   }
 
-  async updateAnnouncement(id: string, input: UpdateAnnouncementInput) {
+  async updateAnnouncement(
+    id: string,
+    input: UpdateAnnouncementInput,
+    actorId: string,
+    actorRole: UserRole,
+  ) {
+    await this.assertCanManageAnnouncement(id, actorId, actorRole);
     return this.prisma.announcement.update({
       where: { id },
       data: {
@@ -50,25 +67,51 @@ export class FeedService {
     });
   }
 
-  async publishAnnouncement(id: string, userId: string) {
+  async publishAnnouncement(id: string, userId: string, actorRole: UserRole) {
+    await this.assertCanManageAnnouncement(id, userId, actorRole);
+    const isStaff = actorRole === UserRole.ADMIN || actorRole === UserRole.MODERATOR;
+    if (!isStaff) {
+      throw new ForbiddenException('Only staff can publish');
+    }
     return this.prisma.announcement.update({
       where: { id },
       data: { status: 'PUBLISHED', publishedAt: new Date(), publishedById: userId },
     });
   }
 
-  async unpublishAnnouncement(id: string) {
+  async unpublishAnnouncement(id: string, actorId: string, actorRole: UserRole) {
+    await this.assertCanManageAnnouncement(id, actorId, actorRole);
     return this.prisma.announcement.update({
       where: { id },
       data: { status: 'DRAFT', publishedAt: null },
     });
   }
 
-  async deleteAnnouncement(id: string) {
+  async deleteAnnouncement(id: string, actorId: string, actorRole: UserRole) {
+    await this.assertCanManageAnnouncement(id, actorId, actorRole);
     return this.prisma.announcement.update({
       where: { id },
       data: { deletedAt: new Date() },
     });
+  }
+
+  private async assertCanManageAnnouncement(
+    id: string,
+    actorId: string,
+    actorRole: UserRole,
+  ) {
+    const announcement = await this.prisma.announcement.findUnique({
+      where: { id },
+    });
+    if (!announcement) throw new NotFoundException('Announcement not found');
+
+    const isStaff =
+      actorRole === UserRole.ADMIN || actorRole === UserRole.MODERATOR;
+    const isOwner = announcement.createdById === actorId;
+    if (!isStaff && !isOwner) {
+      throw new ForbiddenException('You do not have permission to modify this announcement');
+    }
+    return announcement;
   }
 
   async getVerseOfDay() {

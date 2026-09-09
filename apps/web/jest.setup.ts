@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom';
 
 // Mock window.matchMedia for responsive sidebar logic
-Object.defineProperty(window, 'matchMedia', {
+Object.defineProperty(globalThis.window, 'matchMedia', {
   writable: true,
   value: (query: string) => ({
     matches: false,
@@ -17,9 +17,15 @@ Object.defineProperty(window, 'matchMedia', {
 
 // Mock IntersectionObserver for motion's whileInView (jsdom lacks it)
 class MockIntersectionObserver {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
+  observe() {
+    // Intentionally empty
+  }
+  unobserve() {
+    // Intentionally empty
+  }
+  disconnect() {
+    // Intentionally empty
+  }
   takeRecords() {
     return [];
   }

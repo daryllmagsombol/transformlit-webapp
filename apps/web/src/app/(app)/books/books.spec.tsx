@@ -4,11 +4,11 @@ const mockPush = jest.fn();
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
+  usePathname: () => '/books',
 }));
 
 let mockAuthState: Record<string, unknown> = {
   user: { id: '1', displayName: 'Test User', avatarUrl: null },
-  token: 'test-token',
   isHydrated: true,
 };
 
@@ -75,28 +75,27 @@ describe('BooksClient', () => {
     mockQuery.mockReset();
     mockAuthState = {
       user: { id: '1', displayName: 'Test User', avatarUrl: null },
-      token: 'test-token',
       isHydrated: true,
     };
   });
 
   describe('auth guard', () => {
     it('shows loading spinner when not hydrated', () => {
-      mockAuthState = { user: null, token: 'test-token', isHydrated: false };
+      mockAuthState = { user: { id: '1' }, isHydrated: false };
       render(<BooksClient />);
       expect(screen.getByText('Loading…')).toBeInTheDocument();
     });
 
-    it('shows loading spinner when no token', () => {
-      mockAuthState = { user: null, token: null, isHydrated: true };
+    it('shows loading spinner when no user is signed in', () => {
+      mockAuthState = { user: null, isHydrated: true };
       render(<BooksClient />);
       expect(screen.getByText('Loading…')).toBeInTheDocument();
     });
 
-    it('redirects to login when no token and hydrated', () => {
-      mockAuthState = { user: null, token: null, isHydrated: true };
+    it('redirects to login when no user is signed in and hydrated', () => {
+      mockAuthState = { user: null, isHydrated: true };
       render(<BooksClient />);
-      expect(mockPush).toHaveBeenCalledWith('/login');
+      expect(mockPush).toHaveBeenCalledWith('/login?redirect=%2Fbooks');
     });
   });
 

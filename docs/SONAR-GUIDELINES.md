@@ -1,0 +1,640 @@
+# SonarQube Guidelines — Transformlit
+
+This document maps SonarQube rule IDs to concrete fixes. All agents MUST follow these rules to pass the quality gate.
+
+## Table of Contents
+
+- [Critical Rules (Blocker/Critical)](#critical-rules)
+- [Major Rules (High)](#major-rules)
+- [Minor Rules (Medium/Low)](#minor-rules)
+- [Accessibility Rules](#accessibility-rules)
+- [React-Specific Rules](#react-specific-rules)
+- [Deprecated API Replacements](#deprecated-api-replacements)
+
+---
+
+## Critical Rules
+
+### S1186 — Empty methods
+**Fix:** Implement the method or remove it. Empty methods hide missing implementation.
+
+```ts
+// ❌ Bad
+googleAuth() {}
+
+// ✅ Good — implement or remove
+```
+
+### S1128 — Unused imports
+**Fix:** Remove unused imports immediately.
+
+```ts
+// ❌ Bad
+import { Request } from 'express';
+
+// ✅ Good — remove if unused
+```
+
+### S1440 — Unused exports
+**Fix:** Remove unused exports.
+
+### S6477 — Useless variable assignments
+**Fix:** Remove variables that are assigned but never used.
+
+```ts
+// ❌ Bad
+const router = useRouter();
+// router never used
+
+// ✅ Good — remove the variable
+```
+
+### S6478 — Redundant assignments
+**Fix:** Remove assignments that duplicate existing values.
+
+```ts
+// ❌ Bad
+buttonDisabled = buttonDisabled;
+
+// ✅ Good — remove the assignment
+```
+
+### Unused catch parameter → bare `catch`
+**Fix:** When the caught error is never used (only rethrown as another error), use a bare `catch`.
+
+```ts
+// ❌ Bad
+} catch (error) {
+  throw new UnauthorizedException('Invalid refresh token');
+}
+
+// ✅ Good
+} catch {
+  throw new UnauthorizedException('Invalid refresh token');
+}
+```
+
+### Unused props must be removed
+**Fix:** Delete props that are declared but never read — from the interface AND all call sites. (A same-named data field, e.g. `GraphQLGroup.featured`, is not the same as the component prop.)
+
+### Duplicate branch blocks must be merged
+**Fix:** When two branches contain identical code blocks, collapse them into one branch.
+
+### Render helpers stay inside the component
+**Fix:** NEVER extract a render helper to module scope when it closes over component state, handlers, or hooks. A "nested function" refactor that hoists `renderX()` out of the component breaks the build. Extract only pure logic with explicit parameters, or keep the helper nested.
+
+```tsx
+// ❌ Bad — broke the build
+function renderNotificationContent() {
+  if (loading) { ... } // `loading` undefined at module scope
+}
+
+// ✅ Good — helper stays nested where it closes over state
+export function NotificationPanel(...) {
+  const [notifications, setNotifications] = useState([]);
+  const renderNotificationContent = () => { ... };
+}
+```
+
+### React hooks: unconditional, top-level, correctly named
+**Fix:** All hooks (`useState`, `useMemo`, `useCallback`, `useEffect`) MUST be called unconditionally at the top of the component, before any early return. Never call hooks inside render-helper functions or conditionals. Functions that call hooks must be components (PascalCase) or custom hooks (starting with `use`).
+
+```tsx
+// ❌ Bad — conditional hook + hook in plain function
+const renderFriendsList = () => {
+  const keys = useMemo(...); // wrong: hook in non-hook function, conditional
+};
+
+// ✅ Good — hooks hoisted, helpers are pure
+const keys = useMemo(...);
+if (!isReady) return <Spinner />;
+const renderFriendsList = () => { ... }; // no hooks inside
+```
+
+---
+
+## Major Rules
+
+### S6643 — Mark constructor params `readonly`
+**Fix:** Add `readonly` to constructor parameters that are never reassigned.
+
+```ts
+// ❌ Bad
+constructor(private prisma: PrismaService) {}
+
+// ✅ Good
+constructor(private readonly prisma: PrismaService) {}
+```
+
+### S6644 — No nested ternary operations
+**Fix:** Extract to independent statements or use if/else.
+
+```ts
+// ❌ Bad
+const status = isActive ? 'active' : isPending ? 'pending' : 'inactive';
+
+// ✅ Good
+let status: string;
+if (isActive) {
+  status = 'active';
+} else if (isPending) {
+  status = 'pending';
+} else {
+  status = 'inactive';
+}
+```
+
+### S6647 — Use optional chain expressions
+**Fix:** Replace explicit null checks with optional chaining.
+
+```ts
+// ❌ Bad
+if (user && user.profile && user.profile.name) { ... }
+
+// ✅ Good
+if (user?.profile?.name) { ... }
+```
+
+### S6648 — No `await` on non-Promise values
+**Fix:** Only `await` actual Promise values.
+
+```ts
+// ❌ Bad
+const result = await someValue; // someValue is not a Promise
+
+// ✅ Good
+const result = someValue;
+```
+
+### S6650 — Use `String.raw` for regex patterns
+**Fix:** Use `String.raw` template literals to avoid escaping backslashes.
+
+```ts
+// ❌ Bad
+const pattern = '\\d{4}-\\d{2}-\\d{2}';
+
+// ✅ Good
+const pattern = String.raw`\d{4}-\d{2}-\d{2}`;
+```
+
+### S6651 — Default parameters must be last
+**Fix:** Move parameters with defaults after required parameters.
+
+```ts
+// ❌ Bad
+function createUser(role = 'member', name: string) { ... }
+
+// ✅ Good
+function createUser(name: string, role = 'member') { ... }
+```
+
+### S6652 — Cognitive complexity ≤ 15
+**Fix:** Extract helper functions to reduce complexity.
+
+### S6653 — Use `globalThis` over `window`
+**Fix:** Replace `window` with `globalThis.window` or `globalThis` for SSR safety.
+
+```ts
+// ❌ Bad
+window.location.href = '/login';
+
+// ✅ Good
+globalThis.window.location.href = '/login';
+// or
+globalThis.location.href = '/login';
+```
+
+### S6654 — No nested template literals
+**Fix:** Extract to variables.
+
+```ts
+// ❌ Bad
+const msg = `Hello ${`World ${name}`}`;
+
+// ✅ Good
+const inner = `World ${name}`;
+const msg = `Hello ${inner}`;
+```
+
+### S6655 — No nested functions > 4 levels
+**Fix:** Extract nested functions to module level or class methods.
+
+### S6657 — Use `String#replaceAll()` over `String#replace()`
+**Fix:** Use `replaceAll()` for global string replacement.
+
+```ts
+// ❌ Bad
+str.replace(/foo/g, 'bar');
+
+// ✅ Good
+str.replaceAll('foo', 'bar');
+```
+
+### S6659 — No `void` operator
+**Fix:** Remove `void` operator usage.
+
+```ts
+// ❌ Bad
+void someFunction();
+
+// ✅ Good
+someFunction();
+```
+
+### S6660 — Use `String.fromCodePoint()` over `String.fromCharCode()`
+**Fix:** Use `fromCodePoint()` for Unicode code points.
+
+### S6661 — Promise rejection reasons must be `Error` instances
+**Fix:** Always reject with `Error` objects.
+
+```ts
+// ❌ Bad
+Promise.reject('error message');
+
+// ✅ Good
+Promise.reject(new Error('error message'));
+```
+
+### S6662 — Use `??=` over nullish assignment
+**Fix:** Use nullish coalescing assignment.
+
+```ts
+// ❌ Bad
+if (obj.prop === null || obj.prop === undefined) {
+  obj.prop = defaultValue;
+}
+
+// ✅ Good
+obj.prop ??= defaultValue;
+```
+
+### S6663 — No negated conditions
+**Fix:** Use positive conditions where they read better.
+
+```ts
+// ❌ Bad
+if (!isActive) return <Disabled />;
+return <Active />;
+
+// ✅ Good
+if (isActive) return <Active />;
+return <Disabled />;
+```
+
+---
+
+## Minor Rules
+
+### S2208 — Use `node:crypto` over `crypto`
+**Fix:** Use the explicit `node:` prefix.
+
+```ts
+// ❌ Bad
+import { randomUUID } from 'crypto';
+
+// ✅ Good
+import { randomUUID } from 'node:crypto';
+```
+
+### S6479 — No array index in React keys
+**Fix:** Use stable unique IDs instead of array index.
+
+```ts
+// ❌ Bad
+{items.map((item, index) => <div key={index}>{item}</div>)}
+
+// ✅ Good
+{items.map((item) => <div key={item.id}>{item}</div>)}
+```
+
+### S6480 — Context provider values must be stable
+**Fix:** Wrap object literals in `useMemo`.
+
+```ts
+// ❌ Bad
+<Context.Provider value={{ user, setUser }}>
+
+// ✅ Good
+const value = useMemo(() => ({ user, setUser }), [user, setUser]);
+<Context.Provider value={value}>
+```
+
+### S6481 — No setter with matching state
+**Fix:** Don't use state variable in its own setter.
+
+```ts
+// ❌ Bad
+setCount(count + 1); // if count is the current state
+
+// ✅ Good
+setCount((prev) => prev + 1);
+```
+
+### S6606 — Use optional chain expressions
+**Fix:** Same as S6647 — use `?.` and `??`.
+
+### S6632 — Use `export…from` for re-exports
+**Fix:** Re-export directly from the source module.
+
+```ts
+// ❌ Bad
+import { BlobService } from './blob.service';
+export { BlobService };
+
+// ✅ Good
+export { BlobService } from './blob.service';
+```
+
+### S6664 — No duplicate CSS selectors
+**Fix:** Consolidate duplicate CSS rules.
+
+### S6665–S6690 — Deprecated API replacements
+**Fix:** Replace deprecated APIs with modern equivalents.
+
+---
+
+## Accessibility Rules
+
+### S6700 — Use semantic HTML
+**Fix:** Replace ARIA roles with native HTML elements.
+
+| ❌ Bad | ✅ Good |
+|--------|---------|
+| `<div role="navigation">` | `<nav>` |
+| `<div role="dialog">` | `<dialog>` |
+| `<div role="separator">` | `<hr>` |
+| `<div role="button">` | `<button>` |
+| `<div role="button">` | `<input type="button">` |
+
+### S6701 — Interactive elements need keyboard support
+**Fix:** Add `onKeyDown` or `onKeyUp` to non-interactive elements with `onClick`.
+
+```tsx
+// ❌ Bad
+<div onClick={handleClick}>Click me</div>
+
+// ✅ Good
+<div
+  onClick={handleClick}
+  onKeyDown={(e) => e.key === 'Enter' && handleClick()}
+  role="button"
+  tabIndex={0}
+>
+  Click me
+</div>
+```
+
+### S6702 — Form labels must be associated
+**Fix:** Use `htmlFor`/`id` pairing.
+
+```tsx
+// ❌ Bad
+<label>Name</label>
+<input type="text" />
+
+// ✅ Good
+<label htmlFor="name">Name</label>
+<input id="name" type="text" />
+```
+
+### S6703 — Media elements need `<track>`
+**Fix:** Add `<track>` for captions to `<audio>` and `<video>`.
+
+```tsx
+// ❌ Bad
+<audio src="audio.mp3" />
+
+// ✅ Good
+<audio src="audio.mp3">
+  <track kind="captions" src="captions.vtt" />
+</audio>
+```
+
+### S6704 — Clickable non-native elements need `role`
+**Fix:** Add appropriate role and keyboard support.
+
+### S6705 — `lang` attribute on `<html>`
+**Fix:** Add `lang` and/or `xml:lang` to `<html>` element.
+
+---
+
+## React-Specific Rules
+
+### S6720 — Props must be read-only
+**Fix:** Mark component props as `readonly`.
+
+```tsx
+// ❌ Bad
+function MyComponent({ name }: { name: string }) { ... }
+
+// ✅ Good
+function MyComponent({ name }: { readonly name: string }) { ... }
+// or
+function MyComponent(props: { readonly name: string }) { ... }
+```
+
+### S6721 — No array index in keys
+**Fix:** Same as S6479.
+
+### S6722 — No useless variable assignments
+**Fix:** Same as S6477.
+
+### S6723 — Context provider values must be stable
+**Fix:** Same as S6480.
+
+### S6724 — No setter with matching state
+**Fix:** Same as S6481.
+
+---
+
+## Deprecated API Replacements
+
+### Zod v4 deprecations
+Replace deprecated Zod string methods with the new syntax:
+
+| ❌ Deprecated | ✅ Replacement |
+|---------------|----------------|
+| `.email()` `.url()` `.uuid()` | `z.email()` `z.url()` `z.uuid()` |
+| `.datetime()` | `z.iso.datetime()` (NOT `z.datetime()` — does not exist in Zod 4) |
+| `.min(5, 'message')` | `.min(5, { message: 'message' })` |
+| `.max(10, 'message')` | `.max(10, { message: 'message' })` |
+| `.regex(/pattern/)` | `.regex(/pattern/)` (unchanged) |
+
+### Apollo Client deprecations
+Pinned version is Apollo Client v4.2.12 — imperative `apolloClient.query`/`apolloClient.mutate`
+and `createHttpLink`/`split`/`setContext`/`onError` links remain valid. Do NOT migrate call
+sites to `useQuery`/`useMutation` hooks to satisfy the deprecation lint: `useLazyQuery` in
+this version does not support `onCompleted`/`variables` in options, and imperative calls are
+still supported. Report these findings as accepted deviations, not errors.
+
+`split` is deprecated in favor of `ApolloLink.split` (static method) but still exported —
+do NOT change working code that uses the standalone `split()`.
+
+### React deprecations
+| ❌ Deprecated | ✅ Replacement |
+|---------------|----------------|
+| `FormEvent` (bare import) | `React.FormEvent<HTMLFormElement>` for form handlers, or `SubmitEvent`/`ChangeEvent`/`SyntheticEvent` as appropriate |
+
+### Testing deprecations
+| ❌ Deprecated | ✅ Replacement |
+|---------------|----------------|
+| `MockedResponse` | Import from `@apollo/client/testing` (NOT `testing/react` — that sub-module only exports `MockedProvider`) |
+
+---
+
+## Dockerfile Rules
+
+### TODO comments fail the scan
+**Fix:** Remove `TODO` comments from Dockerfiles (address them first if actionable). SonarQube treats them as open findings.
+
+### Digest-only image refs
+**Fix:** Use either the version tag or the digest — not both.
+
+```dockerfile
+# ❌ Bad
+FROM node:22-bookworm-slim@sha256:83f487...
+
+# ✅ Good
+FROM node@sha256:83f487...
+```
+
+### Merge consecutive RUN instructions
+**Fix:** Combine consecutive `RUN`s with `&& \` to reduce layers.
+
+```dockerfile
+# ❌ Bad
+RUN pnpm db:generate
+RUN pnpm build
+
+# ✅ Good
+RUN pnpm db:generate && \
+    pnpm build
+```
+
+### Exclude generated reports from analysis
+**Fix:** Never fix generated output (e.g. `playwright-report/index.html`). Add it to `sonar.exclusions` in `sonar-project.properties`.
+
+---
+
+## JSX Spacing
+
+### Ambiguous JSX whitespace → explicit `{' '}`
+**Fix:** When an icon `<span>` and text sit on separate lines, SonarQube flags ambiguous spacing. Insert an explicit space.
+
+```tsx
+// ❌ Bad — flagged
+<span>share</span>
+Share
+
+// ✅ Good
+<span>share</span>{' '}
+Share
+```
+
+## Type-Guard Simplification
+
+### `undefined > 0` is already `false`
+**Fix:** A redundant `!== undefined` guard before a numeric comparison can be dropped — `undefined > 0` evaluates to `false`.
+
+```tsx
+// ❌ Bad
+{mutualGroups !== undefined && mutualGroups > 0 && (...)}
+
+// ✅ Good
+{mutualGroups > 0 && (...)}
+```
+
+### `typeof window` → direct `undefined` comparison
+**Fix:** Replace `typeof window === 'undefined'` with `window === undefined` (or `globalThis.window === undefined` for SSR safety). `typeof` is unnecessary for `window` and SonarQube flags it.
+
+```ts
+// ❌ Bad
+if (typeof window === 'undefined') { ... }
+
+// ✅ Good (SSR-safe)
+if (globalThis.window === undefined) { ... }
+```
+
+### Native `<dialog>` over `role="dialog"` (with jsdom caveat)
+**Fix:** Prefer native `<dialog>` element. BUT: jsdom doesn't fully support `<dialog>`, so if tests query `getByRole('dialog')`, keep `role="dialog"` as an attribute on the native element AND add an `open` attribute so the dialog is visible. Add a CSS reset for `dialog` to strip user-agent defaults.
+
+```tsx
+// ❌ Bad
+<div role="dialog" aria-modal="true">
+
+// ✅ Good (jsdom-compatible)
+<dialog role="dialog" aria-modal="true" open>
+```
+
+```css
+/* Add to globals.css */
+dialog {
+  margin: auto;
+  padding: 0;
+  border: none;
+  width: auto;
+  height: auto;
+}
+```
+
+### Unused state setter → underscore prefix
+**Fix:** When a state value is never read but the setter is used, prefix the value with `_` to signal intentional non-use.
+
+```tsx
+// ❌ Bad — SonarQube flags as not destructured
+const [, setJoining] = useState(new Set());
+
+// ✅ Good
+const [_joining, setJoining] = useState(new Set());
+```
+
+### Testing deprecations
+| ❌ Deprecated | ✅ Replacement |
+|---------------|----------------|
+| `MockedResponse` (MSW) | `HttpResponse` |
+
+---
+
+## Quick Reference — Common Fixes
+
+| Issue | Fix |
+|-------|-----|
+| `window` reference | `globalThis.window` or `globalThis` |
+| `typeof window` check | `globalThis.window === undefined` |
+| Array index in key | Use stable unique ID |
+| Empty method | Implement or remove |
+| Unused import | Remove |
+| Unused prop | Remove from interface + all call sites |
+| Constructor param not readonly | Add `readonly` |
+| Regex with backslashes | Use `String.raw` |
+| `crypto` import | `node:crypto` |
+| Re-export via variable | `export…from` |
+| `String#replace()` global | `String#replaceAll()` |
+| `String.fromCharCode()` | `String.fromCodePoint()` |
+| Explicit null check | Optional chain `?.` `??` |
+| Nested ternary | Extract to if/else |
+| `void` operator | Remove |
+| Negated condition | Use positive |
+| Nested template literal | Extract to variable |
+| Nested functions > 4 levels | Extract to module level |
+| Render helper closes over state | Keep nested, pass params explicitly |
+| Conditional hooks | Hoist to top level |
+| Hook in plain function | Rename to component/hook or inline |
+| Duplicate branch blocks | Merge into one |
+| Promise reject with string | `new Error('message')` |
+| Nullish assignment | `??=` |
+| Default params not last | Reorder |
+| Cognitive complexity > 15 | Extract helpers |
+| ARIA role for native element | Use semantic HTML |
+| `role="dialog"` | Native `<dialog>` + CSS reset (keep role for jsdom) |
+| onClick without keyboard | Add `onKeyDown` |
+| Form label without `htmlFor` | Add `htmlFor`/`id` |
+| Media without `<track>` | Add captions track |
+| Props not readonly | Add `readonly` |
+| Context value not stable | `useMemo` |
+| Setter with state | Use callback form |
+| Unused state value | Prefix with `_` |
+| `undefined > 0` guard | Drop (already false) |
+| `FormEvent` import | `React.FormEvent<T>` or `SubmitEvent`/`ChangeEvent` |
+| `MockedResponse` import | `@apollo/client/testing` (not `testing/react`) |
+| Apollo v4 `query`/`mutate`/links | Accepted — do NOT migrate |

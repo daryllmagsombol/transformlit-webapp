@@ -8,9 +8,9 @@ export function Reveal({
   delay = 0,
   className,
 }: {
-  children: ReactNode;
-  delay?: number;
-  className?: string;
+  readonly children: ReactNode;
+  readonly delay?: number;
+  readonly className?: string;
 }) {
   const reduce = useReducedMotion();
 

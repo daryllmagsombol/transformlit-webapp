@@ -4,12 +4,12 @@ import { UserAvatar } from './user-avatar';
 import { ChevronRightIcon } from './icons';
 
 interface FriendCardProps {
-  name: string;
-  bio?: string;
-  avatarUrl?: string | null;
-  mutualGroups?: number;
-  onPress: () => void;
-  statusBadge?: React.ReactNode;
+  readonly name: string;
+  readonly bio?: string;
+  readonly avatarUrl?: string | null;
+  readonly mutualGroups?: number;
+  readonly onPress: () => void;
+  readonly statusBadge?: React.ReactNode;
 }
 
 export function FriendCard({ name, bio, avatarUrl, mutualGroups, onPress, statusBadge }: FriendCardProps) {

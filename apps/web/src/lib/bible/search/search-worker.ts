@@ -1,5 +1,5 @@
 import { buildIndex, type SearchCorpus } from './build-index';
-import { searchCorpus, type SearchResult } from './matcher';
+import { searchCorpus } from './matcher';
 import type { CompleteTranslation } from '../types';
 
 interface BuildMessage {
@@ -13,15 +13,16 @@ interface SearchMessage {
   payload: { corpus: SearchCorpus; query: string; limit: number };
 }
 
-self.onmessage = (event: MessageEvent<BuildMessage | SearchMessage>) => {
+globalThis.onmessage = (event: MessageEvent<BuildMessage | SearchMessage>) => {
   const msg = event.data;
   if (msg.kind === 'build') {
     const corpus = buildIndex(msg.payload);
-    (self as unknown as Worker).postMessage({ id: msg.id, kind: 'built', corpus });
+    (globalThis as unknown as Worker).postMessage({ id: msg.id, kind: 'built', corpus });
   } else if (msg.kind === 'search') {
     const results = searchCorpus(msg.payload.corpus, msg.payload.query, msg.payload.limit);
-    (self as unknown as Worker).postMessage({ id: msg.id, kind: 'results', results });
+    (globalThis as unknown as Worker).postMessage({ id: msg.id, kind: 'results', results });
   }
 };
 
-export type { BuildMessage, SearchMessage, SearchResult };
+export type { BuildMessage, SearchMessage };
+export type { SearchResult } from './matcher';

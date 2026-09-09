@@ -4,11 +4,11 @@ import { useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 
 interface SheetProps {
-  open: boolean;
-  onClose: () => void;
-  side?: 'bottom' | 'right';
-  title?: string;
-  children: React.ReactNode;
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly side?: 'bottom' | 'right';
+  readonly title?: string;
+  readonly children: React.ReactNode;
 }
 
 export function Sheet({ open, onClose, side = 'bottom', title, children }: SheetProps) {
@@ -28,7 +28,7 @@ export function Sheet({ open, onClose, side = 'bottom', title, children }: Sheet
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-[80]" role="dialog" aria-modal="true" aria-label={title}>
+        <dialog className="fixed inset-0 z-[80]" aria-modal="true" aria-label={title}>
           <motion.div
             data-testid="sheet-backdrop"
             className="absolute inset-0 bg-black/50 dark:bg-black/70"
@@ -65,7 +65,7 @@ export function Sheet({ open, onClose, side = 'bottom', title, children }: Sheet
             )}
             <div className="overflow-y-auto px-5 pb-6">{children}</div>
           </motion.div>
-        </div>
+        </dialog>
       )}
     </AnimatePresence>
   );

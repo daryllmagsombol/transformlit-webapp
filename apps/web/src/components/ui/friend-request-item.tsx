@@ -3,11 +3,11 @@
 import { UserAvatar } from './user-avatar';
 
 interface FriendRequestItemProps {
-  name: string;
-  bio?: string;
-  avatarUrl?: string | null;
-  onAccept: () => void;
-  onDecline: () => void;
+  readonly name: string;
+  readonly bio?: string;
+  readonly avatarUrl?: string | null;
+  readonly onAccept: () => void;
+  readonly onDecline: () => void;
 }
 
 export function FriendRequestItem({

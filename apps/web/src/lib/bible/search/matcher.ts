@@ -10,7 +10,7 @@ export interface SearchResult {
 }
 
 function normalize(s: string): string {
-  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return s.normalize('NFD').replaceAll(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
 const SNIPPET_RADIUS = 40;

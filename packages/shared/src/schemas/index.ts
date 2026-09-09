@@ -1,16 +1,15 @@
 import { z } from 'zod';
-import { UserRole } from '../enums.js';
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
 export const registerLocalSchema = z.object({
-  email: z.string().email(),
+  email: z.email(),
   password: z.string().min(8).max(128),
   displayName: z.string().min(1).max(100),
 });
 
 export const loginLocalSchema = z.object({
-  email: z.string().email(),
+  email: z.email(),
   password: z.string().min(1),
 });
 
@@ -27,7 +26,7 @@ export type RefreshTokenInput = z.infer<typeof refreshTokenSchema>;
 export const updateProfileSchema = z.object({
   displayName: z.string().min(1).max(100).optional(),
   bio: z.string().max(500).optional(),
-  avatarUrl: z.string().url().optional(),
+  avatarUrl: z.url().optional(),
 });
 
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
@@ -52,7 +51,7 @@ export type UpdateGroupInput = z.infer<typeof updateGroupSchema>;
 // ── Friend ─────────────────────────────────────────────────────────────────
 
 export const friendRequestSchema = z.object({
-  addresseeId: z.string().uuid(),
+  addresseeId: z.uuid(),
 });
 
 export type FriendRequestInput = z.infer<typeof friendRequestSchema>;
@@ -60,12 +59,12 @@ export type FriendRequestInput = z.infer<typeof friendRequestSchema>;
 // ── Chat ───────────────────────────────────────────────────────────────────
 
 export const sendMessageSchema = z.object({
-  conversationId: z.string().uuid(),
+  conversationId: z.uuid(),
   body: z.string().min(1).max(2000),
 });
 
 export const messagesQuerySchema = z.object({
-  conversationId: z.string().uuid(),
+  conversationId: z.uuid(),
   cursor: z.string().optional(),
   limit: z.number().int().min(1).max(50).default(25),
 });
@@ -94,20 +93,20 @@ export const updateBookSchema = z.object({
 });
 
 export const saveProgressSchema = z.object({
-  bookId: z.string().uuid(),
+  bookId: z.uuid(),
   currentPage: z.number().int().min(1),
   scrollY: z.number().min(0).optional(),
 });
 
 export const addBookmarkSchema = z.object({
-  bookId: z.string().uuid(),
+  bookId: z.uuid(),
   page: z.number().int().min(1),
   label: z.string().max(200).optional(),
   color: z.string().optional(),
 });
 
 export const addHighlightSchema = z.object({
-  bookId: z.string().uuid(),
+  bookId: z.uuid(),
   page: z.number().int().min(1),
   text: z.string().min(1).max(10000),
   note: z.string().max(5000).optional(),
@@ -126,16 +125,16 @@ export const publishAnnouncementSchema = z.object({
   title: z.string().min(1).max(200),
   body: z.string().min(1).max(10000),
   category: z.enum(['EVENT', 'UPDATE', 'GENERAL']).default('GENERAL'),
-  publishAt: z.string().datetime().optional(),
-  expiresAt: z.string().datetime().optional(),
+  publishAt: z.iso.datetime().optional(),
+  expiresAt: z.iso.datetime().optional(),
 });
 
 export const updateAnnouncementSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   body: z.string().min(1).max(10000).optional(),
   category: z.enum(['EVENT', 'UPDATE', 'GENERAL']).optional(),
-  publishAt: z.string().datetime().optional(),
-  expiresAt: z.string().datetime().optional(),
+  publishAt: z.iso.datetime().optional(),
+  expiresAt: z.iso.datetime().optional(),
   status: z.enum(['DRAFT', 'PUBLISHED', 'ARCHIVED']).optional(),
 });
 
