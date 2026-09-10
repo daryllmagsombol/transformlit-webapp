@@ -59,6 +59,8 @@ describe('BooksResolver', () => {
     const mockBooksService = {
       listBooks: jest.fn().mockResolvedValue([mockBook]),
       findById: jest.fn().mockResolvedValue(mockBook),
+      assertCanRead: jest.fn().mockResolvedValue(mockBook),
+      listToc: jest.fn().mockResolvedValue([]),
       uploadBook: jest.fn().mockResolvedValue(mockBook),
       updateBook: jest.fn().mockResolvedValue({ ...mockBook, title: 'Updated' }),
       uploadPdf: jest.fn().mockResolvedValue({ ...mockBook, status: 'PUBLISHED' }),
@@ -99,8 +101,9 @@ describe('BooksResolver', () => {
   // ── book query ──────────────────────────────────────────────────────────────
 
   describe('book', () => {
-    it('should delegate to findById', async () => {
-      const result = await resolver.book('book-1');
+    it('gates on assertCanRead then delegates to findById', async () => {
+      const result = await resolver.book(mockUser as never, 'book-1');
+      expect(booksService.assertCanRead).toHaveBeenCalledWith('book-1', 'user-1');
       expect(booksService.findById).toHaveBeenCalledWith('book-1');
       expect(result).toEqual(mockBook);
     });
@@ -263,12 +266,32 @@ describe('BooksResolver', () => {
   // ── reader manifest ────────────────────────────────────────────────────────
 
   describe('reader manifest', () => {
-    it('exposes toc for a book', async () => {
-      const service = {
-        listToc: jest.fn().mockResolvedValue([{ id: 't1', title: 'One', page: 1, depth: 0, order: 0 }]),
-      };
-      const localResolver = new BooksResolver(service as never, {} as never);
-      await expect(localResolver.bookToc('book-1')).resolves.toHaveLength(1);
+    it('gates bookToc on entitlement before listing the toc', async () => {
+      const entries = [{ id: 't1', title: 'One', page: 1, depth: 0, order: 0 }];
+      booksService.assertCanRead.mockResolvedValue(mockBook);
+      booksService.listToc.mockResolvedValue(entries);
+      await expect(resolver.bookToc(mockUser as never, 'book-1')).resolves.toEqual(entries);
+      expect(booksService.assertCanRead).toHaveBeenCalledWith('book-1', 'user-1');
+      expect(booksService.listToc).toHaveBeenCalledWith('book-1');
+    });
+
+    it('does not leak toc when the book is not readable', async () => {
+      booksService.assertCanRead.mockRejectedValue(new Error('Book not available'));
+      await expect(resolver.bookToc(mockUser as never, 'book-1')).rejects.toThrow(/not available/);
+      expect(booksService.listToc).not.toHaveBeenCalled();
+    });
+
+    it('resolves toc from the loaded relation when present', async () => {
+      const entries = [{ id: 't1', title: 'One', page: 1, depth: 0, order: 0 }];
+      await expect(resolver.toc({ id: 'book-1', toc: entries })).resolves.toEqual(entries);
+      expect(booksService.listToc).not.toHaveBeenCalled();
+    });
+
+    it('loads toc when the relation is absent (covers the books list path)', async () => {
+      const entries = [{ id: 't2', title: 'Two', page: 2, depth: 0, order: 0 }];
+      booksService.listToc.mockResolvedValue(entries);
+      await expect(resolver.toc({ id: 'book-1' })).resolves.toEqual(entries);
+      expect(booksService.listToc).toHaveBeenCalledWith('book-1');
     });
 
     it('retries conversion via the job service', async () => {

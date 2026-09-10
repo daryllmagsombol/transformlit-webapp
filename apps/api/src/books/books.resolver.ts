@@ -1,4 +1,4 @@
-import { Resolver, Query, Mutation, Args } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Args, ResolveField, Parent } from '@nestjs/graphql';
 import { UseGuards, BadRequestException } from '@nestjs/common';
 import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { BooksService } from './books.service.js';
@@ -12,7 +12,7 @@ import {
 } from './models/book.model.js';
 import { GraphQLUpload, FileUpload } from 'graphql-upload-ts';
 
-@Resolver()
+@Resolver(() => Book)
 export class BooksResolver {
   constructor(
     private readonly booksService: BooksService,
@@ -27,14 +27,24 @@ export class BooksResolver {
 
   @Query(() => Book, { name: 'book' })
   @UseGuards(JwtAuthGuard)
-  async book(@Args('id') id: string) {
+  async book(@CurrentUser() user: { id: string }, @Args('id') id: string) {
+    await this.booksService.assertCanRead(id, user.id);
     return this.booksService.findById(id);
   }
 
   @Query(() => [BookTocEntry], { name: 'bookToc' })
   @UseGuards(JwtAuthGuard)
-  async bookToc(@Args('bookId') bookId: string) {
+  async bookToc(@CurrentUser() user: { id: string }, @Args('bookId') bookId: string) {
+    // Same entitlement/published/READY/soft-delete gate as page delivery.
+    await this.booksService.assertCanRead(bookId, user.id);
     return this.booksService.listToc(bookId);
+  }
+
+  /** Resolves ToC on every Book path, loading it when the relation is absent. */
+  @ResolveField(() => [BookTocEntry], { name: 'toc' })
+  async toc(@Parent() book: { id: string; toc?: BookTocEntry[] }) {
+    if (book.toc) return book.toc;
+    return this.booksService.listToc(book.id);
   }
 
   @Mutation(() => Book, { name: 'retryBookConversion' })

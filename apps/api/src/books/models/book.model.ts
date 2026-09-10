@@ -62,8 +62,11 @@ export class Book {
   @Field(() => Int, { nullable: true })
   pageCount?: number;
 
-  @Field(() => [BookTocEntry])
-  toc: BookTocEntry[];
+  /**
+   * Populated by the BooksResolver `toc` resolve field so it is available on
+   * every Book path (`findById`, `listBooks`, `BookProgress.book`).
+   */
+  toc?: BookTocEntry[];
 
   @Field({ nullable: true })
   totalPages?: number;
