@@ -1,6 +1,7 @@
-import { fetchPageText, fetchReadProgress, openReadingSession, saveReaderProgress } from './api';
+import { fetchPageText, fetchReadProgress, openReadingSession, pageFrameUrl, saveReaderProgress } from './api';
 import { apolloClient, refreshTokens } from '../apollo-client';
 import { removeAccessToken, setAccessToken } from '../auth';
+import { API_BASE } from '../constants';
 
 jest.mock('../apollo-client', () => ({
   apolloClient: { query: jest.fn(), mutate: jest.fn() },
@@ -52,13 +53,22 @@ describe('reader api', () => {
     expect(fetchMock.mock.calls[1][1].headers).toEqual({ Authorization: 'Bearer refreshed-token' });
   });
 
-  it('fetches page text JSON', async () => {
-    globalThis.fetch = jest.fn().mockResolvedValue({
+  it('fetches page text JSON with the session cookie', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ items: [{ t: 'Hello', x: 0.1, y: 0.1, w: 0.2, h: 0.02 }] }),
-    }) as never;
+    });
+    globalThis.fetch = fetchMock as never;
     const text = await fetchPageText('book-1', 1);
     expect(text.items[0].t).toBe('Hello');
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE}/books/book-1/pages/1/text`,
+      expect.objectContaining({ credentials: 'include' }),
+    );
+  });
+
+  it('builds the cookie-authed frame URL', () => {
+    expect(pageFrameUrl('book-1', 3)).toBe(`${API_BASE}/books/book-1/pages/3/frame`);
   });
 
   it('throws on a failed frame fetch', async () => {

@@ -28,10 +28,18 @@ jest.mock('../../../../../lib/reader/api', () => ({
 }));
 
 import { ReaderClient } from './reader-client';
+import { fetchPageText, openReadingSession } from '../../../../../lib/reader/api';
+
+const fetchPageTextMock = fetchPageText as jest.Mock;
+const openReadingSessionMock = openReadingSession as jest.Mock;
 
 describe('ReaderClient', () => {
   beforeEach(() => {
     mockSearchParams = new URLSearchParams();
+    fetchPageTextMock.mockReset();
+    fetchPageTextMock.mockResolvedValue({ items: [{ t: 'Hello', x: 0.1, y: 0.1, w: 0.2, h: 0.02 }] });
+    openReadingSessionMock.mockReset();
+    openReadingSessionMock.mockResolvedValue({ expiresInMs: 900000 });
     mockQuery.mockResolvedValue({
       data: { book: { id: 'book-1', title: 'Test Book', format: 'PDF', pageCount: 3, conversionStatus: 'READY', toc: [] } },
     });
@@ -43,6 +51,20 @@ describe('ReaderClient', () => {
     const frame = await screen.findByTestId('page-frame');
     expect(frame).toHaveAttribute('src', 'http://api.test/books/book-1/pages/1/frame');
     expect(await screen.findByText('Page 1 of 3')).toBeInTheDocument();
+  });
+
+  it('clamps a deep-linked page that exceeds the page count', async () => {
+    render(<ReaderClient bookId="book-1" initialPage={999} />);
+    expect(await screen.findByText('Page 3 of 3')).toBeInTheDocument();
+  });
+
+  it('retries page text once after refreshing the session on a 401', async () => {
+    fetchPageTextMock
+      .mockRejectedValueOnce(new Error('Reader request failed with 401'))
+      .mockResolvedValueOnce({ items: [{ t: 'Recovered', x: 0.1, y: 0.1, w: 0.2, h: 0.02 }] });
+    render(<ReaderClient bookId="book-1" initialPage={1} />);
+    expect(await screen.findByText('Recovered')).toBeInTheDocument();
+    expect(openReadingSessionMock).toHaveBeenCalledTimes(2);
   });
 
   it('resumes from saved progress when the URL has no page', async () => {

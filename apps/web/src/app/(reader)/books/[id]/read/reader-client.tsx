@@ -48,6 +48,11 @@ interface Manifest {
 /** How long page positions settle before the server save fires. */
 const PROGRESS_SAVE_DEBOUNCE_MS = 1500;
 
+/** `fetchPageText` throws `Reader request failed with 401` on an expired session. */
+function isUnauthorized(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('401');
+}
+
 export function ReaderClient({ bookId, initialPage }: { readonly bookId: string; readonly initialPage?: number }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -57,8 +62,8 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(initialPage ?? 1);
   const [items, setItems] = useState<PdfTextItem[] | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
   const pageCount = manifest?.pageCount ?? 0;
-  const sessionReady = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pageRef = useRef(page);
   pageRef.current = page;
@@ -79,12 +84,28 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
     };
   }, [bookId]);
 
-  // One session per mount; the API slides its TTL as pages are fetched.
+  // One session per mount; the API slides its TTL as pages are fetched. Page
+  // reads are gated on this so the first fetch cannot race the cookie.
   useEffect(() => {
-    if (sessionReady.current) return;
-    sessionReady.current = true;
-    openReadingSession(bookId).catch(() => setError('Could not start a reading session.'));
+    let cancelled = false;
+    openReadingSession(bookId)
+      .then(() => {
+        if (!cancelled) setSessionReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setError('Could not start a reading session.');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [bookId]);
+
+  // A deep-linked ?page or a stale saved position can exceed the real page
+  // count; clamp once the manifest tells us how many pages exist.
+  useEffect(() => {
+    if (!manifest?.pageCount) return;
+    setPage((current) => Math.min(Math.max(current, 1), manifest.pageCount as number));
+  }, [manifest?.pageCount]);
 
   // Resume only when the URL did not pin a page — an explicit ?page always wins.
   useEffect(() => {
@@ -103,16 +124,35 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
   }, [bookId, initialPage]);
 
   useEffect(() => {
-    if (!manifest || manifest.conversionStatus !== 'READY') return;
+    if (!manifest || manifest.conversionStatus !== 'READY' || !sessionReady) return;
     let cancelled = false;
     setItems(null);
-    fetchPageText(bookId, page)
-      .then((text) => {
+
+    const loadText = async () => {
+      try {
+        const text = await fetchPageText(bookId, page);
         if (!cancelled) setItems(text.items);
-      })
-      .catch(() => {
+      } catch (error) {
+        // A cold load can hit the first text fetch before the session cookie is
+        // usable; re-open the session (which refreshes the access token) and
+        // retry once instead of showing a silently empty text layer.
+        if (isUnauthorized(error) && !cancelled) {
+          try {
+            await openReadingSession(bookId);
+            const retry = await fetchPageText(bookId, page);
+            if (!cancelled) setItems(retry.items);
+            return;
+          } catch {
+            /* fall through to the empty layer */
+          }
+        }
         if (!cancelled) setItems([]);
-      });
+      }
+    };
+    loadText().catch(() => {
+      if (!cancelled) setItems([]);
+    });
+
     // Local position updates instantly; the server save is debounced on page settle.
     setLastPage(bookId, page);
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -125,7 +165,7 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
       cancelled = true;
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [bookId, manifest, page]);
+  }, [bookId, manifest, page, sessionReady, setLastPage]);
 
   // Flush the position when the tab is hidden or the reader unmounts.
   useEffect(() => {
