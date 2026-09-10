@@ -8,6 +8,7 @@ import type { ValidationContext } from 'graphql';
 import depthLimit from 'graphql-depth-limit';
 
 import { PrismaModule } from './prisma/prisma.module.js';
+import { StorageModule } from './storage/storage.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { GroupsModule } from './groups/groups.module.js';
@@ -121,6 +122,7 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
     }),
 
     PrismaModule,
+    StorageModule,
     AzureModule,
     UploadsModule,
     AuthModule,
