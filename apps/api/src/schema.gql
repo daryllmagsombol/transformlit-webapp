@@ -332,7 +332,7 @@ type Query {
   book(id: String!): Book!
   bookmarks(bookId: String!): [Bookmark!]!
   books: [Book!]!
-  conversations: [Conversation!]!
+  conversations(limit: Int = 50): [Conversation!]!
   discoverGroups(category: GroupCategory): [Group!]!
   friendRequests: [Friendship!]!
   friends: [Friendship!]!
