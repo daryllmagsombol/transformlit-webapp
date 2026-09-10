@@ -56,11 +56,29 @@ export class BooksService {
     return this.prisma.bookTocEntry.findMany({ where: { bookId }, orderBy: { order: 'asc' } });
   }
 
-  /** Marks a book PENDING again so the worker re-runs conversion. */
-  async setConversionPending(bookId: string) {
-    await this.prisma.book.update({
-      where: { id: bookId },
-      data: { conversionStatus: 'PENDING', conversionError: null },
+  /**
+   * Re-runs conversion for a failed book. Preconditions prevent retrying a
+   * READY book (which would bump contentVersion and invalidate anchors) or a
+   * file-less seeded book. The status flip and job enqueue are one transaction
+   * so a crash can never strand a PENDING book with no job.
+   */
+  async retryConversion(bookId: string) {
+    const book = await this.prisma.book.findUnique({ where: { id: bookId } });
+    if (!book) throw new NotFoundException('Book not found');
+    if (book.conversionStatus !== 'FAILED') {
+      throw new BadRequestException('Only a failed conversion can be retried');
+    }
+    if (!book.blobPath) {
+      throw new BadRequestException('Book has no stored original to convert');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.book.update({
+        where: { id: bookId },
+        data: { conversionStatus: 'PENDING', conversionError: null },
+      });
+      await tx.bookConversionJob.create({ data: { bookId, status: 'PENDING' } });
+      return updated;
     });
   }
 
@@ -113,11 +131,16 @@ export class BooksService {
     if (!format) {
       throw new BadRequestException('Uploaded file is not a PDF or EPUB');
     }
+    if (format === 'EPUB') {
+      // EPUB conversion ships in Plan 2. Reject before storing or enqueuing so
+      // the user gets a clear 400 instead of an opaque, silently retrying
+      // conversion and an orphaned blob.
+      throw new BadRequestException('EPUB support is coming in the next release');
+    }
 
     // Never trust the client-supplied filename; always generate a server-side key.
-    const extension = format === 'PDF' ? 'pdf' : 'epub';
-    const storageKey = `books/${bookId}/${randomUUID()}.${extension}`;
-    await this.storage.put(storageKey, buffer, format === 'PDF' ? 'application/pdf' : 'application/epub+zip');
+    const storageKey = `books/${bookId}/${randomUUID()}.pdf`;
+    await this.storage.put(storageKey, buffer, 'application/pdf');
 
     // Persist the PENDING book and enqueue its conversion job in a single
     // transaction so a crash can never leave a PENDING book with no job.
@@ -139,17 +162,11 @@ export class BooksService {
   }
 
   async streamPdf(bookId: string, userId: string) {
-    const book = await this.prisma.book.findUnique({ where: { id: bookId } });
-    if (!book?.blobPath) throw new NotFoundException('PDF not available');
-
-    const hasAccess =
-      book.accessLevel === 'FREE' ||
-      book.createdById === userId ||
-      (await this.prisma.bookAccess.findUnique({
-        where: { bookId_userId: { bookId, userId } },
-      })) !== null;
-
-    if (!hasAccess) throw new ForbiddenException('You do not have access to this book');
+    // Route through the shared reader gate so raw originals can never be
+    // streamed for a soft-deleted/unpublished/non-READY book or without
+    // entitlement.
+    const book = await this.assertCanRead(bookId, userId);
+    if (!book.blobPath) throw new NotFoundException('PDF not available');
     return this.blob.streamPdf(book.blobPath);
   }
 

@@ -339,45 +339,49 @@ describe('BooksService', () => {
   // ── streamPdf ──────────────────────────────────────────────────────────────
 
   describe('streamPdf', () => {
-    it('should find book by id', async () => {
-      prisma.book.findUnique.mockResolvedValue({ ...mockBook, blobPath: 'books/book-1/test.pdf' });
-      await service.streamPdf('book-1', 'user-1');
-      expect(prisma.book.findUnique).toHaveBeenCalledWith({
-        where: { id: 'book-1' },
-      });
-    });
+    const readableBook = {
+      ...mockBook,
+      status: 'PUBLISHED',
+      conversionStatus: 'READY',
+      blobPath: 'books/book-1/test.pdf',
+    };
 
-    it('should throw NotFoundException if book has no blobPath', async () => {
-      prisma.book.findUnique.mockResolvedValue({ ...mockBook, blobPath: null });
-      await expect(service.streamPdf('book-1', 'user-1')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-
-    it('should throw NotFoundException if book not found', async () => {
-      prisma.book.findUnique.mockResolvedValue(null);
-      await expect(service.streamPdf('book-1', 'user-1')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-
-    it('should return blob.streamPdf(book.blobPath)', async () => {
-      const bookWithPdf = { ...mockBook, blobPath: 'books/book-1/test.pdf' };
-      prisma.book.findUnique.mockResolvedValue(bookWithPdf);
+    it('streams the blob for a readable book', async () => {
+      prisma.book.findUnique.mockResolvedValue(readableBook);
       const mockStream = { pipe: jest.fn() };
       blob.streamPdf.mockResolvedValue(mockStream);
       const result = await service.streamPdf('book-1', 'user-1');
+      expect(prisma.book.findUnique).toHaveBeenCalledWith({ where: { id: 'book-1' } });
       expect(blob.streamPdf).toHaveBeenCalledWith('books/book-1/test.pdf');
       expect(result).toEqual(mockStream);
     });
 
-    it('should check bookAccess when book is RESTRICTED and user is not the creator', async () => {
-      const restrictedBook = {
-        ...mockBook,
-        accessLevel: 'RESTRICTED',
-        blobPath: 'books/book-1/test.pdf',
-      };
-      prisma.book.findUnique.mockResolvedValue(restrictedBook);
+    it('throws NotFoundException when the book is missing', async () => {
+      prisma.book.findUnique.mockResolvedValue(null);
+      await expect(service.streamPdf('book-1', 'user-1')).rejects.toThrow(NotFoundException);
+      expect(blob.streamPdf).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when a readable book has no stored original', async () => {
+      prisma.book.findUnique.mockResolvedValue({ ...readableBook, blobPath: null });
+      await expect(service.streamPdf('book-1', 'user-1')).rejects.toThrow(NotFoundException);
+      expect(blob.streamPdf).not.toHaveBeenCalled();
+    });
+
+    it('rejects a DRAFT book through the shared reader gate', async () => {
+      prisma.book.findUnique.mockResolvedValue({ ...readableBook, status: 'DRAFT' });
+      await expect(service.streamPdf('book-1', 'user-1')).rejects.toThrow(ForbiddenException);
+      expect(blob.streamPdf).not.toHaveBeenCalled();
+    });
+
+    it('rejects a book whose conversion is not READY', async () => {
+      prisma.book.findUnique.mockResolvedValue({ ...readableBook, conversionStatus: 'PENDING' });
+      await expect(service.streamPdf('book-1', 'user-1')).rejects.toThrow(ForbiddenException);
+      expect(blob.streamPdf).not.toHaveBeenCalled();
+    });
+
+    it('checks bookAccess when the book is RESTRICTED and the user is not the creator', async () => {
+      prisma.book.findUnique.mockResolvedValue({ ...readableBook, accessLevel: 'RESTRICTED' });
       prisma.bookAccess.findUnique.mockResolvedValue({ id: 'access-1' });
       const mockStream = { pipe: jest.fn() };
       blob.streamPdf.mockResolvedValue(mockStream);
@@ -387,40 +391,15 @@ describe('BooksService', () => {
       });
     });
 
-    it('should allow streaming when a bookAccess row exists', async () => {
-      const restrictedBook = {
-        ...mockBook,
-        accessLevel: 'RESTRICTED',
-        blobPath: 'books/book-1/test.pdf',
-      };
-      prisma.book.findUnique.mockResolvedValue(restrictedBook);
-      prisma.bookAccess.findUnique.mockResolvedValue({ id: 'access-1' });
-      const mockStream = { pipe: jest.fn() };
-      blob.streamPdf.mockResolvedValue(mockStream);
-      const result = await service.streamPdf('book-1', 'user-2');
-      expect(result).toEqual(mockStream);
-    });
-
-    it('should throw ForbiddenException for RESTRICTED book without access', async () => {
-      const restrictedBook = {
-        ...mockBook,
-        accessLevel: 'RESTRICTED',
-        blobPath: 'books/book-1/test.pdf',
-      };
-      prisma.book.findUnique.mockResolvedValue(restrictedBook);
+    it('rejects a RESTRICTED book without an access row', async () => {
+      prisma.book.findUnique.mockResolvedValue({ ...readableBook, accessLevel: 'RESTRICTED' });
       prisma.bookAccess.findUnique.mockResolvedValue(null);
-      await expect(service.streamPdf('book-1', 'user-2')).rejects.toThrow(
-        ForbiddenException,
-      );
+      await expect(service.streamPdf('book-1', 'user-2')).rejects.toThrow(ForbiddenException);
+      expect(blob.streamPdf).not.toHaveBeenCalled();
     });
 
-    it('should allow the creator to stream a RESTRICTED book', async () => {
-      const restrictedBook = {
-        ...mockBook,
-        accessLevel: 'RESTRICTED',
-        blobPath: 'books/book-1/test.pdf',
-      };
-      prisma.book.findUnique.mockResolvedValue(restrictedBook);
+    it('allows the creator to stream a RESTRICTED book without an access lookup', async () => {
+      prisma.book.findUnique.mockResolvedValue({ ...readableBook, accessLevel: 'RESTRICTED' });
       const mockStream = { pipe: jest.fn() };
       blob.streamPdf.mockResolvedValue(mockStream);
       const result = await service.streamPdf('book-1', 'user-1');
@@ -723,6 +702,90 @@ describe('BooksService', () => {
       await expect(
         localService.uploadBookFile('book-1', Buffer.from('nope'), 'user-1', UserRole.MEMBER),
       ).rejects.toThrow(/not a PDF or EPUB/);
+    });
+
+    it('rejects an EPUB before storing or enqueueing', async () => {
+      const localPrisma = {
+        book: { findUnique: jest.fn().mockResolvedValue({ id: 'book-1', createdById: 'user-1' }), update: jest.fn() },
+        bookConversionJob: { create: jest.fn() },
+        bookAccess: { findUnique: jest.fn() },
+        $transaction: jest.fn(),
+      };
+      const localStorage = { put: jest.fn() };
+      const localService = new BooksService(localPrisma as never, {} as never, localStorage as never);
+      const epub = Buffer.concat([Buffer.from('PK\u0003\u0004'), Buffer.from('application/epub+zip')]);
+
+      await expect(
+        localService.uploadBookFile('book-1', epub, 'user-1', UserRole.MEMBER),
+      ).rejects.toThrow(/EPUB support is coming in the next release/);
+      expect(localStorage.put).not.toHaveBeenCalled();
+      expect(localPrisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── retryConversion ────────────────────────────────────────────────────────
+
+  describe('retryConversion', () => {
+    it('atomically flips a FAILED book to PENDING and enqueues a job', async () => {
+      const tx = {
+        book: { update: jest.fn().mockResolvedValue({ id: 'book-1', conversionStatus: 'PENDING' }) },
+        bookConversionJob: { create: jest.fn().mockResolvedValue({ id: 'job-1' }) },
+      };
+      const localPrisma = {
+        book: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'book-1',
+            conversionStatus: 'FAILED',
+            blobPath: 'books/book-1/original.pdf',
+          }),
+        },
+        bookConversionJob: { create: jest.fn() },
+        $transaction: jest.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
+      };
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+
+      const result = await localService.retryConversion('book-1');
+
+      expect(localPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(tx.book.update).toHaveBeenCalledWith({
+        where: { id: 'book-1' },
+        data: { conversionStatus: 'PENDING', conversionError: null },
+      });
+      expect(tx.bookConversionJob.create).toHaveBeenCalledWith({ data: { bookId: 'book-1', status: 'PENDING' } });
+      expect(result).toMatchObject({ conversionStatus: 'PENDING' });
+    });
+
+    it('rejects a READY book without touching the database', async () => {
+      const localPrisma = {
+        book: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'book-1', conversionStatus: 'READY', blobPath: 'x' }),
+        },
+        $transaction: jest.fn(),
+      };
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      await expect(localService.retryConversion('book-1')).rejects.toThrow(/failed conversion/i);
+      expect(localPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects a file-less seeded book without enqueueing', async () => {
+      const localPrisma = {
+        book: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'book-1', conversionStatus: 'FAILED', blobPath: null }),
+        },
+        $transaction: jest.fn(),
+      };
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      await expect(localService.retryConversion('book-1')).rejects.toThrow(/no stored original/i);
+      expect(localPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException for a missing book', async () => {
+      const localPrisma = {
+        book: { findUnique: jest.fn().mockResolvedValue(null) },
+        $transaction: jest.fn(),
+      };
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      await expect(localService.retryConversion('book-1')).rejects.toThrow(NotFoundException);
     });
   });
 

@@ -2,7 +2,6 @@ import { Resolver, Query, Mutation, Args, ResolveField, Parent } from '@nestjs/g
 import { UseGuards, BadRequestException } from '@nestjs/common';
 import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { BooksService, ReadableBookFacts } from './books.service.js';
-import { ConversionJobService } from './conversion/conversion-job.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import {
@@ -14,10 +13,7 @@ import { GraphQLUpload, FileUpload } from 'graphql-upload-ts';
 
 @Resolver(() => Book)
 export class BooksResolver {
-  constructor(
-    private readonly booksService: BooksService,
-    private readonly conversionJobs: ConversionJobService,
-  ) {}
+  constructor(private readonly booksService: BooksService) {}
 
   @Query(() => [Book], { name: 'books' })
   @UseGuards(JwtAuthGuard)
@@ -62,8 +58,7 @@ export class BooksResolver {
     @Args('bookId') bookId: string,
   ) {
     await this.booksService.assertCanManageBookPublic(bookId, user.id, user.role);
-    await this.booksService.setConversionPending(bookId);
-    await this.conversionJobs.enqueue(bookId);
+    await this.booksService.retryConversion(bookId);
     return this.booksService.findById(bookId);
   }
 

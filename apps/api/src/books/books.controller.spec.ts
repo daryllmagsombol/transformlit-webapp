@@ -42,13 +42,17 @@ describe('BooksController', () => {
 
   it('rejects page requests without a session cookie', async () => {
     const { controller } = build();
-    await expect(controller.getText('book-1', 1, { cookies: {} } as never)).rejects.toThrow(/session/i);
+    await expect(
+      controller.getText('book-1', 1, { cookies: {} } as never, { setHeader: jest.fn() } as never),
+    ).rejects.toThrow(/session/i);
   });
 
   it('rejects a session that belongs to a different book', async () => {
     const { controller, sessions } = build();
     sessions.resolve.mockResolvedValue({ sessionId: 's', userId: 'u', bookId: 'other-book' });
-    await expect(controller.getText('book-1', 1, withCookie)).rejects.toThrow(/session/i);
+    await expect(
+      controller.getText('book-1', 1, withCookie, { setHeader: jest.fn() } as never),
+    ).rejects.toThrow(/session/i);
   });
 
   it('serves a page frame as image bytes with hardened headers', async () => {
@@ -76,8 +80,22 @@ describe('BooksController', () => {
     storage.getBuffer.mockResolvedValue(Buffer.from('{"items":[]}'));
     await controller.getFrame('book-1', 1, withCookie, { setHeader: jest.fn(), type: jest.fn(), send: jest.fn() } as never);
     expect(views.record).toHaveBeenCalledTimes(1);
-    await controller.getText('book-1', 1, withCookie);
+    await controller.getText('book-1', 1, withCookie, { setHeader: jest.fn() } as never);
     expect(views.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('hardens the page text response with no-store headers', async () => {
+    const getPageRecord = jest.fn().mockResolvedValue({ assetKey: 'k', textKey: 't', mimeType: 'image/png' });
+    const { controller, sessions, storage } = build({ getPageRecord });
+    sessions.resolve.mockResolvedValue(session);
+    storage.getBuffer.mockResolvedValue(Buffer.from('{"items":[]}'));
+    const res = { setHeader: jest.fn() };
+
+    await expect(controller.getText('book-1', 1, withCookie, res as never)).resolves.toEqual({ items: [] });
+
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store, private');
+    expect(res.setHeader).toHaveBeenCalledWith('Vary', 'Cookie');
+    expect(res.setHeader).toHaveBeenCalledWith('X-Content-Type-Options', 'nosniff');
   });
 
   it('does not fail a page read when analytics rejects', async () => {

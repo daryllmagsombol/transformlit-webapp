@@ -94,12 +94,23 @@ export class BooksController {
   @Get(':id/pages/:n/text')
   @UseGuards(ThrottlerGuard)
   @Throttle(PAGE_RATE_LIMIT)
-  async getText(@Param('id') bookId: string, @Param('n', ParseIntPipe) page: number, @Req() req: Request) {
+  async getText(
+    @Param('id') bookId: string,
+    @Param('n', ParseIntPipe) page: number,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     await this.authorizePage(bookId, page, req);
     const record = await this.books.getPageRecord(bookId, page);
     if (!record?.textKey) throw new NotFoundException('Page text not found');
     const buffer = await this.storage.getBuffer(record.textKey);
     if (!buffer) throw new NotFoundException('Page text missing');
+
+    // Match the frame endpoint: page text is session-scoped and must never be
+    // cached by URL alone (`Vary: Cookie` keeps shared/CDN caches honest).
+    res.setHeader('Cache-Control', 'no-store, private');
+    res.setHeader('Vary', 'Cookie');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     return JSON.parse(buffer.toString()) as { items: Array<{ t: string; x: number; y: number; w: number; h: number }> };
   }
 

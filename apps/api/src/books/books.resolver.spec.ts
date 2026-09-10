@@ -4,7 +4,6 @@ import { BadRequestException } from '@nestjs/common';
 import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { BooksResolver } from './books.resolver';
 import { BooksService } from './books.service';
-import { ConversionJobService } from './conversion/conversion-job.service';
 
 const mockBook = {
   id: 'book-1',
@@ -79,7 +78,6 @@ describe('BooksResolver', () => {
       providers: [
         BooksResolver,
         { provide: BooksService, useValue: mockBooksService },
-        { provide: ConversionJobService, useValue: { enqueue: jest.fn() } },
       ],
     }).compile();
 
@@ -297,7 +295,6 @@ describe('BooksResolver', () => {
       };
       const gatedResolver = new BooksResolver(
         new BooksService(prisma as never, {} as never, {} as never),
-        {} as never,
       );
 
       // A DRAFT book must return no entries even though the query does not
@@ -327,7 +324,6 @@ describe('BooksResolver', () => {
       };
       const gatedResolver = new BooksResolver(
         new BooksService(prisma as never, {} as never, {} as never),
-        {} as never,
       );
       const parent = {
         id: 'book-1',
@@ -343,16 +339,17 @@ describe('BooksResolver', () => {
       expect(prisma.bookAccess.findUnique).not.toHaveBeenCalled();
     });
 
-    it('retries conversion via the job service', async () => {
+    it('retries a failed conversion atomically and returns the refreshed book', async () => {
       const service = {
         assertCanManageBookPublic: jest.fn().mockResolvedValue(undefined),
-        setConversionPending: jest.fn().mockResolvedValue(undefined),
+        retryConversion: jest.fn().mockResolvedValue({ id: 'book-1', conversionStatus: 'PENDING' }),
         findById: jest.fn().mockResolvedValue({ id: 'book-1' }),
       };
-      const jobs = { enqueue: jest.fn().mockResolvedValue(undefined) };
-      const localResolver = new BooksResolver(service as never, jobs as never);
+      const localResolver = new BooksResolver(service as never);
       await localResolver.retryBookConversion({ id: 'user-1', role: UserRole.ADMIN }, 'book-1');
-      expect(jobs.enqueue).toHaveBeenCalledWith('book-1');
+      expect(service.assertCanManageBookPublic).toHaveBeenCalledWith('book-1', 'user-1', UserRole.ADMIN);
+      expect(service.retryConversion).toHaveBeenCalledWith('book-1');
+      expect(service.findById).toHaveBeenCalledWith('book-1');
     });
   });
 });
