@@ -1,8 +1,8 @@
 # Secure Ebook Reader — Design Spec
 
 **Date:** 2026-09-10
-**Status:** Draft — pending user review
-**Scope:** In-app ebook reader for PDF and EPUB with piracy-minded protection: page-by-page delivery, per-user watermarking, reading sessions, rate limiting, annotations (bookmarks/highlights), ToC navigation, page jumping, reading modes and reading settings.
+**Status:** Approved (2026-09-10; watermarking removed per product decision)
+**Scope:** In-app ebook reader for PDF and EPUB with piracy-minded protection: page-by-page delivery, reading sessions, audit logging, rate limiting, annotations (bookmarks/highlights), ToC navigation, page jumping, reading modes and reading settings.
 
 ---
 
@@ -14,13 +14,13 @@ This spec defines the reader end to end: content ingestion and conversion, prote
 
 ### Honest guarantee (read this first)
 
-The product goal is **deterrence plus accountability for paid-book piracy**, not DRM. What this design *does* deliver:
+The product goal is **deterrence for paid-book piracy**, not DRM. What this design *does* deliver:
 
 - No one-click whole-book download. The raw PDF/EPUB is never reachable from a browser; content is served page by page through authenticated endpoints with no public URLs.
-- Every served PDF page is watermarked with the reader's identity; every page view is audit-logged. A leaked page or screenshot traces to the account that viewed it.
-- Scraping is rate-limited and flagged; sessions are short-lived and revocable.
+- Every page view is audit-logged (user, book, page, session, time); sessions are short-lived and revocable.
+- Scraping is rate-limited and flagged.
 
-What it *cannot* deliver, and the spec does not pretend otherwise: a determined user can still capture pages one at a time (devtools, screenshots, screen recording, access to their own session). "Cannot download the book" means "no bulk download, every copy is traceable."
+What it *cannot* deliver, and the spec does not pretend otherwise: a determined user can capture pages one at a time (devtools, screenshots, screen recording, their own session). With no watermark, leaked captures cannot be attributed to a specific account — protection is access control, friction, and rate limits, not traceability. Attribution can be added later by compositing at the frame endpoint if it becomes a requirement.
 
 ---
 
@@ -35,7 +35,7 @@ What it *cannot* deliver, and the spec does not pretend otherwise: a determined 
 - **Page authentication uses a scoped reading-session cookie.** The access token is header-only and memory-only, and `<img src>` cannot send headers; the CSP (`next.config.ts:28`) does not allow `blob:` images. `POST /books/:id/reading-session` (Bearer-authed) sets a short-lived, httpOnly, `SameSite=Strict`, read-only cookie scoped to the books path; pages then load as plain `<img src>` / `fetch`. All mutating operations stay on the Bearer path, so the cookie is CSRF-irrelevant. Tokens never appear in URLs, referrers, or logs.
 - **EPUB content is never served as `text/html`.** Sanitized fragments are returned as JSON strings and rendered through a sanitize→AST→React path (`rehype-sanitize`/`hast-to-react` or equivalent). Never `innerHTML`. This closes the stored-XSS vector on the app origin, whose CSP allows `'unsafe-inline'` (`next.config.ts:19`).
 - **`next/image` is forbidden for protected content** — the optimizer proxies and caches bytes under a stable app-origin URL. Raw `<img>` only; a test enforces no `/_next/image` usage for book pages.
-- **Watermark:** per-user, applied server-side. PDF pages are composited at serve time (cached per user+book+page+contentVersion for a short TTL, since the mark is identity-stable, not time-stable — the audit log carries "when"). EPUB fragments get watermark markup injected server-side at serve time (weaker guarantee than baked pixels — documented limitation). Visible watermark only for v1; steganographic text marking is a v2 candidate.
+- **No watermark (product decision, 2026-09-10):** the same rendered page is served to every entitled reader. Frames are immutable per `contentVersion` and streamed straight from storage — no per-request compositing and no `sharp` dependency. Accountability comes from `ReadingSession` + `PageView` audit logs, not page attribution. (If attribution is ever required, per-user compositing can be re-added at the frame endpoint without schema changes.)
 - **EPUB pagination (revised):** server-defined fixed pages. The client never decides pagination. Font size = whole-page zoom so pagination never drifts. A "page" is a deterministic content chunk, so visual fill varies slightly by device — accepted trade-off for stable page numbers.
 - **Canonical annotation anchors are locators, not rects.** `{ pageIndex, start, end, prefix, suffix, textHash, rects? }`, with `contentVersion` stored in its own column (single source of truth — not duplicated inside the JSON). `start`/`end` are **word-index ranges for PDF** (from the server's word boxes) and **character offsets within the page fragment for EPUB**. `rects` are cached render hints only. `Bookmark` gains an anchor too (page N alone drifts under re-conversion).
 - **Seeded/legacy books:** `format` and conversion statuses are nullable/`NOT_APPLICABLE` so the four seeded books (no `blobPath`, `totalPages` set) do not advertise a reader that can never open. The Read affordance is gated on `conversionStatus = READY`.
@@ -232,7 +232,7 @@ Rate limiting: `ThrottlerModule` wired **per-route** (not globally), tracker key
 Grounded in `docs/DESIGN_SYSTEM.md` and the existing bible-reader patterns; full interaction inventory retained from the approved design.
 
 - **Route:** `(reader)/books/[id]/read` — a new immersive route group (the repo's first outside `(app)`) with a minimal layout (Apollo + Toast providers, `useRequireAuth()`); no app TopBar/Sidebar/BottomNav. Reachable from the books list Read button (`books-client.tsx:131`) and the resume card.
-- **Regions:** `ReaderTopBar` (back, title, page indicator, mode toggle, panel triggers, auto-hide), `PageViewport`, mobile `ReaderBottomBar`, `TocPanel`, `AnnotationsPanel` (Bookmarks/Highlights tabs), `SettingsSheet`, `PageJump`, `SelectionActionBar`, `WatermarkOverlay`, connection/session banners.
+- **Regions:** `ReaderTopBar` (back, title, page indicator, mode toggle, panel triggers, auto-hide), `PageViewport`, mobile `ReaderBottomBar`, `TocPanel`, `AnnotationsPanel` (Bookmarks/Highlights tabs), `SettingsSheet`, `PageJump`, `SelectionActionBar`, connection/session banners.
 - **Responsive:** mobile → single page, panels as bottom sheets (existing `Sheet`); tablet → single page + right-side overlay panels; desktop → dockable ToC (280 px) + Annotations (320 px).
 - **Modes:** paged (default) and continuous scroll; ≤5 pages in memory; prefetch current ±1 (scroll: ±2 render). No whole-book fetch, no IndexedDB, no service worker for content.
 - **Features:** page number + jump; ToC→page; bookmarks (toggle/list/jump); highlights (select → action bar → color/note; no copy affordance); reading settings (theme light/dark/sepia/warm-paper scoped via `data-reader-theme`, page-zoom font size); single-page layout only in v1 (two-page spread is deferred — see Non-Goals); progress auto-save (debounced, on page settle, on tab hide) and resume chip consistent with the bible reader; URL state `?page=` + `#a{id}`/`#b{id}` for deep-linkable annotations.
@@ -248,10 +248,9 @@ Grounded in `docs/DESIGN_SYSTEM.md` and the existing bible-reader patterns; full
 - **Spikes first (before schema freeze):**
   1. PDF render: pinned `pdfjs-dist` + `@napi-rs/canvas`, 300+ page PDF → WebP + word boxes; memory/throughput in the target runtime (musl/arm64 if containerized).
   2. EPUB determinism: real EPUBs → `locations.generate()` chunking → stable page fragments + ToC mapping.
-  3. Watermark throughput: sharp per-page composite cost, cache-TTL strategy validation.
-  4. Job model: DB queue claim/retry under load; separate process vs `worker_threads`.
-  5. Page auth: reading-session cookie across dev (3000→3005, same-site localhost) and CSP `img-src` dev addition.
-- **API unit (Jest):** conversion state machine, entitlement + soft-delete checks on every endpoint, session issue/expire/revoke, throttle tracker, watermark composer, storage adapter (local), anchor resolution/re-anchoring.
+  3. Job model: DB queue claim/retry under load; separate process vs `worker_threads`.
+  4. Page auth: reading-session cookie across dev (3000→3005, same-site localhost) and CSP `img-src` dev addition.
+- **API unit (Jest):** conversion state machine, entitlement + soft-delete checks on every endpoint, session issue/expire/revoke, throttle tracker, storage adapter (local), anchor resolution/re-anchoring.
 - **API integration (testcontainers, existing pattern):** upload → job → convert → serve page; user isolation; **security tests**: no endpoint ever returns the raw file or storage key; soft-deleted/PUBLISHED/DRAFT gating; XSS corpus (script/onerror/SVG/mXSS/style-url) sanitized; zip-bomb/traversal rejection.
 - **Conversion golden tests:** sample PDF + EPUB fixtures → page counts, dimensions, text presence, sanitizer output snapshots.
 - **Web unit (Jest + RTL):** reader store, prefetch window, keyboard map, progress debounce, both page renderers, no-`/_next/image` assertion for protected content.
@@ -259,15 +258,15 @@ Grounded in `docs/DESIGN_SYSTEM.md` and the existing bible-reader patterns; full
 
 ## Build Order
 
-Spikes → schema + shared enums → StorageAdapter (+ refactor `BlobService`) → conversion worker (PDF) → REST delivery + reading session + throttler → reader shell (PDF, paged) → annotations → EPUB pipeline + fixed pages → settings/scroll/spread → hardening (watermark serving, EPUB assets, orphan UX, retry/admin, retention sweep) → verification throughout.
+Spikes → schema + shared enums → StorageAdapter (+ refactor `BlobService`) → conversion worker (PDF) → REST delivery + reading session + throttler → reader shell (PDF, paged) → annotations → EPUB pipeline + fixed pages → settings/scroll/spread → hardening (EPUB assets, orphan UX, retry/admin, retention sweep) → verification throughout.
 
 ## Non-Goals (v1)
 
-Purchase/grant flow (restricted books still rely on manual `BookAccess` rows; the Buy button stays a stub), two-page spread pairing polish (ship single page first), offline/IndexedDB caching, steganographic EPUB text marking, multi-replica throttling store, admin download endpoint for originals, bulk-scrape ML detection (throttle + audit only).
+Purchase/grant flow (restricted books still rely on manual `BookAccess` rows; the Buy button stays a stub), two-page spread pairing polish (ship single page first), offline/IndexedDB caching, per-user watermarking (removed per product decision; revisit if attribution is required), multi-replica throttling store, admin download endpoint for originals, bulk-scrape ML detection (throttle + audit only).
 
 ## Open Risks
 
-- EPUB text is intrinsically copyable; the EPUB guarantee is weaker than PDF's baked-pixel watermark. Rasterizing EPUB would equalize it at the cost of text selection and a heavy worker — deferred.
+- Without a watermark, leaked captures cannot be attributed to an account. Audit logs (`PageView`) record sessions/pages/times but not pixels; re-adding per-user compositing at the frame endpoint is the recovery path if attribution becomes a requirement.
+- EPUB text is intrinsically copyable; with no watermark, a captured EPUB page is clean text. If this matters later, the options are rasterizing EPUB pages (loses text selection) or server-side watermark markup.
 - Cross-browser CSS differences are now contained (server-defined pages), but `.epub` publisher styles are stripped; some books may look plainer than their original design.
-- `sharp` wraps libvips (LGPL-3.0, dynamically linked) — confirm bundling policy with legal during implementation; low risk.
-- Every served page that misses the user+page cache costs a decode/composite/encode. Prefetch and the short-TTL cache mitigate; monitor in the spike.
+- Frame serving is a straight storage read (immutable per `contentVersion`); monitor storage throughput and confirm proxies never strip `no-store`.
