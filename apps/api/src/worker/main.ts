@@ -26,8 +26,14 @@ async function bootstrap(): Promise<void> {
   while (running) {
     if (Date.now() - lastSweep > STALE_SWEEP_INTERVAL_MS) {
       lastSweep = Date.now();
-      const requeued = await jobs.requeueStale(15 * 60 * 1000);
-      if (requeued > 0) logger.warn(`Requeued ${requeued} stale conversion job(s)`);
+      try {
+        const requeued = await jobs.requeueStale(15 * 60 * 1000);
+        if (requeued > 0) logger.warn(`Requeued ${requeued} stale conversion job(s)`);
+      } catch (error) {
+        // A transient DB error must not kill the worker; retry on the next sweep.
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`Stale conversion sweep failed: ${message}`);
+      }
     }
     const worked = await runner.runOnce().catch((error: Error) => {
       logger.error(`Worker loop error: ${error.message}`);

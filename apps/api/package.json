@@ -7,7 +7,7 @@
     "dev": "nest start --watch",
     "start": "nest start",
     "start:prod": "node dist/main",
-    "worker:dev": "tsx watch src/worker/main.ts",
+    "worker:dev": "nest start --watch --entryFile worker/main",
     "worker:start": "node dist/worker/main.js",
     "lint": "eslint \"src/**/*.ts\"",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
