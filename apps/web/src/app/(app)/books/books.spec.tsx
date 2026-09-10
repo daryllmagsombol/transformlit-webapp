@@ -379,7 +379,30 @@ describe('BooksClient', () => {
   });
 
   describe('read and buy actions', () => {
-    it('shows info toast when read button is clicked', async () => {
+    it('opens the reader when a read button is clicked', async () => {
+      mockQuery.mockResolvedValueOnce({
+        data: {
+          books: [
+            {
+              id: 'book-1',
+              title: 'Sample',
+              accessLevel: 'FREE',
+              status: 'PUBLISHED',
+              conversionStatus: 'READY',
+              pageCount: 10,
+              coverUrl: null,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+      });
+      render(<BooksClient />);
+      const readButton = await screen.findByTestId('read-btn');
+      fireEvent.click(readButton);
+      expect(mockPush).toHaveBeenCalledWith('/books/book-1/read');
+    });
+
+    it('shows a preparing toast when a book is not ready', async () => {
       mockQuery.mockResolvedValueOnce({
         data: {
           books: [
@@ -396,7 +419,7 @@ describe('BooksClient', () => {
 
       fireEvent.click(screen.getByTestId('read-btn'));
 
-      expect(mockAddToast).toHaveBeenCalledWith('Reader opening soon.', 'info');
+      expect(mockAddToast).toHaveBeenCalledWith('This book is still being prepared.', 'info');
     });
 
     it('shows info toast when buy button is clicked', async () => {

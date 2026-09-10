@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { gql } from '@apollo/client';
+import { useRouter } from 'next/navigation';
 import type { GraphQLBook } from '@transformlit/shared';
 import {
   useToast,
@@ -27,7 +28,9 @@ const BOOKS_QUERY = gql`
       currency
       accessLevel
       status
+      conversionStatus
       totalPages
+      pageCount
       publishedAt
       createdAt
     }
@@ -82,6 +85,7 @@ function formatPrice(book: GraphQLBook): number {
 export default function BooksClient() {
   const { isReady } = useRequireAuth();
   const { addToast } = useToast();
+  const push = useRouter().push;
 
   const [books, setBooks] = useState<GraphQLBook[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,7 +132,23 @@ export default function BooksClient() {
     addToast('Paid books coming soon.', 'info');
   }, [addToast]);
 
-  const handleRead = useCallback(() => {
+  const handleRead = useCallback(
+    (book?: { id: string; conversionStatus?: string }) => {
+      if (!book) {
+        addToast('Reader opening soon.', 'info');
+        return;
+      }
+      if (book.conversionStatus !== 'READY') {
+        addToast('This book is still being prepared.', 'info');
+        return;
+      }
+      push(`/books/${book.id}/read`);
+    },
+    [addToast, push],
+  );
+
+  // Placeholder actions (resume card + FAB) are not wired to real books yet.
+  const handleComingSoon = useCallback(() => {
     addToast('Reader opening soon.', 'info');
   }, [addToast]);
 
@@ -182,7 +202,7 @@ export default function BooksClient() {
             <BookCard
               key={book.id}
               book={book}
-              onRead={handleRead}
+              onRead={() => handleRead(book)}
               onBuy={handleBuy}
             />
           ))}
@@ -243,7 +263,7 @@ export default function BooksClient() {
                 author={book.author}
                 currentPage={book.currentPage}
                 totalPages={book.totalPages}
-                onContinue={handleRead}
+                onContinue={handleComingSoon}
               />
             ))}
           </div>
@@ -304,7 +324,7 @@ export default function BooksClient() {
           ═══════════════════════════════════════════════════════════ */}
       <div className="fixed bottom-24 right-6 md:bottom-10 md:right-10 z-50">
         <button
-          onClick={handleRead}
+          onClick={handleComingSoon}
           className="w-14 h-14 bg-brand-orange-dark text-on-primary rounded-full shadow-lg flex items-center justify-center active:scale-90 transition-transform group"
           aria-label="Track reading progress"
         >
