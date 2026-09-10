@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Inject,
+  Logger,
   NotFoundException,
   Param,
   ParseIntPipe,
@@ -28,6 +29,8 @@ const PAGE_RATE_LIMIT = { default: { limit: 90, ttl: 60000 } };
 
 @Controller('books')
 export class BooksController {
+  private readonly logger = new Logger(BooksController.name);
+
   constructor(
     private readonly books: BooksService,
     private readonly sessions: ReaderSessionService,
@@ -45,12 +48,13 @@ export class BooksController {
   ) {
     await this.books.assertCanRead(bookId, req.user.id);
     const token = await this.sessions.create(req.user.id, bookId);
+    // Browser-session cookie: the server slides `expiresAt`, so a fixed
+    // `maxAge` here would expire the cookie before the session does.
     res.cookie(READER_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: 'strict',
       secure: process.env.NODE_ENV === 'production',
       path: '/books',
-      maxAge: READER_SESSION_TTL_MS,
     });
     return { expiresInMs: READER_SESSION_TTL_MS };
   }
@@ -64,12 +68,20 @@ export class BooksController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    await this.authorizePage(bookId, page, req);
+    const { book, session } = await this.authorizePage(bookId, page, req);
     const record = await this.books.getPageRecord(bookId, page);
     if (!record?.assetKey) throw new NotFoundException('Page not found');
 
     const buffer = await this.storage.getBuffer(record.assetKey);
     if (!buffer) throw new NotFoundException('Page asset missing');
+
+    // Analytics is best-effort: a recording failure must never break (or delay)
+    // a legitimate page read. Only the frame marks a page turn.
+    this.pageViews
+      .record(session, page, book.contentVersion)
+      .catch((error: Error) =>
+        this.logger.warn(`Failed to record page view for book ${bookId} page ${page}: ${error.message}`),
+      );
 
     res.setHeader('Cache-Control', 'no-store, private');
     res.setHeader('Vary', 'Cookie');
@@ -100,7 +112,6 @@ export class BooksController {
     }
     const book = await this.books.assertCanRead(bookId, session.userId);
     if (!book.pageCount || page < 1 || page > book.pageCount) throw new NotFoundException('Page out of range');
-    await this.pageViews.record(session, page, book.contentVersion);
-    return book;
+    return { book, session };
   }
 }
