@@ -19,4 +19,4 @@ USER node
 ENV NODE_ENV=production
 EXPOSE 3005
 
-CMD ["node", "apps/api/dist/src/main.js"]
+CMD ["node", "apps/api/dist/main.js"]
