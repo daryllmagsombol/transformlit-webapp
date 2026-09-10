@@ -9,7 +9,6 @@ import { BooksService } from './books.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlobService } from '../azure/blob.service';
 import { STORAGE_ADAPTER } from '../storage/storage-adapter';
-import { ConversionJobService } from './conversion/conversion-job.service';
 import { buildTestPdf } from '../../test/fixtures/build-pdf';
 import { BookAccessLevel, UserRole } from '@transformlit/shared';
 
@@ -66,7 +65,6 @@ describe('BooksService', () => {
   let prisma: any;
   let blob: any;
   let storage: any;
-  let jobs: any;
 
   beforeEach(async () => {
     const mockPrisma = {
@@ -93,6 +91,10 @@ describe('BooksService', () => {
         create: jest.fn().mockResolvedValue(mockHighlight),
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      bookConversionJob: {
+        create: jest.fn().mockResolvedValue({ id: 'job-1' }),
+      },
+      $transaction: jest.fn(),
     };
 
     const mockBlob = {
@@ -104,17 +106,12 @@ describe('BooksService', () => {
       put: jest.fn().mockResolvedValue(undefined),
     };
 
-    const mockJobs = {
-      enqueue: jest.fn().mockResolvedValue(undefined),
-    };
-
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BooksService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: BlobService, useValue: mockBlob },
         { provide: STORAGE_ADAPTER, useValue: mockStorage },
-        { provide: ConversionJobService, useValue: mockJobs },
       ],
     }).compile();
 
@@ -122,7 +119,6 @@ describe('BooksService', () => {
     prisma = module.get(PrismaService);
     blob = module.get(BlobService);
     storage = module.get(STORAGE_ADAPTER);
-    jobs = module.get(ConversionJobService);
     jest.clearAllMocks();
 
     prisma.book.findMany.mockResolvedValue([]);
@@ -140,6 +136,9 @@ describe('BooksService', () => {
     prisma.highlight.deleteMany.mockResolvedValue({ count: 1 });
     blob.uploadPdf.mockResolvedValue('https://blob/book-1/test.pdf');
     blob.streamPdf.mockResolvedValue({ pipe: jest.fn() });
+    prisma.$transaction.mockImplementation(async (fn: (client: any) => Promise<unknown>) =>
+      fn({ book: prisma.book, bookConversionJob: prisma.bookConversionJob }),
+    );
   });
 
   // ── listBooks ──────────────────────────────────────────────────────────────
@@ -672,21 +671,25 @@ describe('BooksService', () => {
   // ── uploadBookFile ─────────────────────────────────────────────────────────
 
   describe('uploadBookFile', () => {
-    it('stores the original, sets format and PENDING, and enqueues conversion', async () => {
+    it('stores the original and atomically sets format/PENDING with the conversion job', async () => {
+      const tx = {
+        book: { update: jest.fn().mockResolvedValue({ id: 'book-1', format: 'PDF', conversionStatus: 'PENDING' }) },
+        bookConversionJob: { create: jest.fn().mockResolvedValue({ id: 'job-1' }) },
+      };
       const localPrisma = {
         book: {
           findUnique: jest.fn().mockResolvedValue({ id: 'book-1', createdById: 'user-1' }),
-          update: jest.fn().mockResolvedValue({ id: 'book-1', format: 'PDF', conversionStatus: 'PENDING' }),
+          update: jest.fn(),
         },
+        bookConversionJob: { create: jest.fn() },
         bookAccess: { findUnique: jest.fn() },
+        $transaction: jest.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
       };
       const localStorage = { put: jest.fn().mockResolvedValue(undefined) };
-      const localJobs = { enqueue: jest.fn().mockResolvedValue(undefined) };
       const localService = new BooksService(
         localPrisma as never,
         { streamPdf: jest.fn(), uploadPdf: jest.fn() } as never,
         localStorage as never,
-        localJobs as never,
       );
 
       const result = await localService.uploadBookFile('book-1', buildTestPdf(['Hello']), 'user-1', UserRole.MEMBER);
@@ -696,7 +699,14 @@ describe('BooksService', () => {
         expect.any(Buffer),
         'application/pdf',
       );
-      expect(localJobs.enqueue).toHaveBeenCalledWith('book-1');
+      expect(localPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(tx.book.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'book-1' },
+          data: expect.objectContaining({ format: 'PDF', conversionStatus: 'PENDING', status: 'PUBLISHED' }),
+        }),
+      );
+      expect(tx.bookConversionJob.create).toHaveBeenCalledWith({ data: { bookId: 'book-1', status: 'PENDING' } });
       expect(result.format).toBe('PDF');
     });
 
@@ -709,7 +719,6 @@ describe('BooksService', () => {
         localPrisma as never,
         {} as never,
         { put: jest.fn() } as never,
-        { enqueue: jest.fn() } as never,
       );
       await expect(
         localService.uploadBookFile('book-1', Buffer.from('nope'), 'user-1', UserRole.MEMBER),
@@ -724,19 +733,19 @@ describe('BooksService', () => {
 
     it('allows a free, published, ready book', async () => {
       const localPrisma = { book: { findUnique: jest.fn().mockResolvedValue(base) }, bookAccess: { findUnique: jest.fn() } };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
       await expect(localService.assertCanRead('book-1', 'user-1')).resolves.toMatchObject({ id: 'book-1' });
     });
 
     it('rejects a deleted book', async () => {
       const localPrisma = { book: { findUnique: jest.fn().mockResolvedValue({ ...base, deletedAt: new Date() }) }, bookAccess: { findUnique: jest.fn() } };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
       await expect(localService.assertCanRead('book-1', 'user-1')).rejects.toThrow(/not available/);
     });
 
     it('rejects a book that is still converting', async () => {
       const localPrisma = { book: { findUnique: jest.fn().mockResolvedValue({ ...base, conversionStatus: 'PENDING' }) }, bookAccess: { findUnique: jest.fn() } };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
       await expect(localService.assertCanRead('book-1', 'user-1')).rejects.toThrow(/not ready/);
     });
 
@@ -745,7 +754,7 @@ describe('BooksService', () => {
         book: { findUnique: jest.fn().mockResolvedValue({ ...base, accessLevel: 'RESTRICTED' }) },
         bookAccess: { findUnique: jest.fn().mockResolvedValue(null) },
       };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
       await expect(localService.assertCanRead('book-1', 'user-1')).rejects.toThrow(/do not have access/);
     });
 
@@ -754,7 +763,7 @@ describe('BooksService', () => {
         book: { findUnique: jest.fn().mockResolvedValue({ ...base, accessLevel: 'RESTRICTED' }) },
         bookAccess: { findUnique: jest.fn().mockResolvedValue({ id: 'access-1' }) },
       };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
       await expect(localService.assertCanRead('book-1', 'user-1')).resolves.toMatchObject({ id: 'book-1' });
     });
   });

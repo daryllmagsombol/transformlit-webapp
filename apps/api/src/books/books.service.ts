@@ -10,7 +10,6 @@ import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { BlobService } from '../azure/blob.service.js';
 import { STORAGE_ADAPTER, StorageAdapter } from '../storage/storage-adapter.js';
-import { ConversionJobService } from './conversion/conversion-job.service.js';
 import {
   UploadBookInput,
   UpdateBookInput,
@@ -25,7 +24,6 @@ export class BooksService {
     private readonly prisma: PrismaService,
     private readonly blob: BlobService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
-    private readonly conversionJobs: ConversionJobService,
   ) {}
 
   async listBooks() {
@@ -111,19 +109,23 @@ export class BooksService {
     const storageKey = `books/${bookId}/${randomUUID()}.${extension}`;
     await this.storage.put(storageKey, buffer, format === 'PDF' ? 'application/pdf' : 'application/epub+zip');
 
-    const book = await this.prisma.book.update({
-      where: { id: bookId },
-      data: {
-        blobPath: storageKey,
-        format,
-        conversionStatus: 'PENDING',
-        conversionError: null,
-        status: 'PUBLISHED',
-        publishedAt: new Date(),
-      },
+    // Persist the PENDING book and enqueue its conversion job in a single
+    // transaction so a crash can never leave a PENDING book with no job.
+    return this.prisma.$transaction(async (tx) => {
+      const book = await tx.book.update({
+        where: { id: bookId },
+        data: {
+          blobPath: storageKey,
+          format,
+          conversionStatus: 'PENDING',
+          conversionError: null,
+          status: 'PUBLISHED',
+          publishedAt: new Date(),
+        },
+      });
+      await tx.bookConversionJob.create({ data: { bookId, status: 'PENDING' } });
+      return book;
     });
-    await this.conversionJobs.enqueue(bookId);
-    return book;
   }
 
   async streamPdf(bookId: string, userId: string) {
