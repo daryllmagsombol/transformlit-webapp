@@ -1,17 +1,21 @@
 import { fetchPageText, fetchReadProgress, openReadingSession, saveReaderProgress } from './api';
-import { apolloClient } from '../apollo-client';
+import { apolloClient, refreshTokens } from '../apollo-client';
+import { removeAccessToken, setAccessToken } from '../auth';
 
 jest.mock('../apollo-client', () => ({
   apolloClient: { query: jest.fn(), mutate: jest.fn() },
+  refreshTokens: jest.fn(),
 }));
 
 describe('reader api', () => {
   const originalFetch = globalThis.fetch;
   const queryMock = apolloClient.query as jest.Mock;
   const mutateMock = apolloClient.mutate as jest.Mock;
+  const refreshTokensMock = refreshTokens as jest.Mock;
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    removeAccessToken();
     jest.restoreAllMocks();
   });
 
@@ -24,6 +28,28 @@ describe('reader api', () => {
       expect.stringContaining('/books/book-1/reading-session'),
       expect.objectContaining({ method: 'POST', credentials: 'include' }),
     );
+  });
+
+  it('refreshes the token and retries once when the reading session call is unauthorized', async () => {
+    // Mirror production: a successful refresh stores a fresh in-memory token,
+    // which the retried POST must re-read via getAccessToken().
+    refreshTokensMock.mockImplementation(async () => {
+      setAccessToken('refreshed-token');
+      return true;
+    });
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ expiresInMs: 900000 }) });
+    globalThis.fetch = fetchMock as never;
+
+    const result = await openReadingSession('book-1');
+
+    expect(result.expiresInMs).toBe(900000);
+    expect(refreshTokensMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].headers).toBeUndefined();
+    expect(fetchMock.mock.calls[1][1].headers).toEqual({ Authorization: 'Bearer refreshed-token' });
   });
 
   it('fetches page text JSON', async () => {

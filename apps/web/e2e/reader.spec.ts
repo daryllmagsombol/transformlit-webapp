@@ -1,23 +1,37 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * Opens the first FREE book that is actually READY. FREE books render a "Read"
- * button; a FREE book that has not been converted yet shows an info toast and
- * stays on /books, so we try the next candidate. PREMIUM books render "Buy"
- * and are never targeted.
- *
- * Returns false only when no READY free book could be opened, which is the one
- * case where the spec should skip.
+ * Outcome of trying to open a FREE book:
+ * - `no-candidates`: there is no FREE "Read" button at all (nothing to test) → skip.
+ * - `did-not-open`: a FREE Read candidate existed but none reached `/books/<id>/read`
+ *   (a genuinely READY book that fails to open) → fail, do not skip.
+ * - `opened`: the reader route was reached.
  */
-async function openFirstReadyBook(page: Page): Promise<boolean> {
+type OpenOutcome = 'no-candidates' | 'did-not-open' | 'opened';
+
+/**
+ * To run this for real, seed a READY FREE book first:
+ *   1. Log in as admin, create a book with `accessLevel: FREE` (uploadBook),
+ *      then attach a PDF with the uploadPdf mutation.
+ *   2. Process the conversion until the book's `conversionStatus` is READY —
+ *      run the worker (`pnpm --filter @transformlit/api worker:start`) or invoke
+ *      ConversionRunner.runOnce() against the dev DB.
+ *   3. Confirm the row has conversionStatus=READY, format=PDF, pageCount>=2.
+ *
+ * FREE books render a "Read" button; a FREE book that has not been converted yet
+ * shows an info toast and stays on /books, so we try the next candidate. PREMIUM
+ * books render "Buy" and are never targeted.
+ */
+async function openFirstReadyBook(page: Page): Promise<OpenOutcome> {
   const readButtons = page.getByRole('button', { name: /^read$/i });
   const count = await readButtons.count();
+  if (count === 0) return 'no-candidates';
 
   for (let index = 0; index < count; index += 1) {
     await readButtons.nth(index).click();
     try {
       await page.waitForURL(/\/books\/[^/]+\/read/, { timeout: 3000 });
-      return true;
+      return 'opened';
     } catch {
       // FREE but not converted yet: the reader does not open. Dismiss the
       // "still being prepared" toast so it cannot overlap the next button.
@@ -29,7 +43,7 @@ async function openFirstReadyBook(page: Page): Promise<boolean> {
     }
   }
 
-  return false;
+  return 'did-not-open';
 }
 
 test('open a book, turn pages, jump via URL', async ({ page }) => {
@@ -40,9 +54,13 @@ test('open a book, turn pages, jump via URL', async ({ page }) => {
   await expect(page).toHaveURL(/.*\/feed/);
 
   await page.goto('/books');
-  if (!(await openFirstReadyBook(page))) {
+  const outcome = await openFirstReadyBook(page);
+  // Only skip when there is nothing to test; a FREE Read candidate that fails
+  // to open is a real regression and must fail the suite.
+  if (outcome === 'no-candidates') {
     test.skip(true, 'No READY free book seeded');
   }
+  expect(outcome, 'READY free book found but the reader did not open').toBe('opened');
 
   await expect(page).toHaveURL(/\/books\/[^/]+\/read/);
   await expect(page.getByTestId('page-frame')).toBeVisible();
