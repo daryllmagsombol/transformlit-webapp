@@ -17,7 +17,7 @@ import { PageCanvas } from '../../../../../components/reader/page-canvas';
 import { ReaderToolbar } from '../../../../../components/reader/reader-toolbar';
 
 const BOOK_MANIFEST_QUERY = gql`
-  query ReaderBook($id: ID!) {
+  query ReaderBook($id: String!) {
     book(id: $id) {
       id
       title

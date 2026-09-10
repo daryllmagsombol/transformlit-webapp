@@ -1,10 +1,10 @@
 import { gql } from '@apollo/client';
-import { apolloClient } from '../apollo-client';
+import { apolloClient, refreshTokens } from '../apollo-client';
 import { API_BASE } from '../constants';
 import { getAccessToken } from '../auth';
 
 export const READ_PROGRESS_QUERY = gql`
-  query ReadProgress($bookId: ID!) {
+  query ReadProgress($bookId: String!) {
     readProgress(bookId: $bookId) {
       currentPage
     }
@@ -38,12 +38,24 @@ async function ensureOk(response: Response): Promise<Response> {
 
 /** Bearer-authed; the API responds with the scoped reading-session cookie. */
 export async function openReadingSession(bookId: string): Promise<{ expiresInMs: number }> {
-  const token = getAccessToken();
-  const response = await fetch(`${API_BASE}/books/${bookId}/reading-session`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  });
+  const post = () => {
+    const token = getAccessToken();
+    return fetch(`${API_BASE}/books/${bookId}/reading-session`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+  };
+
+  let response = await post();
+  if (response.status === 401) {
+    // A cold page load (e.g. reader deep-link reload) starts with no in-memory
+    // access token. Unlike GraphQL calls, this raw fetch has no error link that
+    // refreshes on 401, so restore the token from the httpOnly cookie and retry
+    // once instead of tearing down the reader.
+    await refreshTokens();
+    response = await post();
+  }
   return (await ensureOk(response)).json() as Promise<{ expiresInMs: number }>;
 }
 
