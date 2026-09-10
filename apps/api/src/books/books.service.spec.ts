@@ -767,4 +767,62 @@ describe('BooksService', () => {
       await expect(localService.assertCanRead('book-1', 'user-1')).resolves.toMatchObject({ id: 'book-1' });
     });
   });
+
+  // ── canRead ────────────────────────────────────────────────────────────────
+
+  describe('canRead', () => {
+    const readable = {
+      id: 'book-1',
+      deletedAt: null,
+      status: 'PUBLISHED',
+      conversionStatus: 'READY',
+      accessLevel: 'FREE',
+      createdById: null,
+    };
+
+    function build(access: unknown = null) {
+      const localPrisma = {
+        book: { findUnique: jest.fn() },
+        bookAccess: { findUnique: jest.fn().mockResolvedValue(access) },
+      };
+      return { service: new BooksService(localPrisma as never, {} as never, {} as never), localPrisma };
+    }
+
+    it('returns true for a free, published, ready book without an access lookup', async () => {
+      const { service, localPrisma } = build();
+      await expect(service.canRead(readable, 'user-1')).resolves.toBe(true);
+      expect(localPrisma.bookAccess.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('returns false for a draft book (list path must not leak toc)', async () => {
+      const { service } = build();
+      await expect(service.canRead({ ...readable, status: 'DRAFT' }, 'user-1')).resolves.toBe(false);
+    });
+
+    it('returns false for a soft-deleted book', async () => {
+      const { service } = build();
+      await expect(service.canRead({ ...readable, deletedAt: new Date() }, 'user-1')).resolves.toBe(false);
+    });
+
+    it('returns false while conversion is not READY', async () => {
+      const { service } = build();
+      await expect(service.canRead({ ...readable, conversionStatus: 'PENDING' }, 'user-1')).resolves.toBe(false);
+    });
+
+    it('returns false for a restricted book without an access row', async () => {
+      const { service } = build(null);
+      await expect(service.canRead({ ...readable, accessLevel: 'RESTRICTED' }, 'user-1')).resolves.toBe(false);
+    });
+
+    it('returns true for a restricted book with an access row', async () => {
+      const { service } = build({ id: 'access-1' });
+      await expect(service.canRead({ ...readable, accessLevel: 'RESTRICTED' }, 'user-1')).resolves.toBe(true);
+    });
+
+    it('returns true for the owner of a restricted book without an access lookup', async () => {
+      const { service, localPrisma } = build();
+      await expect(service.canRead({ ...readable, accessLevel: 'RESTRICTED', createdById: 'user-1' }, 'user-1')).resolves.toBe(true);
+      expect(localPrisma.bookAccess.findUnique).not.toHaveBeenCalled();
+    });
+  });
 });

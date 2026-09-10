@@ -281,17 +281,66 @@ describe('BooksResolver', () => {
       expect(booksService.listToc).not.toHaveBeenCalled();
     });
 
-    it('resolves toc from the loaded relation when present', async () => {
+    it('resolves toc on the list path only for a readable book', async () => {
       const entries = [{ id: 't1', title: 'One', page: 1, depth: 0, order: 0 }];
-      await expect(resolver.toc({ id: 'book-1', toc: entries })).resolves.toEqual(entries);
-      expect(booksService.listToc).not.toHaveBeenCalled();
+      const readableParent = {
+        id: 'book-1',
+        deletedAt: null,
+        status: 'PUBLISHED',
+        conversionStatus: 'READY',
+        accessLevel: 'FREE',
+        createdById: null,
+      };
+      const prisma = {
+        bookAccess: { findUnique: jest.fn().mockResolvedValue(null) },
+        bookTocEntry: { findMany: jest.fn().mockResolvedValue(entries) },
+      };
+      const gatedResolver = new BooksResolver(
+        new BooksService(prisma as never, {} as never, {} as never),
+        {} as never,
+      );
+
+      // A DRAFT book must return no entries even though the query does not
+      // filter `books` by status/entitlement (store browse flow).
+      await expect(
+        gatedResolver.toc({ ...readableParent, status: 'DRAFT', toc: entries } as never, mockUser as never),
+      ).resolves.toEqual([]);
+      // A RESTRICTED book without an access row must also return none.
+      await expect(
+        gatedResolver.toc({ ...readableParent, accessLevel: 'RESTRICTED', toc: entries } as never, mockUser as never),
+      ).resolves.toEqual([]);
+      expect(prisma.bookTocEntry.findMany).not.toHaveBeenCalled();
+
+      // A readable book loads the relation when it was not joined.
+      await expect(gatedResolver.toc(readableParent as never, mockUser as never)).resolves.toEqual(entries);
+      expect(prisma.bookTocEntry.findMany).toHaveBeenCalledWith({
+        where: { bookId: 'book-1' },
+        orderBy: { order: 'asc' },
+      });
     });
 
-    it('loads toc when the relation is absent (covers the books list path)', async () => {
-      const entries = [{ id: 't2', title: 'Two', page: 2, depth: 0, order: 0 }];
-      booksService.listToc.mockResolvedValue(entries);
-      await expect(resolver.toc({ id: 'book-1' })).resolves.toEqual(entries);
-      expect(booksService.listToc).toHaveBeenCalledWith('book-1');
+    it('reuses the loaded toc relation without querying again', async () => {
+      const entries = [{ id: 't1', title: 'One', page: 1, depth: 0, order: 0 }];
+      const prisma = {
+        bookAccess: { findUnique: jest.fn() },
+        bookTocEntry: { findMany: jest.fn() },
+      };
+      const gatedResolver = new BooksResolver(
+        new BooksService(prisma as never, {} as never, {} as never),
+        {} as never,
+      );
+      const parent = {
+        id: 'book-1',
+        deletedAt: null,
+        status: 'PUBLISHED',
+        conversionStatus: 'READY',
+        accessLevel: 'FREE',
+        createdById: null,
+        toc: entries,
+      };
+      await expect(gatedResolver.toc(parent as never, mockUser as never)).resolves.toEqual(entries);
+      expect(prisma.bookTocEntry.findMany).not.toHaveBeenCalled();
+      expect(prisma.bookAccess.findUnique).not.toHaveBeenCalled();
     });
 
     it('retries conversion via the job service', async () => {

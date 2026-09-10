@@ -1,7 +1,7 @@
 import { Resolver, Query, Mutation, Args, ResolveField, Parent } from '@nestjs/graphql';
 import { UseGuards, BadRequestException } from '@nestjs/common';
 import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
-import { BooksService } from './books.service.js';
+import { BooksService, ReadableBookFacts } from './books.service.js';
 import { ConversionJobService } from './conversion/conversion-job.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
@@ -40,9 +40,17 @@ export class BooksResolver {
     return this.booksService.listToc(bookId);
   }
 
-  /** Resolves ToC on every Book path, loading it when the relation is absent. */
+  /**
+   * Resolves ToC on every Book path. The `books` list is intentionally not
+   * filtered by status/entitlement (store browse), so this gate — not the list
+   * query — is what prevents DRAFT/RESTRICTED ToC leakage to a plain member.
+   */
   @ResolveField(() => [BookTocEntry], { name: 'toc' })
-  async toc(@Parent() book: { id: string; toc?: BookTocEntry[] }) {
+  async toc(
+    @Parent() book: ReadableBookFacts & { toc?: BookTocEntry[] },
+    @CurrentUser() user: { id: string },
+  ) {
+    if (!(await this.booksService.canRead(book, user.id))) return [];
     if (book.toc) return book.toc;
     return this.booksService.listToc(book.id);
   }

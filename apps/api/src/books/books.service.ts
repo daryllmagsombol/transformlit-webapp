@@ -18,6 +18,16 @@ import {
   AddHighlightInput,
 } from './models/book.model.js';
 
+/** The Book columns the reader entitlement gate needs. */
+export interface ReadableBookFacts {
+  id: string;
+  deletedAt: Date | null;
+  status: string;
+  conversionStatus: string;
+  accessLevel: string;
+  createdById: string | null;
+}
+
 @Injectable()
 export class BooksService {
   constructor(
@@ -144,6 +154,23 @@ export class BooksService {
   }
 
   /**
+   * Non-throwing reader gate. Returns whether `userId` may read `book`.
+   * `assertCanRead` delegates to it, and the GraphQL `toc` resolve field needs
+   * a boolean (it must return `[]`, not throw, for unreadable books).
+   */
+  async canRead(book: ReadableBookFacts, userId: string): Promise<boolean> {
+    if (book.deletedAt) return false;
+    if (book.status !== 'PUBLISHED') return false;
+    if (book.conversionStatus !== 'READY') return false;
+    if (book.accessLevel === 'FREE' || book.createdById === userId) return true;
+
+    const access = await this.prisma.bookAccess.findUnique({
+      where: { bookId_userId: { bookId: book.id, userId } },
+    });
+    return access !== null;
+  }
+
+  /**
    * Single entitlement gate for every reader request. Throws rather than
    * returning booleans so callers cannot accidentally ignore the result.
    */
@@ -152,12 +179,7 @@ export class BooksService {
     if (!book || book.deletedAt) throw new NotFoundException('Book not available');
     if (book.status !== 'PUBLISHED') throw new ForbiddenException('Book is not published');
     if (book.conversionStatus !== 'READY') throw new ForbiddenException('Book is not ready to read');
-
-    const hasAccess =
-      book.accessLevel === 'FREE' ||
-      book.createdById === userId ||
-      (await this.prisma.bookAccess.findUnique({ where: { bookId_userId: { bookId, userId } } })) !== null;
-    if (!hasAccess) throw new ForbiddenException('You do not have access to this book');
+    if (!(await this.canRead(book, userId))) throw new ForbiddenException('You do not have access to this book');
     return book;
   }
 
