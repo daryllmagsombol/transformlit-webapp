@@ -1,9 +1,10 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
-import { MAX_FILE_SIZE_BYTES } from '@transformlit/shared';
+import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { BooksResolver } from './books.resolver';
 import { BooksService } from './books.service';
+import { ConversionJobService } from './conversion/conversion-job.service';
 
 const mockBook = {
   id: 'book-1',
@@ -76,6 +77,7 @@ describe('BooksResolver', () => {
       providers: [
         BooksResolver,
         { provide: BooksService, useValue: mockBooksService },
+        { provide: ConversionJobService, useValue: { enqueue: jest.fn() } },
       ],
     }).compile();
 
@@ -255,6 +257,30 @@ describe('BooksResolver', () => {
       const result = await resolver.removeHighlight(mockUser as any, 'hl-1');
       expect(booksService.removeHighlight).toHaveBeenCalledWith('hl-1', 'user-1');
       expect(result).toBe(true);
+    });
+  });
+
+  // ── reader manifest ────────────────────────────────────────────────────────
+
+  describe('reader manifest', () => {
+    it('exposes toc for a book', async () => {
+      const service = {
+        listToc: jest.fn().mockResolvedValue([{ id: 't1', title: 'One', page: 1, depth: 0, order: 0 }]),
+      };
+      const localResolver = new BooksResolver(service as never, {} as never);
+      await expect(localResolver.bookToc('book-1')).resolves.toHaveLength(1);
+    });
+
+    it('retries conversion via the job service', async () => {
+      const service = {
+        assertCanManageBookPublic: jest.fn().mockResolvedValue(undefined),
+        setConversionPending: jest.fn().mockResolvedValue(undefined),
+        findById: jest.fn().mockResolvedValue({ id: 'book-1' }),
+      };
+      const jobs = { enqueue: jest.fn().mockResolvedValue(undefined) };
+      const localResolver = new BooksResolver(service as never, jobs as never);
+      await localResolver.retryBookConversion({ id: 'user-1', role: UserRole.ADMIN }, 'book-1');
+      expect(jobs.enqueue).toHaveBeenCalledWith('book-1');
     });
   });
 });

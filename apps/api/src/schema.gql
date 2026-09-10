@@ -49,21 +49,30 @@ type AuthPayload {
 type Book {
   accessLevel: BookAccessLevel!
   author: String
+  conversionStatus: ConversionStatus!
   coverUrl: String
   createdAt: DateTime!
   currency: String
   description: String
+  format: BookFormat
   id: ID!
+  pageCount: Int
   price: Float
   publishedAt: DateTime
   status: BookStatus!
   title: String!
+  toc: [BookTocEntry!]!
   totalPages: Float
 }
 
 enum BookAccessLevel {
   FREE
   RESTRICTED
+}
+
+enum BookFormat {
+  EPUB
+  PDF
 }
 
 type BookProgress {
@@ -79,6 +88,14 @@ enum BookStatus {
   COMING_SOON
   DRAFT
   PUBLISHED
+}
+
+type BookTocEntry {
+  depth: Int!
+  id: ID!
+  order: Int!
+  page: Int!
+  title: String!
 }
 
 type Bookmark {
@@ -112,6 +129,14 @@ type ConversationGroup {
 enum ConversationType {
   DIRECT
   GROUP
+}
+
+enum ConversionStatus {
+  FAILED
+  NOT_APPLICABLE
+  PENDING
+  PROCESSING
+  READY
 }
 
 input CreateGroupInput {
@@ -157,7 +182,7 @@ type Group {
   featured: Boolean!
   id: ID!
   memberCount: Int!
-  myRole: String
+  myRole: GroupMemberRole
   myStatus: GroupMemberStatus
   name: String!
   slug: String!
@@ -285,6 +310,7 @@ type Mutation {
   removeFriend(friendshipId: String!): Boolean!
   removeGroupMember(groupId: String!, userId: String!): Boolean!
   removeHighlight(id: String!): Boolean!
+  retryBookConversion(bookId: String!): Book!
   saveProgress(input: SaveProgressInput!): BookProgress!
   sendFriendRequest(addresseeId: String!): Friendship!
   sendMessage(input: SendMessageInput!): Message!
@@ -330,6 +356,7 @@ type Query {
   announcement(id: String!): Announcement
   announcements: [Announcement!]!
   book(id: String!): Book!
+  bookToc(bookId: String!): [BookTocEntry!]!
   bookmarks(bookId: String!): [Bookmark!]!
   books: [Book!]!
   conversations(limit: Int = 50): [Conversation!]!

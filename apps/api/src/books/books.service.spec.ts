@@ -178,6 +178,7 @@ describe('BooksService', () => {
       await service.findById('book-1');
       expect(prisma.book.findUnique).toHaveBeenCalledWith({
         where: { id: 'book-1', deletedAt: null },
+        include: { tocEntries: { orderBy: { order: 'asc' } } },
       });
     });
 

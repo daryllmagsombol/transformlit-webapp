@@ -35,10 +35,25 @@ export class BooksService {
     });
   }
 
-  async findById(id: string, userId?: string) {
-    const book = await this.prisma.book.findUnique({ where: { id, deletedAt: null } });
+  async findById(id: string, _userId?: string) {
+    const book = await this.prisma.book.findUnique({
+      where: { id, deletedAt: null },
+      include: { tocEntries: { orderBy: { order: 'asc' } } },
+    });
     if (!book) throw new NotFoundException('Book not found');
-    return book;
+    return { ...book, toc: book.tocEntries };
+  }
+
+  async listToc(bookId: string) {
+    return this.prisma.bookTocEntry.findMany({ where: { bookId }, orderBy: { order: 'asc' } });
+  }
+
+  /** Marks a book PENDING again so the worker re-runs conversion. */
+  async setConversionPending(bookId: string) {
+    await this.prisma.book.update({
+      where: { id: bookId },
+      data: { conversionStatus: 'PENDING', conversionError: null },
+    });
   }
 
   async uploadBook(input: UploadBookInput, userId: string) {
@@ -53,7 +68,7 @@ export class BooksService {
     actorId: string,
     actorRole: UserRole,
   ) {
-    await this.assertCanManageBook(id, actorId, actorRole);
+    await this.assertCanManageBookPublic(id, actorId, actorRole);
     return this.prisma.book.update({ where: { id }, data: input });
   }
 
@@ -81,7 +96,7 @@ export class BooksService {
     actorId: string,
     actorRole: UserRole,
   ) {
-    await this.assertCanManageBook(bookId, actorId, actorRole);
+    await this.assertCanManageBookPublic(bookId, actorId, actorRole);
 
     if (buffer.byteLength > MAX_FILE_SIZE_BYTES) {
       throw new BadRequestException('File exceeds maximum allowed size');
@@ -208,11 +223,11 @@ export class BooksService {
   }
 
   async deleteBook(id: string, actorId: string, actorRole: UserRole) {
-    await this.assertCanManageBook(id, actorId, actorRole);
+    await this.assertCanManageBookPublic(id, actorId, actorRole);
     return this.prisma.book.update({ where: { id }, data: { deletedAt: new Date() } });
   }
 
-  private async assertCanManageBook(
+  async assertCanManageBookPublic(
     bookId: string,
     actorId: string,
     actorRole: UserRole,
