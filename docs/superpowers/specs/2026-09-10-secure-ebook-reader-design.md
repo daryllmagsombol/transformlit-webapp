@@ -27,7 +27,7 @@ What it *cannot* deliver, and the spec does not pretend otherwise: a determined 
 ## Design Decisions
 
 - **Formats:** PDF and EPUB. Format detected at upload (PDF `%PDF-` magic; EPUB is a zip with `application/epub+zip` mimetype entry).
-- **Normalization:** both formats become an ordered list of immutable **pages**. PDF pages are rasterized WebP images; EPUB pages are deterministic, server-defined content chunks (sanitized HTML strings). Page numbers, ToC→page mapping, bookmarks, and highlights are stable across devices.
+- **Normalization:** both formats become an ordered list of immutable **pages**. PDF pages are rasterized PNG images; EPUB pages are deterministic, server-defined content chunks (sanitized HTML strings). Page numbers, ToC→page mapping, bookmarks, and highlights are stable across devices.
 - **Conversion happens once, at upload**, in a separate worker process. Nothing heavy runs on the API event loop. No Redis/BullMQ for v1: a durable DB-backed job table with `FOR UPDATE SKIP LOCKED` claiming is sufficient and adds no infrastructure.
 - **Originals are stored outside any web-served path** and are never served by an endpoint. The existing `blobPath` column is reused as the original's storage key (no parallel `storageKey` field).
 - **Storage abstraction:** a provider-neutral `StorageAdapter` (no `getPublicUrl`) with a local-filesystem implementation now and an Azure implementation later; the existing `BlobService` (and ideally `UploadsService`) is refactored onto it so the repo does not grow a third divergent storage path.
@@ -51,7 +51,7 @@ Upload (PDF | EPUB, existing GraphQL multipart, 50 MB cap)
   └─> StorageAdapter.put(original key)            # protected dir, never web-served
   └─> BookConversionJob row (PENDING)
         └─> worker process (separate entrypoint, polls DB)
-              ├─ PDF  → render page → WebP + extractTextItems → bboxes JSON
+              ├─ PDF  → render page → PNG + extractTextItems → bboxes JSON
               └─ EPUB → parse spine → sanitize → deterministic page chunks
                         + extracted assets (images/fonts)
               └─> BookPage rows + BookTocEntry rows + pageCount
@@ -60,8 +60,8 @@ Upload (PDF | EPUB, existing GraphQL multipart, 50 MB cap)
 Reader open (web: /books/[id]/read)
   └─> GraphQL: book manifest (title, format, pageCount, toc, conversionStatus)
   └─> POST /books/:id/reading-session  (Bearer) → httpOnly scoped cookie
-  └─> GET /books/:id/pages/:n/frame    (cookie) → WebP image (PDF)
-  └─> GET /books/:id/pages/:n          (cookie) → JSON { kind:'pdf', text, words[] } | { kind:'epub', html }
+  └─> GET /books/:id/pages/:n/frame    (cookie) → PNG image (PDF)
+  └─> GET /books/:id/pages/:n/text     (cookie) → JSON { kind:'pdf', items[] } | { kind:'epub', html, text, start, end, chapterTitle }
   └─> GET /books/:id/assets/:key       (cookie) → EPUB image/font asset
   └─> GraphQL: progress / bookmarks / highlights (Bearer)
 ```
@@ -71,7 +71,7 @@ Reader open (web: /books/[id]/read)
 - Separate process: `apps/api/src/worker/main.ts` (exact script name set in the plan), started alongside the API locally and as its own container in deploy.
 - Claim query: `UPDATE book_conversion_jobs SET status='PROCESSING', lockedAt=now() WHERE id = (SELECT id FROM book_conversion_jobs WHERE status='PENDING' AND (lockedAt IS NULL OR lockedAt < now() - interval '15 minutes') ORDER BY createdAt ASC LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *`.
 - Poll ~2 s; max 3 attempts with backoff; on final failure set `Book.conversionStatus = FAILED` + `conversionError`. Admin retry mutation exists.
-- PDF: `unpdf` (official `pdfjs-dist` + `@napi-rs/canvas` + bundled standard fonts), pinned to a known-good `pdfjs-dist` (E1 spike; 4.7.x known-good line, 5.3/5.4 have documented Node/bundler failures). Fixed render DPI → WebP. `extractTextItems` per page → word `{ t, x, y, w, h }` normalized boxes.
+- PDF: `unpdf` (official `pdfjs-dist` + `@napi-rs/canvas` + bundled standard fonts), pinned to a known-good `pdfjs-dist` (E1 spike; 4.7.x known-good line, 5.3/5.4 have documented Node/bundler failures). Fixed render DPI → PNG (unpdf's `renderPageAsImage` emits PNG; no re-encode step). `extractTextItems` per page → word `{ t, x, y, w, h }` normalized boxes.
 - EPUB: `@likecoin/epub-ts` (Node entry) → spine + nav; `sanitize-html` with a strict allowlist (no `script`, `on*`, `javascript:`, SVG/MathML, `style` `url()`/`@import`, `iframe`, `form`); deterministic chunking via `locations.generate()` (fixed character budget per page); assets extracted to protected storage with size caps; zip-bomb/path-traversal/external-entity protection; no network fetches (no SSRF).
 - Re-conversion: transactional replace of `BookPage`/`BookTocEntry`, `contentVersion++`, old assets deleted after commit.
 
@@ -212,9 +212,9 @@ Notes:
 
 All endpoints re-check on **every** request: book exists, `deletedAt = null`, `status = PUBLISHED`, `conversionStatus = READY`, and entitlement (`accessLevel = FREE` OR owner OR a `BookAccess` row). This fixes the existing gaps where `streamPdf` ignores `deletedAt` (`books.service.ts:81`) and `findById` ignores its `userId` param (`books.service.ts:33-37`).
 
-- `POST /books/:id/reading-session` — **Bearer**. Validates entitlement; creates `ReadingSession` (hashed token, ~15 min sliding); sets cookie `transformlit_reader` (`httpOnly`, `SameSite=Strict`, `Secure` in prod, `Path=/books`); returns `{ expiresAt }`.
-- `GET /books/:id/pages/:n/frame` — **cookie**. Returns `image/webp` for PDF books; 404 for EPUB books (which have no frame image). Headers: `Cache-Control: no-store, private`, `Vary: Cookie`, `X-Content-Type-Options: nosniff`. Records `PageView` (batched).
-- `GET /books/:id/pages/:n` — **cookie**. JSON: PDF → `{ kind: 'pdf', text, words[] }`; EPUB → `{ kind: 'epub', html, page }`. Never `text/html`.
+- `POST /books/:id/reading-session` — **Bearer**. Validates entitlement; creates `ReadingSession` (hashed token, ~15 min sliding); sets cookie `transformlit_reader` (`httpOnly`, `SameSite=Strict`, `Secure` in prod, `Path=/books`); returns `{ expiresInMs }`.
+- `GET /books/:id/pages/:n/frame` — **cookie**. Returns `image/png` for PDF books; 404 for EPUB books (which have no frame image). Headers: `Cache-Control: no-store, private`, `Vary: Cookie`, `X-Content-Type-Options: nosniff`. Records `PageView` (batched writes are a scale follow-up; v1 writes one row per view).
+- `GET /books/:id/pages/:n/text` — **cookie**. JSON: PDF → `{ kind: 'pdf', items[] }`; EPUB → `{ kind: 'epub', html, text, start, end, chapterTitle }`. Never `text/html`.
 - `GET /books/:id/assets/:key` — **cookie**. EPUB image/font assets; extension/content-type allowlist; size caps.
 
 Rate limiting: `ThrottlerModule` wired **per-route** (not globally), tracker keyed on `userId + bookId`, thresholds set relative to legitimate prefetch (start ~90 pages/min, burst 10). v1 assumes a single API replica; Redis-backed store is the scale-up path. Sustained overspeed → temporary pause + audit flag.
@@ -246,7 +246,7 @@ Grounded in `docs/DESIGN_SYSTEM.md` and the existing bible-reader patterns; full
 ## Verification
 
 - **Spikes first (before schema freeze):**
-  1. PDF render: pinned `pdfjs-dist` + `@napi-rs/canvas`, 300+ page PDF → WebP + word boxes; memory/throughput in the target runtime (musl/arm64 if containerized).
+  1. PDF render: pinned `pdfjs-dist` + `@napi-rs/canvas`, 300+ page PDF → PNG + word boxes; memory/throughput in the target runtime (musl/arm64 if containerized).
   2. EPUB determinism: real EPUBs → `locations.generate()` chunking → stable page fragments + ToC mapping.
   3. Job model: DB queue claim/retry under load; separate process vs `worker_threads`.
   4. Page auth: reading-session cookie across dev (3000→3005, same-site localhost) and CSP `img-src` dev addition.
