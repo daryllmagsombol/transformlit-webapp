@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,6 +9,8 @@ import { randomUUID } from 'node:crypto';
 import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { BlobService } from '../azure/blob.service.js';
+import { STORAGE_ADAPTER, StorageAdapter } from '../storage/storage-adapter.js';
+import { ConversionJobService } from './conversion/conversion-job.service.js';
 import {
   UploadBookInput,
   UpdateBookInput,
@@ -21,6 +24,8 @@ export class BooksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly blob: BlobService,
+    @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
+    private readonly conversionJobs: ConversionJobService,
   ) {}
 
   async listBooks() {
@@ -59,22 +64,51 @@ export class BooksService {
     actorId: string,
     actorRole: UserRole,
   ) {
+    return this.uploadBookFile(bookId, buffer, actorId, actorRole);
+  }
+
+  /** Detects the format from magic bytes. PDF: %PDF-. EPUB: zip with mimetype entry. */
+  detectFormat(buffer: Buffer): 'PDF' | 'EPUB' | null {
+    if (buffer.subarray(0, 5).toString('latin1') === '%PDF-') return 'PDF';
+    const isZip = buffer.subarray(0, 2).toString('latin1') === 'PK';
+    const hasEpubMimetype = buffer.subarray(0, 4096).includes(Buffer.from('application/epub+zip'));
+    return isZip && hasEpubMimetype ? 'EPUB' : null;
+  }
+
+  async uploadBookFile(
+    bookId: string,
+    buffer: Buffer,
+    actorId: string,
+    actorRole: UserRole,
+  ) {
     await this.assertCanManageBook(bookId, actorId, actorRole);
 
     if (buffer.byteLength > MAX_FILE_SIZE_BYTES) {
       throw new BadRequestException('File exceeds maximum allowed size');
     }
-    if (buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
-      throw new BadRequestException('Uploaded file is not a PDF');
+    const format = this.detectFormat(buffer);
+    if (!format) {
+      throw new BadRequestException('Uploaded file is not a PDF or EPUB');
     }
 
-    // Never trust the client-supplied filename; always generate a server-side path.
-    const blobPath = `books/${bookId}/${randomUUID()}.pdf`;
-    await this.blob.uploadPdf(blobPath, buffer, 'application/pdf');
-    return this.prisma.book.update({
+    // Never trust the client-supplied filename; always generate a server-side key.
+    const extension = format === 'PDF' ? 'pdf' : 'epub';
+    const storageKey = `books/${bookId}/${randomUUID()}.${extension}`;
+    await this.storage.put(storageKey, buffer, format === 'PDF' ? 'application/pdf' : 'application/epub+zip');
+
+    const book = await this.prisma.book.update({
       where: { id: bookId },
-      data: { blobPath, status: 'PUBLISHED', publishedAt: new Date() },
+      data: {
+        blobPath: storageKey,
+        format,
+        conversionStatus: 'PENDING',
+        conversionError: null,
+        status: 'PUBLISHED',
+        publishedAt: new Date(),
+      },
     });
+    await this.conversionJobs.enqueue(bookId);
+    return book;
   }
 
   async streamPdf(bookId: string, userId: string) {

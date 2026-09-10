@@ -8,6 +8,9 @@ import {
 import { BooksService } from './books.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlobService } from '../azure/blob.service';
+import { STORAGE_ADAPTER } from '../storage/storage-adapter';
+import { ConversionJobService } from './conversion/conversion-job.service';
+import { buildTestPdf } from '../../test/fixtures/build-pdf';
 import { BookAccessLevel, UserRole } from '@transformlit/shared';
 
 const mockBook = {
@@ -62,6 +65,8 @@ describe('BooksService', () => {
   let service: BooksService;
   let prisma: any;
   let blob: any;
+  let storage: any;
+  let jobs: any;
 
   beforeEach(async () => {
     const mockPrisma = {
@@ -95,17 +100,29 @@ describe('BooksService', () => {
       streamPdf: jest.fn().mockResolvedValue({ pipe: jest.fn() }),
     };
 
+    const mockStorage = {
+      put: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const mockJobs = {
+      enqueue: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BooksService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: BlobService, useValue: mockBlob },
+        { provide: STORAGE_ADAPTER, useValue: mockStorage },
+        { provide: ConversionJobService, useValue: mockJobs },
       ],
     }).compile();
 
     service = module.get<BooksService>(BooksService);
     prisma = module.get(PrismaService);
     blob = module.get(BlobService);
+    storage = module.get(STORAGE_ADAPTER);
+    jobs = module.get(ConversionJobService);
     jest.clearAllMocks();
 
     prisma.book.findMany.mockResolvedValue([]);
@@ -253,12 +270,12 @@ describe('BooksService', () => {
     const buffer = Buffer.from('%PDF-1.7 fake pdf content');
     const filename = 'test.pdf';
 
-    it('should upload to blob at path books/${bookId}/<uuid>.pdf', async () => {
+    it('should store the original via the storage adapter at books/${bookId}/<uuid>.pdf', async () => {
       await service.uploadPdf('book-1', buffer, filename, 'user-1', UserRole.MEMBER);
-      const blobPath = blob.uploadPdf.mock.calls[0][0];
-      expect(blobPath).toMatch(/^books\/book-1\/[0-9a-f-]{36}\.pdf$/);
-      expect(blob.uploadPdf).toHaveBeenCalledWith(
-        blobPath,
+      const storageKey = storage.put.mock.calls[0][0];
+      expect(storageKey).toMatch(/^books\/book-1\/[0-9a-f-]{36}\.pdf$/);
+      expect(storage.put).toHaveBeenCalledWith(
+        storageKey,
         buffer,
         'application/pdf',
       );
@@ -296,7 +313,7 @@ describe('BooksService', () => {
       await expect(
         service.uploadPdf('book-1', buffer, filename, 'user-2', UserRole.MEMBER),
       ).rejects.toThrow(ForbiddenException);
-      expect(blob.uploadPdf).not.toHaveBeenCalled();
+      expect(storage.put).not.toHaveBeenCalled();
     });
 
     it('should reject oversized buffers with BadRequestException', async () => {
@@ -307,7 +324,7 @@ describe('BooksService', () => {
       await expect(
         service.uploadPdf('book-1', oversized, filename, 'user-1', UserRole.MEMBER),
       ).rejects.toThrow(BadRequestException);
-      expect(blob.uploadPdf).not.toHaveBeenCalled();
+      expect(storage.put).not.toHaveBeenCalled();
     });
 
     it('should reject buffers that are not PDFs with BadRequestException', async () => {
@@ -315,7 +332,7 @@ describe('BooksService', () => {
       await expect(
         service.uploadPdf('book-1', notPdf, filename, 'user-1', UserRole.MEMBER),
       ).rejects.toThrow(BadRequestException);
-      expect(blob.uploadPdf).not.toHaveBeenCalled();
+      expect(storage.put).not.toHaveBeenCalled();
     });
   });
 
@@ -648,6 +665,54 @@ describe('BooksService', () => {
       await expect(
         service.deleteBook('missing', 'user-1', UserRole.MEMBER),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ── uploadBookFile ─────────────────────────────────────────────────────────
+
+  describe('uploadBookFile', () => {
+    it('stores the original, sets format and PENDING, and enqueues conversion', async () => {
+      const localPrisma = {
+        book: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'book-1', createdById: 'user-1' }),
+          update: jest.fn().mockResolvedValue({ id: 'book-1', format: 'PDF', conversionStatus: 'PENDING' }),
+        },
+        bookAccess: { findUnique: jest.fn() },
+      };
+      const localStorage = { put: jest.fn().mockResolvedValue(undefined) };
+      const localJobs = { enqueue: jest.fn().mockResolvedValue(undefined) };
+      const localService = new BooksService(
+        localPrisma as never,
+        { streamPdf: jest.fn(), uploadPdf: jest.fn() } as never,
+        localStorage as never,
+        localJobs as never,
+      );
+
+      const result = await localService.uploadBookFile('book-1', buildTestPdf(['Hello']), 'user-1', UserRole.MEMBER);
+
+      expect(localStorage.put).toHaveBeenCalledWith(
+        expect.stringMatching(/^books\/book-1\/[0-9a-f-]+\.pdf$/),
+        expect.any(Buffer),
+        'application/pdf',
+      );
+      expect(localJobs.enqueue).toHaveBeenCalledWith('book-1');
+      expect(result.format).toBe('PDF');
+    });
+
+    it('rejects a non-PDF buffer', async () => {
+      const localPrisma = {
+        book: { findUnique: jest.fn().mockResolvedValue({ id: 'book-1', createdById: 'user-1' }), update: jest.fn() },
+        bookAccess: { findUnique: jest.fn() },
+      };
+      const localService = new BooksService(
+        localPrisma as never,
+        {} as never,
+        { put: jest.fn() } as never,
+        { enqueue: jest.fn() } as never,
+      );
+      await expect(
+        localService.uploadBookFile('book-1', Buffer.from('nope'), 'user-1', UserRole.MEMBER),
+      ).rejects.toThrow(/not a PDF or EPUB/);
     });
   });
 });
