@@ -48,11 +48,13 @@ export class ConversionJobService {
   }
 
   async fail(jobId: string, error: string): Promise<void> {
-    const job = await this.prisma.bookConversionJob.update({
-      where: { id: jobId },
-      data: { status: 'PENDING', lockedAt: null, lastError: error, attempts: { increment: 1 } },
-    });
-    if (job.attempts >= MAX_CONVERSION_ATTEMPTS) {
+    const job = await this.prisma.bookConversionJob.findUnique({ where: { id: jobId } });
+    if (!job) return;
+
+    // The incoming failure is the job's next attempt; if that reaches the cap
+    // it is terminal. Each branch performs exactly one update that increments
+    // `attempts` once, so a terminal job stores MAX_CONVERSION_ATTEMPTS, not +1.
+    if (job.attempts + 1 >= MAX_CONVERSION_ATTEMPTS) {
       await this.prisma.bookConversionJob.update({
         where: { id: jobId },
         data: { status: 'FAILED', lockedAt: null, lastError: error, attempts: { increment: 1 } },
@@ -62,7 +64,13 @@ export class ConversionJobService {
         data: { conversionStatus: 'FAILED', conversionError: error },
       });
       this.logger.warn(`Conversion permanently failed for book ${job.bookId}: ${error}`);
+      return;
     }
+
+    await this.prisma.bookConversionJob.update({
+      where: { id: jobId },
+      data: { status: 'PENDING', lockedAt: null, lastError: error, attempts: { increment: 1 } },
+    });
   }
 
   async requeueStale(olderThanMs: number): Promise<number> {

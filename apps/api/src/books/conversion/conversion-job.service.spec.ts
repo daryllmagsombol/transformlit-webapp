@@ -3,7 +3,7 @@ import { ConversionJobService } from './conversion-job.service';
 describe('ConversionJobService', () => {
   let prisma: {
     $queryRaw: jest.Mock;
-    bookConversionJob: { update: jest.Mock; create: jest.Mock; updateMany: jest.Mock };
+    bookConversionJob: { update: jest.Mock; create: jest.Mock; updateMany: jest.Mock; findUnique: jest.Mock };
     book: { update: jest.Mock };
   };
   let service: ConversionJobService;
@@ -11,7 +11,7 @@ describe('ConversionJobService', () => {
   beforeEach(() => {
     prisma = {
       $queryRaw: jest.fn(),
-      bookConversionJob: { update: jest.fn(), create: jest.fn(), updateMany: jest.fn() },
+      bookConversionJob: { update: jest.fn(), create: jest.fn(), updateMany: jest.fn(), findUnique: jest.fn() },
       book: { update: jest.fn() },
     };
     service = new ConversionJobService(prisma as never);
@@ -46,9 +46,11 @@ describe('ConversionJobService', () => {
     });
   });
 
-  it('requeues a failed job below the attempt cap', async () => {
-    prisma.bookConversionJob.update.mockResolvedValue({ attempts: 1, bookId: 'book-1' });
+  it('requeues a failed job below the attempt cap with a single increment', async () => {
+    prisma.bookConversionJob.findUnique.mockResolvedValue({ attempts: 1, bookId: 'book-1' });
+    prisma.bookConversionJob.update.mockResolvedValue({});
     await service.fail('job-1', 'boom');
+    expect(prisma.bookConversionJob.update).toHaveBeenCalledTimes(1);
     expect(prisma.bookConversionJob.update).toHaveBeenCalledWith({
       where: { id: 'job-1' },
       data: { status: 'PENDING', lockedAt: null, lastError: 'boom', attempts: { increment: 1 } },
@@ -56,9 +58,11 @@ describe('ConversionJobService', () => {
     expect(prisma.book.update).not.toHaveBeenCalled();
   });
 
-  it('fails the book permanently after the attempt cap', async () => {
-    prisma.bookConversionJob.update.mockResolvedValue({ attempts: 3, bookId: 'book-1' });
+  it('fails the book permanently when the next attempt reaches the cap', async () => {
+    prisma.bookConversionJob.findUnique.mockResolvedValue({ attempts: 2, bookId: 'book-1' });
+    prisma.bookConversionJob.update.mockResolvedValue({});
     await service.fail('job-1', 'boom');
+    expect(prisma.bookConversionJob.update).toHaveBeenCalledTimes(1);
     expect(prisma.bookConversionJob.update).toHaveBeenCalledWith({
       where: { id: 'job-1' },
       data: { status: 'FAILED', lockedAt: null, lastError: 'boom', attempts: { increment: 1 } },
@@ -67,6 +71,13 @@ describe('ConversionJobService', () => {
       where: { id: 'book-1' },
       data: { conversionStatus: 'FAILED', conversionError: 'boom' },
     });
+  });
+
+  it('does nothing when the claimed job no longer exists', async () => {
+    prisma.bookConversionJob.findUnique.mockResolvedValue(null);
+    await service.fail('job-1', 'boom');
+    expect(prisma.bookConversionJob.update).not.toHaveBeenCalled();
+    expect(prisma.book.update).not.toHaveBeenCalled();
   });
 
   it('requeues stale processing jobs', async () => {
