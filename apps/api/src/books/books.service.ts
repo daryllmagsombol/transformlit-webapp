@@ -126,6 +126,28 @@ export class BooksService {
     return this.blob.streamPdf(book.blobPath);
   }
 
+  /**
+   * Single entitlement gate for every reader request. Throws rather than
+   * returning booleans so callers cannot accidentally ignore the result.
+   */
+  async assertCanRead(bookId: string, userId: string) {
+    const book = await this.prisma.book.findUnique({ where: { id: bookId } });
+    if (!book || book.deletedAt) throw new NotFoundException('Book not available');
+    if (book.status !== 'PUBLISHED') throw new ForbiddenException('Book is not published');
+    if (book.conversionStatus !== 'READY') throw new ForbiddenException('Book is not ready to read');
+
+    const hasAccess =
+      book.accessLevel === 'FREE' ||
+      book.createdById === userId ||
+      (await this.prisma.bookAccess.findUnique({ where: { bookId_userId: { bookId, userId } } })) !== null;
+    if (!hasAccess) throw new ForbiddenException('You do not have access to this book');
+    return book;
+  }
+
+  async getPageRecord(bookId: string, index: number) {
+    return this.prisma.bookPage.findUnique({ where: { bookId_index: { bookId, index } } });
+  }
+
   // Read progress
   async getProgress(userId: string, bookId: string) {
     return this.prisma.bookProgress.findUnique({

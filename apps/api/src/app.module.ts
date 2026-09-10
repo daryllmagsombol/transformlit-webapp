@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { GraphQLError, GraphQLScalarType, Kind } from 'graphql';
 import { join } from 'node:path';
@@ -89,6 +90,7 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
 
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,

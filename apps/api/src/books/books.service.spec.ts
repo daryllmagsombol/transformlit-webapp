@@ -715,4 +715,46 @@ describe('BooksService', () => {
       ).rejects.toThrow(/not a PDF or EPUB/);
     });
   });
+
+  // ── assertCanRead ──────────────────────────────────────────────────────────
+
+  describe('assertCanRead', () => {
+    const base = { id: 'book-1', deletedAt: null, status: 'PUBLISHED', conversionStatus: 'READY', accessLevel: 'FREE', createdById: null };
+
+    it('allows a free, published, ready book', async () => {
+      const localPrisma = { book: { findUnique: jest.fn().mockResolvedValue(base) }, bookAccess: { findUnique: jest.fn() } };
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, {} as never);
+      await expect(localService.assertCanRead('book-1', 'user-1')).resolves.toMatchObject({ id: 'book-1' });
+    });
+
+    it('rejects a deleted book', async () => {
+      const localPrisma = { book: { findUnique: jest.fn().mockResolvedValue({ ...base, deletedAt: new Date() }) }, bookAccess: { findUnique: jest.fn() } };
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, {} as never);
+      await expect(localService.assertCanRead('book-1', 'user-1')).rejects.toThrow(/not available/);
+    });
+
+    it('rejects a book that is still converting', async () => {
+      const localPrisma = { book: { findUnique: jest.fn().mockResolvedValue({ ...base, conversionStatus: 'PENDING' }) }, bookAccess: { findUnique: jest.fn() } };
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, {} as never);
+      await expect(localService.assertCanRead('book-1', 'user-1')).rejects.toThrow(/not ready/);
+    });
+
+    it('rejects a restricted book without entitlement', async () => {
+      const localPrisma = {
+        book: { findUnique: jest.fn().mockResolvedValue({ ...base, accessLevel: 'RESTRICTED' }) },
+        bookAccess: { findUnique: jest.fn().mockResolvedValue(null) },
+      };
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, {} as never);
+      await expect(localService.assertCanRead('book-1', 'user-1')).rejects.toThrow(/do not have access/);
+    });
+
+    it('allows a restricted book with an access row', async () => {
+      const localPrisma = {
+        book: { findUnique: jest.fn().mockResolvedValue({ ...base, accessLevel: 'RESTRICTED' }) },
+        bookAccess: { findUnique: jest.fn().mockResolvedValue({ id: 'access-1' }) },
+      };
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, {} as never);
+      await expect(localService.assertCanRead('book-1', 'user-1')).resolves.toMatchObject({ id: 'book-1' });
+    });
+  });
 });
