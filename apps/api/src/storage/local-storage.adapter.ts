@@ -61,11 +61,13 @@ export class LocalStorageAdapter implements StorageAdapter {
     if (!key || key.includes('\0')) throw new Error('Invalid storage key');
     const normalized = normalize(key).replaceAll('\\', '/');
     const segments = normalized.split('/');
-    if (normalized.startsWith('/') || segments.includes('..')) {
+    if (normalized.startsWith('/') || normalized === '' || normalized === '.' || segments.includes('..')) {
       throw new Error(`Unsafe storage key: ${key}`);
     }
     const target = resolve(join(this.root, normalized));
-    if (target !== this.root && !target.startsWith(`${this.root}${sep}`)) {
+    // Every key must resolve to a path strictly inside the storage root so a
+    // destructive op can never target the root itself.
+    if (!target.startsWith(`${this.root}${sep}`)) {
       throw new Error(`Storage key escapes root: ${key}`);
     }
     return target;

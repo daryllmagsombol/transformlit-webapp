@@ -50,6 +50,15 @@ describe('LocalStorageAdapter', () => {
     await expect(adapter.getBuffer('a/../../b')).rejects.toThrow();
   });
 
+  it('rejects keys that normalize to the storage root', async () => {
+    await adapter.put('books/1/keep.pdf', Buffer.from('keep'));
+    await expect(adapter.deletePrefix('books/..')).rejects.toThrow();
+    await expect(adapter.delete('.')).rejects.toThrow();
+    await expect(adapter.put('', Buffer.from('x'))).rejects.toThrow();
+    // The root and its contents must survive the rejected destructive calls.
+    expect(await adapter.exists('books/1/keep.pdf')).toBe(true);
+  });
+
   it('returns null for missing keys', async () => {
     expect(await adapter.getBuffer('nope')).toBeNull();
     expect(await adapter.getStream('nope')).toBeNull();
