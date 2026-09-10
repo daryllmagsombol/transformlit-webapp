@@ -37,22 +37,32 @@ function round(value: number): number {
 }
 
 /**
+ * The subset of a pdfjs viewport needed to normalize text boxes. `transform`
+ * maps PDF user space to rendered pixels (including the y-flip), while
+ * `width`/`height` are the rendered pixel dimensions.
+ */
+export interface RenderViewport {
+  transform: number[];
+  width: number;
+  height: number;
+}
+
+/**
  * Converts a page's text items into normalized boxes (0..1, y from the top)
  * so the client can position a selectable text layer over the frame at any size.
+ * `viewport` must be the RENDER_SCALE viewport the frame was rasterized with.
  */
-export function toTextBoxes(items: PdfTextItem[], viewport: number[]): TextItemBox[] {
+export function toTextBoxes(items: PdfTextItem[], viewport: RenderViewport): TextItemBox[] {
   const boxes: TextItemBox[] = [];
-  const scaleX = Math.abs(viewport[0]);
-  const scaleY = Math.abs(viewport[3]);
   for (const item of items) {
     if (!item.str || item.str.trim().length === 0) continue;
-    const tx = multiplyMatrix(viewport, item.transform);
+    const tx = multiplyMatrix(viewport.transform, item.transform);
     boxes.push({
       t: item.str,
-      x: round(tx[4]),
-      y: round(tx[5] - item.height * scaleY),
-      w: round(item.width * scaleX),
-      h: round(item.height * scaleY),
+      x: round(tx[4] / viewport.width),
+      y: round((tx[5] - item.height * RENDER_SCALE) / viewport.height),
+      w: round((item.width * RENDER_SCALE) / viewport.width),
+      h: round((item.height * RENDER_SCALE) / viewport.height),
     });
   }
   return boxes;
@@ -81,8 +91,7 @@ export class PdfConverter {
           rawItems.push({ str: item.str, transform: item.transform, width: item.width, height: item.height });
         }
       }
-      const normalized = page.getViewport({ scale: 1 / viewport.width });
-      const boxes = toTextBoxes(rawItems, normalized.transform);
+      const boxes = toTextBoxes(rawItems, viewport);
 
       const image = await renderPageAsImage(doc, index, {
         scale: RENDER_SCALE,

@@ -33,15 +33,26 @@ describe('PdfConverter', () => {
     const parsed = JSON.parse(saved?.toString() ?? '{}') as {
       items: Array<{ t: string; x: number; y: number; w: number; h: number }>;
     };
-    expect(parsed.items.some((item) => item.t.includes('Alpha'))).toBe(true);
-    expect(parsed.items[0].x).toBeGreaterThanOrEqual(0);
-    expect(parsed.items[0].x).toBeLessThanOrEqual(1);
-    expect(parsed.items[0].y).toBeGreaterThanOrEqual(0);
-    expect(parsed.items[0].y).toBeLessThanOrEqual(1);
-    expect(parsed.items[0].w).toBeGreaterThan(0);
-    expect(parsed.items[0].w).toBeLessThanOrEqual(1);
-    expect(parsed.items[0].h).toBeGreaterThan(0);
-    expect(parsed.items[0].h).toBeLessThanOrEqual(1);
+    const alpha = parsed.items.find((item) => item.t.includes('Alpha'));
+    expect(alpha).toBeDefined();
+    // Fixture page is 612x792 with the text baseline at x=72, y=692 and a 24pt
+    // Helvetica font. Pin known normalized values so a uniform scaling error
+    // (e.g. normalizing by the render viewport instead of the CSS viewport)
+    // cannot pass the loose 0..1 bounds.
+    expect(alpha?.x).toBeCloseTo(72 / 612, 3);
+    expect(alpha?.y).toBeCloseTo(76 / 792, 3);
+    expect(alpha?.h).toBeCloseTo(24 / 792, 3);
+    expect(alpha?.w).toBeCloseTo(156.1 / 612, 2);
+    if (alpha) {
+      expect(alpha.x).toBeGreaterThanOrEqual(0);
+      expect(alpha.x).toBeLessThanOrEqual(1);
+      expect(alpha.y).toBeGreaterThanOrEqual(0);
+      expect(alpha.y).toBeLessThanOrEqual(1);
+      expect(alpha.w).toBeGreaterThanOrEqual(0);
+      expect(alpha.w).toBeLessThanOrEqual(1);
+      expect(alpha.h).toBeGreaterThanOrEqual(0);
+      expect(alpha.h).toBeLessThanOrEqual(1);
+    }
     expect(result.toc.length).toBeGreaterThanOrEqual(1);
   });
 });
