@@ -50,11 +50,14 @@ export class BooksController {
     const token = await this.sessions.create(req.user.id, bookId);
     // Browser-session cookie: the server slides `expiresAt`, so a fixed
     // `maxAge` here would expire the cookie before the session does.
+    // `path` must be `/`: deployed behind nginx the page routes are served under
+    // `/api/books/...`, so a `/books` cookie would never be sent with the frame
+    // and text requests, leaving every page read unauthenticated (401).
     res.cookie(READER_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: 'strict',
       secure: process.env.NODE_ENV === 'production',
-      path: '/books',
+      path: '/',
     });
     return { expiresInMs: READER_SESSION_TTL_MS };
   }

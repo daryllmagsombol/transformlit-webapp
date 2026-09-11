@@ -30,10 +30,12 @@ describe('BooksController', () => {
     const { controller } = build();
     const cookie = jest.fn();
     await controller.createSession('book-1', authed, { cookie } as never);
+    // `path` must be `/` so the cookie is sent to the deployed `/api/books/...`
+    // page routes; `/books` would leave every frame/text read unauthenticated.
     expect(cookie).toHaveBeenCalledWith(
       'transformlit_reader',
       'raw-token',
-      expect.objectContaining({ httpOnly: true, sameSite: 'strict', path: '/books' }),
+      expect.objectContaining({ httpOnly: true, sameSite: 'strict', path: '/' }),
     );
     const options = cookie.mock.calls[0][2] as Record<string, unknown>;
     expect(options).not.toHaveProperty('maxAge');
