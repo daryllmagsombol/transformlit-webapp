@@ -1,12 +1,61 @@
-import { createReadStream, mkdtempSync, rmSync } from 'node:fs';
+import { createReadStream, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
-import { loadImage, createCanvas } from '@napi-rs/canvas';
+import { fileURLToPath } from 'node:url';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { LocalStorageAdapter } from '../../storage/local-storage.adapter.js';
 import { buildTestPdf } from '../../../test/fixtures/build-pdf';
 import { buildJpxPdf } from '../../../test/fixtures/build-jpx-pdf';
-import { PdfConverter } from './pdf.converter.js';
+import {
+  BlankPageError,
+  PdfConverter,
+  isNearUniformWhite,
+  measureLuminance,
+  pagePaintsImages,
+  resolvePdfjsWasmUrl,
+} from './pdf.converter.js';
+
+// Keep the real pdf.js available for the end-to-end tests while making the two
+// rasterization calls replaceable for the mocked blank-frame tests.
+jest.mock('unpdf', () => {
+  const actual = jest.requireActual('unpdf');
+  return {
+    ...actual,
+    getDocumentProxy: jest.fn((...args: unknown[]) => actual.getDocumentProxy(...(args as never[]))),
+    renderPageAsImage: jest.fn((...args: unknown[]) => actual.renderPageAsImage(...(args as never[]))),
+    getResolvedPDFJS: jest.fn((...args: unknown[]) => actual.getResolvedPDFJS(...(args as never[]))),
+  };
+});
+
+import { getDocumentProxy, getResolvedPDFJS, renderPageAsImage } from 'unpdf';
+
+const getDocumentProxyMock = getDocumentProxy as unknown as jest.Mock;
+const getResolvedPDFJSMock = getResolvedPDFJS as unknown as jest.Mock;
+const renderPageAsImageMock = renderPageAsImage as unknown as jest.Mock;
+
+/** A one-page document stub that reports the given content operators. */
+function fakeDocument(fnArray: number[]) {
+  return {
+    numPages: 1,
+    getPage: async () => ({
+      getViewport: () => ({ transform: [2, 0, 0, 2, 0, 0], width: 20, height: 20 }),
+      getTextContent: async () => ({ items: [] }),
+      getOperatorList: async () => ({ fnArray, argsArray: [] }),
+    }),
+    getOutline: async () => null,
+  };
+}
+
+/** A solid-white PNG frame, matching what a failed image decode yields. */
+async function whitePng(width = 8, height = 8): Promise<Uint8Array> {
+  const canvas = createCanvas(width, height);
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, width, height);
+  const buffer = await canvas.encode('png');
+  return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+}
 
 /**
  * Serves the installed `pdfjs-dist/wasm` directory over HTTP on an ephemeral
@@ -69,6 +118,12 @@ describe('PdfConverter', () => {
     root = mkdtempSync(join(tmpdir(), 'pdf-convert-'));
     storage = new LocalStorageAdapter(root);
     converter = new PdfConverter(storage);
+    getDocumentProxyMock.mockClear();
+    renderPageAsImageMock.mockClear();
+    getResolvedPDFJSMock.mockClear();
+    // The blank-frame check only needs the OPS map; keep it deterministic.
+    getResolvedPDFJSMock.mockResolvedValue({ OPS: { paintImageXObject: 85 } });
+    delete process.env.PDFJS_WASM_URL;
   });
 
   afterEach(() => rmSync(root, { recursive: true, force: true }));
@@ -135,5 +190,71 @@ describe('PdfConverter', () => {
       delete process.env.PDFJS_WASM_URL;
       await wasm.close();
     }
+  });
+
+  it('fails a page that paints a raster image but rasterizes blank white', async () => {
+    getDocumentProxyMock.mockResolvedValueOnce(fakeDocument([85]));
+    renderPageAsImageMock.mockResolvedValueOnce(await whitePng());
+
+    await expect(
+      converter.convert({ bookId: 'blank-book', contentVersion: 1, buffer: Buffer.from('x') }),
+    ).rejects.toBeInstanceOf(BlankPageError);
+  });
+
+  it('allows a legitimately blank page that paints no raster image', async () => {
+    getDocumentProxyMock.mockResolvedValueOnce(fakeDocument([]));
+    renderPageAsImageMock.mockResolvedValueOnce(await whitePng());
+
+    const result = await converter.convert({
+      bookId: 'empty-book',
+      contentVersion: 1,
+      buffer: Buffer.from('x'),
+    });
+
+    expect(result.pageCount).toBe(1);
+    expect(await storage.exists(result.pages[0].assetKey)).toBe(true);
+  });
+
+  it('treats a frame with any dark pixel as non-blank', () => {
+    const white = new Uint8Array(4 * 4).fill(255);
+    expect(isNearUniformWhite(measureLuminance(white))).toBe(true);
+
+    const withText = new Uint8Array(4 * 4).fill(255);
+    withText[0] = 0;
+    withText[1] = 0;
+    withText[2] = 0;
+    expect(isNearUniformWhite(measureLuminance(withText))).toBe(false);
+  });
+
+  it('detects image painting operators in a page operator list', () => {
+    const ops = { paintImageXObject: 85, showText: 42 };
+    expect(pagePaintsImages([42, 85], ops)).toBe(true);
+    expect(pagePaintsImages([42, 7], ops)).toBe(false);
+  });
+
+  it('resolves the production file:// wasm directory with its decoders', () => {
+    delete process.env.PDFJS_WASM_URL;
+    const url = resolvePdfjsWasmUrl();
+
+    expect(url.startsWith('file://')).toBe(true);
+    expect(url.endsWith('/wasm/')).toBe(true);
+    expect(url).toContain('pdfjs-dist');
+
+    const wasmDir = fileURLToPath(url);
+    for (const file of [
+      'openjpeg.wasm',
+      'openjpeg_nowasm_fallback.js',
+      'jbig2.wasm',
+      'jbig2_nowasm_fallback.js',
+    ]) {
+      expect(existsSync(join(wasmDir, file))).toBe(true);
+    }
+  });
+
+  it('normalizes a PDFJS_WASM_URL override to end with a slash', () => {
+    process.env.PDFJS_WASM_URL = 'http://example.test/wasm';
+    expect(resolvePdfjsWasmUrl()).toBe('http://example.test/wasm/');
+    process.env.PDFJS_WASM_URL = 'http://example.test/wasm/';
+    expect(resolvePdfjsWasmUrl()).toBe('http://example.test/wasm/');
   });
 });

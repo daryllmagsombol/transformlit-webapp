@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { definePDFJSModule, getDocumentProxy, renderPageAsImage } from 'unpdf';
+import { definePDFJSModule, getDocumentProxy, getResolvedPDFJS, renderPageAsImage } from 'unpdf';
 import { pathToFileURL } from 'node:url';
 import { STORAGE_ADAPTER, StorageAdapter } from '../../storage/storage-adapter.js';
 import { ConvertedBook, ConvertedPage, ConvertedTocEntry, TextItemBox } from './reader.types.js';
@@ -13,16 +13,108 @@ export const RENDER_SCALE = 2;
  * legacy build (Node-safe) and pointing it at the shipped `wasm/` directory lets
  * pdf.js initialize those decoders. Node cannot `fetch()` a `file://` wasm URL,
  * so pdf.js falls back to the JS decoders shipped alongside — expected, and it
- * still rasterizes correctly.
+ * still rasterizes correctly. Only the JPEG2000 path is covered by tests; the
+ * JBIG2 decoders share the same mechanism.
  */
-function resolvePdfjsWasmUrl(): string {
-  // An explicit override wins (e.g. wasm hosted over HTTP, which Node's fetch
-  // can reach directly); otherwise resolve from the installed pdfjs-dist package
-  // so the path survives both the `tsx`/`nest start` dev layout and `dist`.
+export function resolvePdfjsWasmUrl(): string {
+  // An explicit override wins (e.g. wasm hosted over HTTP, which Node's fetch can
+  // reach directly); otherwise resolve from the installed pdfjs-dist package so
+  // the path survives both the `tsx`/`nest start` dev layout and `dist`.
   const override = process.env.PDFJS_WASM_URL;
-  if (override) return override;
+  if (override) {
+    // pdf.js concatenates the filename onto this base, so a trailing slash is
+    // required — otherwise both the wasm and fallback fetches 404.
+    return override.endsWith('/') ? override : `${override}/`;
+  }
   const packageJson = require.resolve('pdfjs-dist/package.json');
   return new URL('./wasm/', pathToFileURL(packageJson)).href;
+}
+
+/** pdf.js OPS names whose presence means a page paints a raster image. */
+const IMAGE_PAINT_OP_NAMES = [
+  'paintImageMaskXObject',
+  'paintImageMaskXObjectGroup',
+  'paintImageXObject',
+  'paintInlineImageXObject',
+  'paintInlineImageXObjectGroup',
+  'paintImageXObjectRepeat',
+  'paintImageMaskXObjectRepeat',
+  'paintSolidColorImageMask',
+] as const;
+
+/** True when an operator list paints at least one raster image. */
+export function pagePaintsImages(
+  fnArray: readonly number[],
+  ops: Record<string, number | undefined>,
+): boolean {
+  const imageOpCodes = new Set(
+    IMAGE_PAINT_OP_NAMES.map((name) => ops[name]).filter(
+      (code): code is number => typeof code === 'number',
+    ),
+  );
+  return fnArray.some((fn) => imageOpCodes.has(fn));
+}
+
+/** Luminance statistics for a rasterized frame (each channel 0..255). */
+export interface FramePixelStats {
+  min: number;
+  max: number;
+  nonWhite: number;
+  total: number;
+}
+
+/** A frame is treated as blank when no pixel is darker than this luminance. */
+export const BLANK_MIN_LUMINANCE = 250;
+
+/** Computes luminance extremes over packed RGBA pixel data. */
+export function measureLuminance(data: ArrayLike<number>): FramePixelStats {
+  let min = 255;
+  let max = 0;
+  let nonWhite = 0;
+  let total = 0;
+  for (let i = 0; i + 2 < data.length; i += 4) {
+    const value = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    if (value < min) min = value;
+    if (value > max) max = value;
+    if (value < BLANK_MIN_LUMINANCE) nonWhite += 1;
+    total += 1;
+  }
+  return { min, max, nonWhite, total };
+}
+
+/** True when the frame is effectively uniform white (nothing was drawn). */
+export function isNearUniformWhite(stats: FramePixelStats): boolean {
+  return stats.total > 0 && stats.min >= BLANK_MIN_LUMINANCE;
+}
+
+/** Decodes a PNG frame and measures its luminance. */
+export async function measureFramePng(png: Buffer): Promise<FramePixelStats> {
+  const { loadImage, createCanvas } = await import('@napi-rs/canvas');
+  const image = await loadImage(png);
+  const canvas = createCanvas(image.width, image.height);
+  const context = canvas.getContext('2d');
+  context.drawImage(image, 0, 0);
+  const { data } = context.getImageData(0, 0, image.width, image.height);
+  return measureLuminance(data);
+}
+
+/**
+ * Raised when a page that paints a raster image rasterized to uniform white —
+ * i.e. the pdf.js JPEG2000/JBIG2 decoder failed silently. Failing the job is the
+ * point: the worker retries and then marks the book FAILED with this message,
+ * instead of publishing a reader full of blank pages.
+ */
+export class BlankPageError extends Error {
+  constructor(
+    readonly pageIndex: number,
+    readonly stats: FramePixelStats,
+  ) {
+    super(
+      `Page ${pageIndex} rasterized blank white although it paints a raster image ` +
+        `(min luminance ${stats.min.toFixed(2)}); the PDF image decoder failed to initialize`,
+    );
+    this.name = 'BlankPageError';
+  }
 }
 
 /** The pdf.js module override is process-global; run it at most once. */
@@ -109,6 +201,7 @@ export class PdfConverter {
       useWasm: true,
       useWorkerFetch: true,
     });
+    const { OPS } = await getResolvedPDFJS();
     const pageCount = doc.numPages;
     const pages: ConvertedPage[] = [];
     let lastWidth = 0;
@@ -130,6 +223,8 @@ export class PdfConverter {
         scale: RENDER_SCALE,
         canvasImport: () => import('@napi-rs/canvas'),
       });
+      await this.assertFrameHasContent(page, index, Buffer.from(image), OPS);
+
       const assetKey = `books/${input.bookId}/v${input.contentVersion}/pages/${index}.png`;
       const textKey = `books/${input.bookId}/v${input.contentVersion}/pages/${index}.json`;
       await this.storage.put(assetKey, Buffer.from(image), 'image/png');
@@ -151,6 +246,36 @@ export class PdfConverter {
     const toc = await this.extractToc(doc);
     this.logger.log(`Converted PDF ${input.bookId}: ${pageCount} pages, ${toc.length} toc entries`);
     return { format: 'PDF', pageCount, pages, toc };
+  }
+
+  /**
+   * Guards against pdf.js silently skipping a failed image decode: a page that
+   * paints a raster image but rasterizes to uniform white is a converter error,
+   * not a readable frame. Genuinely empty pages (no image paint operators) are
+   * allowed to stay blank.
+   */
+  private async assertFrameHasContent(
+    page: { getOperatorList(): Promise<{ fnArray: number[] }> },
+    index: number,
+    png: Buffer,
+    ops: Record<string, number | undefined>,
+  ): Promise<void> {
+    let paintsImages: boolean;
+    try {
+      const operatorList = await page.getOperatorList();
+      paintsImages = pagePaintsImages(operatorList.fnArray, ops);
+    } catch (error) {
+      // Without the operator list we cannot tell an image-only page from a text
+      // page; log rather than fail, so a transient extraction glitch does not
+      // reject an otherwise fine conversion.
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Could not inspect page ${index} content; skipping blank-frame check: ${message}`);
+      return;
+    }
+    if (!paintsImages) return;
+
+    const stats = await measureFramePng(png);
+    if (isNearUniformWhite(stats)) throw new BlankPageError(index, stats);
   }
 
   private async extractToc(doc: PdfDocument): Promise<ConvertedTocEntry[]> {
