@@ -133,7 +133,7 @@ export default function BooksClient() {
   }, [addToast]);
 
   const handleRead = useCallback(
-    (book?: { id: string; conversionStatus?: string }) => {
+    (book?: { id: string; conversionStatus?: string | null }) => {
       if (!book) {
         addToast('Reader opening soon.', 'info');
         return;
