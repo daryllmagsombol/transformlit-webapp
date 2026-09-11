@@ -1,9 +1,37 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { getDocumentProxy, renderPageAsImage } from 'unpdf';
+import { definePDFJSModule, getDocumentProxy, renderPageAsImage } from 'unpdf';
+import { pathToFileURL } from 'node:url';
 import { STORAGE_ADAPTER, StorageAdapter } from '../../storage/storage-adapter.js';
 import { ConvertedBook, ConvertedPage, ConvertedTocEntry, TextItemBox } from './reader.types.js';
 
 export const RENDER_SCALE = 2;
+
+/**
+ * unpdf bundles its own pdf.js build but NOT the decoder resources, so scanned
+ * PDFs whose page images are JPEG2000 (`JPXDecode`) or JBIG2 fail to decode and
+ * every frame renders blank. Overriding the module once with the `pdfjs-dist`
+ * legacy build (Node-safe) and pointing it at the shipped `wasm/` directory lets
+ * pdf.js initialize those decoders. Node cannot `fetch()` a `file://` wasm URL,
+ * so pdf.js falls back to the JS decoders shipped alongside — expected, and it
+ * still rasterizes correctly.
+ */
+function resolvePdfjsWasmUrl(): string {
+  // An explicit override wins (e.g. wasm hosted over HTTP, which Node's fetch
+  // can reach directly); otherwise resolve from the installed pdfjs-dist package
+  // so the path survives both the `tsx`/`nest start` dev layout and `dist`.
+  const override = process.env.PDFJS_WASM_URL;
+  if (override) return override;
+  const packageJson = require.resolve('pdfjs-dist/package.json');
+  return new URL('./wasm/', pathToFileURL(packageJson)).href;
+}
+
+/** The pdf.js module override is process-global; run it at most once. */
+let pdfjsModuleReady: Promise<void> | null = null;
+
+function ensurePdfjsModule(): Promise<void> {
+  pdfjsModuleReady ??= definePDFJSModule(() => import('pdfjs-dist/legacy/build/pdf.mjs'));
+  return pdfjsModuleReady;
+}
 
 interface PdfTextItem {
   str: string;
@@ -75,7 +103,12 @@ export class PdfConverter {
   constructor(@Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter) {}
 
   async convert(input: { bookId: string; contentVersion: number; buffer: Buffer }): Promise<ConvertedBook> {
-    const doc = await getDocumentProxy(new Uint8Array(input.buffer));
+    await ensurePdfjsModule();
+    const doc = await getDocumentProxy(new Uint8Array(input.buffer), {
+      wasmUrl: resolvePdfjsWasmUrl(),
+      useWasm: true,
+      useWorkerFetch: true,
+    });
     const pageCount = doc.numPages;
     const pages: ConvertedPage[] = [];
     let lastWidth = 0;
