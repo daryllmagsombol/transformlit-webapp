@@ -43,6 +43,7 @@ model User {
   bookProgress       BookProgress[]
   bookmarks          Bookmark[]
   highlights         Highlight[]
+  readingSessions    ReadingSession[]
   notifications      Notification[]     @relation("NotificationUser")
   notificationsCreated Notification[]   @relation("NotificationCreatedBy")
   announcementsPublished Announcement[] @relation("AnnouncementPublishedBy")
@@ -298,6 +299,19 @@ enum BookStatus {
   COMING_SOON
 }
 
+enum BookFormat {
+  PDF
+  EPUB
+}
+
+enum ConversionStatus {
+  NOT_APPLICABLE
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
 model Book {
   id            String          @id @default(uuid())
   title         String
@@ -310,6 +324,11 @@ model Book {
   accessLevel   BookAccessLevel @default(FREE)
   status        BookStatus      @default(DRAFT)
   totalPages    Int?
+  format           BookFormat?
+  pageCount        Int?
+  conversionStatus ConversionStatus @default(NOT_APPLICABLE)
+  conversionError  String?
+  contentVersion   Int              @default(1)
   createdById   String?
   createdBy     User?           @relation("BookCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   publishedAt   DateTime?
@@ -321,6 +340,12 @@ model Book {
   progress   BookProgress[]
   bookmarks  Bookmark[]
   highlights Highlight[]
+
+  pages            BookPage[]
+  tocEntries       BookTocEntry[]
+  conversionJobs   BookConversionJob[]
+  readingSessions  ReadingSession[]
+  pageViews        PageView[]
 
   @@index([status])
   @@index([title])
@@ -370,6 +395,8 @@ model Bookmark {
   page      Int
   label     String?
   color     String?
+  anchor         Json?
+  contentVersion Int?
   createdAt DateTime @default(now())
 
   @@index([userId, bookId])
@@ -386,11 +413,95 @@ model Highlight {
   text      String
   note      String?
   color     String?
+  anchor         Json?
+  contentVersion Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId, bookId])
   @@map("highlights")
+}
+
+// ── Book reader ─────────────────────────────────────────────────────────────
+
+model BookPage {
+  id        String   @id @default(uuid())
+  bookId    String
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  index     Int
+  assetKey  String
+  textKey   String?
+  mimeType  String?
+  width     Int?
+  height    Int?
+  charCount Int?
+  createdAt DateTime @default(now())
+
+  @@unique([bookId, index])
+  @@map("book_pages")
+}
+
+model BookTocEntry {
+  id     String @id @default(uuid())
+  bookId String
+  book   Book   @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  title  String
+  page   Int
+  depth  Int    @default(0)
+  order  Int
+
+  @@index([bookId, order])
+  @@map("book_toc_entries")
+}
+
+model BookConversionJob {
+  id        String    @id @default(uuid())
+  bookId    String
+  book      Book      @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  status    String    @default("PENDING")
+  attempts  Int       @default(0)
+  lockedAt  DateTime?
+  lastError String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@map("book_conversion_jobs")
+}
+
+model ReadingSession {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookId     String
+  book       Book      @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+
+  pageViews  PageView[]
+
+  @@index([userId, bookId])
+  @@index([expiresAt])
+  @@map("reading_sessions")
+}
+
+model PageView {
+  id             String         @id @default(uuid())
+  sessionId      String
+  session        ReadingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId         String
+  bookId         String
+  book           Book           @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  page           Int
+  contentVersion Int
+  viewedAt       DateTime       @default(now())
+
+  @@index([bookId, viewedAt])
+  @@index([userId, viewedAt])
+  @@map("page_views")
 }
 
 // ── Feed ────────────────────────────────────────────────────────────────────

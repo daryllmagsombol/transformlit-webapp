@@ -3,20 +3,22 @@
 import type { GraphQLBook } from '@transformlit/shared';
 
 interface BookCardProps {
-  book: GraphQLBook;
-  onRead?: () => void;
-  onBuy?: () => void;
-  statusPill?: React.ReactNode;
+  readonly book: GraphQLBook;
+  readonly onRead?: () => void;
+  readonly onBuy?: () => void;
+  readonly statusPill?: React.ReactNode;
 }
 
 export function BookCard({ book, onRead, onBuy, statusPill }: BookCardProps) {
   const isFree = book.accessLevel === 'FREE';
 
-  const priceLabel = isFree
-    ? 'FREE'
-    : book.price != null
-      ? `${book.currency ?? '$'}${book.price}`
-      : 'Premium';
+  function getPriceLabel(): string {
+    if (isFree) return 'FREE';
+    if (book.price === null) return 'Premium';
+    return `${book.currency ?? '$'}${book.price}`;
+  }
+
+  const priceLabel = getPriceLabel();
 
   return (
     <div className="bg-paper-warm rounded-xl border border-outline-variant overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">

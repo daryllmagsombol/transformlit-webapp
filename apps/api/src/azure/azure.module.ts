@@ -8,4 +8,5 @@ import { EmailService } from './email.service.js';
 })
 export class AzureModule {}
 
-export { BlobService, EmailService };
+export { BlobService } from './blob.service.js';
+export { EmailService } from './email.service.js';

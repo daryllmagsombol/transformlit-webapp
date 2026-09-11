@@ -33,7 +33,8 @@ export function formatRef(book: TranslationBook, chapter: number): string {
 }
 
 export function refToHref(translation: string, bookId: string, chapter: number, verse?: number): string {
-  return `/bible/${translation}/${bookId}/${chapter}${verse ? `#v${verse}` : ''}`;
+  const verseHash = verse ? `#v${verse}` : '';
+  return `/bible/${translation}/${bookId}/${chapter}${verseHash}`;
 }
 
 export function isOldTestament(book: TranslationBook): boolean {

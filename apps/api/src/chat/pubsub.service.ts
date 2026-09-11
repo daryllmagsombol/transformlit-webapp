@@ -9,7 +9,7 @@ interface PubSubTrigger {
 @Injectable()
 export class PubSubService implements OnModuleInit, OnModuleDestroy {
   private pool!: Pool;
-  private listeners = new Map<string, PubSubTrigger[]>();
+  private readonly listeners = new Map<string, PubSubTrigger[]>();
 
   constructor(private readonly config: ConfigService) {}
 
@@ -18,18 +18,7 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     this.pool = new Pool({ connectionString: url });
     const client = await this.pool.connect();
 
-    client.on('notification', (msg) => {
-      const payload = msg.payload ? JSON.parse(msg.payload) : null;
-      const triggers = this.listeners.get(msg.channel) ?? [];
-      if (triggers.length > 0) {
-        // Broadcast: one NOTIFY wakes every waiting subscriber for the channel,
-        // so all concurrent subscriptions receive each event.
-        this.listeners.set(msg.channel, []);
-        for (const trigger of triggers) {
-          trigger.resolve({ value: payload, done: false });
-        }
-      }
-    });
+    client.on('notification', (msg) => this.handleNotification(msg));
 
     // camelCase channel name, quoted so Postgres preserves case
     await client.query('LISTEN "messageAdded"');
@@ -41,6 +30,35 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     client.on('error', (err) => {
       console.error('[pubsub] Postgres LISTEN connection error:', err.message);
     });
+  }
+
+  /**
+   * Handles a pg 'notification' event. Payloads are JSON-encoded by publish();
+   * a rogue or malformed pg_notify payload must never throw out of the pg
+   * client's event emitter (an uncaught throw there can crash the process), so
+   * parse failures are logged and the message is skipped without resolving any
+   * waiting triggers.
+   */
+  private handleNotification(msg: { channel: string; payload?: string | null }) {
+    let payload: unknown = null;
+    if (msg.payload) {
+      try {
+        payload = JSON.parse(msg.payload);
+      } catch {
+        console.error('[pubsub] Ignoring notification with malformed JSON payload:', msg.payload);
+        return;
+      }
+    }
+
+    const triggers = this.listeners.get(msg.channel) ?? [];
+    if (triggers.length > 0) {
+      // Broadcast: one NOTIFY wakes every waiting subscriber for the channel,
+      // so all concurrent subscriptions receive each event.
+      this.listeners.set(msg.channel, []);
+      for (const trigger of triggers) {
+        trigger.resolve({ value: payload, done: false });
+      }
+    }
   }
 
   async onModuleDestroy() {
@@ -61,12 +79,12 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
           const existing = this.listeners.get(triggerName) ?? [];
           existing.push({ resolve: resolve as (v: IteratorResult<unknown>) => void });
           this.listeners.set(triggerName, existing);
-        }) as Promise<IteratorResult<T>>,
+        }),
       return: async () => {
         // listener cleanup happens naturally since it won't receive more events
-        return { value: undefined as any, done: true };
+        return { value: undefined as unknown, done: true };
       },
-      throw: async () => ({ value: undefined as any, done: true }),
+      throw: async () => ({ value: undefined as unknown, done: true }),
     };
   }
 }

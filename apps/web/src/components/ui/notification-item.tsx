@@ -10,29 +10,27 @@ const ICON_MAP: Record<string, { icon: string; bgClass: string; textClass: strin
 };
 
 interface NotificationItemProps {
-  type: string;
-  body: string;
-  timestamp: string;
-  read: boolean;
-  onPress: () => void;
-  children?: React.ReactNode;
+  readonly type: string;
+  readonly body: string;
+  readonly timestamp: string;
+  readonly read: boolean;
+  readonly onPress: () => void;
+  readonly children?: React.ReactNode;
 }
 
 export function NotificationItem({ type, body, timestamp, read, onPress, children }: NotificationItemProps) {
   const config = ICON_MAP[type] ?? { icon: 'notifications', bgClass: 'bg-surface-container', textClass: 'text-on-surface-variant' };
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
       onClick={onPress}
-      onKeyDown={(e) => e.key === 'Enter' && onPress()}
       aria-label={`Notification: ${body}`}
-      className={`p-4 rounded-xl hover:bg-surface-container transition-colors cursor-pointer border border-transparent hover:border-outline-variant relative ${
-        !read ? 'bg-surface-container' : 'bg-paper'
+      className={`p-4 rounded-xl hover:bg-surface-container transition-colors cursor-pointer border border-transparent hover:border-outline-variant relative text-left w-full ${
+        read ? 'bg-paper' : 'bg-surface-container'
       }`}
     >
-      {!read && <span className="absolute top-4 right-4 w-2 h-2 bg-info rounded-full" />}
+      {read ? null : <span className="absolute top-4 right-4 w-2 h-2 bg-info rounded-full" />}
       <div className="flex gap-3">
         <div className={`w-10 h-10 rounded-full ${config.bgClass} flex items-center justify-center flex-shrink-0`}>
           <span className={`material-symbols-outlined ${config.textClass} text-[20px]`}>
@@ -45,6 +43,6 @@ export function NotificationItem({ type, body, timestamp, read, onPress, childre
           {children}
         </div>
       </div>
-    </div>
+    </button>
   );
 }

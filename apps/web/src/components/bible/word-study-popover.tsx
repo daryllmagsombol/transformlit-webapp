@@ -3,8 +3,8 @@
 import type { ChapterWord } from '../../lib/bible/types';
 
 interface WordStudyPopoverProps {
-  word: ChapterWord;
-  text: string;
+  readonly word: ChapterWord;
+  readonly text: string;
 }
 
 export function WordStudyPopover({ word, text }: WordStudyPopoverProps) {

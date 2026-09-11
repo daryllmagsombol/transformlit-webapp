@@ -1,6 +1,6 @@
 type SkeletonCardProps = {
-  lines?: number;
-  className?: string;
+  readonly lines?: number;
+  readonly className?: string;
 };
 
 export function SkeletonCard({ lines = 2, className = '' }: SkeletonCardProps) {

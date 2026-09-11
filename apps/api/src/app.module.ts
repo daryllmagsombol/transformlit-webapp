@@ -1,12 +1,15 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { GraphQLError, GraphQLScalarType, Kind } from 'graphql';
 import { join } from 'node:path';
-import type { Request } from 'express';
+import type { ValidationContext } from 'graphql';
+import depthLimit from 'graphql-depth-limit';
 
 import { PrismaModule } from './prisma/prisma.module.js';
+import { StorageModule } from './storage/storage.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { GroupsModule } from './groups/groups.module.js';
@@ -71,15 +74,31 @@ export const DateTimeScalar = new GraphQLScalarType({
   },
 });
 
+/**
+ * Query-depth protection via `graphql-depth-limit` (max 10 levels of nesting).
+ * NOTE: a query-complexity rule (graphql-query-complexity@2 `createComplexityRule`)
+ * was previously added here but REMOVED because it breaks every GraphQL
+ * operation that uses variables — its validation-time argument coercion runs
+ * without the runtime variables and fails with "Variable ... was not provided".
+ * Depth limiting still guards against runaway nested/aliased queries with no
+ * dependency on variable values.
+ */
+function createQueryCostValidationRules(): ((context: ValidationContext) => unknown)[] {
+  return [depthLimit(10)];
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
 
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
       autoSchemaFile: join(__dirname, 'schema.gql'),
       sortSchema: true,
-      introspection: true,
+      introspection: process.env.NODE_ENV !== 'production',
+      // BISECT: depthLimit only
+      validationRules: [depthLimit(10)],
       buildSchemaOptions: {
         scalarsMap: [{ type: Date, scalar: DateTimeScalar }],
       },
@@ -105,6 +124,7 @@ export const DateTimeScalar = new GraphQLScalarType({
     }),
 
     PrismaModule,
+    StorageModule,
     AzureModule,
     UploadsModule,
     AuthModule,

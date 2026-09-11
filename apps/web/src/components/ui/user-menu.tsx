@@ -6,9 +6,11 @@ import type { GraphQLUser } from '@transformlit/shared';
 import { UserAvatar } from './user-avatar';
 import { useAuthStore } from '../../store';
 import { clearAuth } from '../../lib/auth';
+import { resetApolloState } from '../../lib/apollo-client';
+import { API_BASE } from '../../lib/constants';
 
 interface UserMenuProps {
-  user: GraphQLUser | null;
+  readonly user: GraphQLUser | null;
 }
 
 export function UserMenu({ user }: UserMenuProps) {
@@ -23,8 +25,24 @@ export function UserMenu({ user }: UserMenuProps) {
 
   const handleLogout = useCallback(() => {
     handleClose();
+    // Best-effort server-side session invalidation (clears the httpOnly
+    // refresh cookie). Failure must not block the client-side logout.
+    void (async () => {
+      try {
+        await fetch(`${API_BASE}/auth/logout`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+      } catch {
+        // Ignore: client state is cleared regardless.
+      }
+    })();
     clearAuth();
     useAuthStore.getState().clearAuth();
+    // Reset the Apollo cache so data from this session cannot leak into the
+    // next login. Best-effort: resetApolloState swallows errors and the
+    // navigation below is not gated on it.
+    void resetApolloState();
     router.push('/login');
   }, [handleClose, router]);
 
@@ -82,10 +100,7 @@ export function UserMenu({ user }: UserMenuProps) {
   const handleTriggerClick = () => setOpen((prev) => !prev);
 
   const handleTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setOpen(true);
-    } else if (event.key === 'ArrowUp') {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       setOpen(true);
     }
@@ -109,6 +124,7 @@ export function UserMenu({ user }: UserMenuProps) {
         type="button"
         onClick={handleTriggerClick}
         onKeyDown={handleTriggerKeyDown}
+        aria-label="User menu"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? 'user-menu' : undefined}
@@ -137,7 +153,7 @@ export function UserMenu({ user }: UserMenuProps) {
             </div>
           </div>
 
-          <div className="my-1 border-t border-outline-variant" role="separator" />
+          <hr className="my-1 border-t border-outline-variant" />
 
           <button
             ref={itemRef}

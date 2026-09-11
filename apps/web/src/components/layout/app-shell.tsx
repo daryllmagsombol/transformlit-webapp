@@ -8,7 +8,7 @@ import { useUIStore } from '../../store';
 import { ProfileSheetProvider } from '../friends/profile-sheet-provider';
 import { ChatProvider } from '../chat/chat-provider';
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({ children }: { readonly children: React.ReactNode }) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
 
   return (

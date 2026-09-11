@@ -198,6 +198,23 @@ describe('FriendsService', () => {
       );
     });
 
+    it('should convert a Prisma P2002 unique violation on create into a controlled error', async () => {
+      prisma.friendship.findFirst.mockResolvedValue(null);
+      const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      prisma.friendship.create.mockRejectedValue(p2002);
+      await expect(service.sendRequest('user-1', 'user-2')).rejects.toThrow(
+        'Friendship already exists',
+      );
+      expect(notificationsService.createNotification).not.toHaveBeenCalled();
+    });
+
+    it('should re-throw non-unique errors from create unchanged', async () => {
+      prisma.friendship.findFirst.mockResolvedValue(null);
+      prisma.friendship.create.mockRejectedValue(new Error('DB down'));
+      await expect(service.sendRequest('user-1', 'user-2')).rejects.toThrow('DB down');
+      expect(notificationsService.createNotification).not.toHaveBeenCalled();
+    });
+
     it('should check both directions for an existing friendship', async () => {
       prisma.friendship.findFirst.mockResolvedValue(null);
       await service.sendRequest('user-1', 'user-2');
@@ -287,6 +304,17 @@ describe('FriendsService', () => {
       });
     });
 
+    it('should throw if the friendship is not PENDING (e.g. already ACCEPTED)', async () => {
+      prisma.friendship.findUnique.mockResolvedValue({
+        ...mockFriendship,
+        status: 'ACCEPTED',
+      });
+      await expect(
+        service.acceptRequest('friendship-1', 'user-2'),
+      ).rejects.toThrow('Only pending requests can be accepted');
+      expect(prisma.friendship.update).not.toHaveBeenCalled();
+    });
+
     it('should remove pending FRIEND_REQUEST notification on accept', async () => {
       notificationsService.removeFriendRequestNotifications.mockClear();
       await service.acceptRequest('friendship-1', 'user-2');
@@ -327,6 +355,17 @@ describe('FriendsService', () => {
         where: { id: 'friendship-1' },
         data: { status: 'REJECTED' },
       });
+    });
+
+    it('should throw if the friendship is not PENDING (e.g. already REJECTED)', async () => {
+      prisma.friendship.findUnique.mockResolvedValue({
+        ...mockFriendship,
+        status: 'REJECTED',
+      });
+      await expect(
+        service.rejectRequest('friendship-1', 'user-2'),
+      ).rejects.toThrow('Only pending requests can be rejected');
+      expect(prisma.friendship.update).not.toHaveBeenCalled();
     });
 
     it('should remove pending FRIEND_REQUEST notification on reject', async () => {

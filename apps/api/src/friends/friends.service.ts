@@ -56,16 +56,26 @@ export class FriendsService {
       },
     });
 
-    const friendship = rejected
-      ? await this.prisma.friendship.update({
-          where: { id: rejected.id },
-          // Reorient to the new request's direction so the surviving row matches
-          // the caller (this also covers reactivation from the opposite side).
-          data: { requesterId, addresseeId, status: 'PENDING' },
-        })
-      : await this.prisma.friendship.create({
-          data: { requesterId, addresseeId, status: 'PENDING' },
-        });
+    // Two concurrent requests for the same pair can both pass the pre-checks
+    // above and race into create/update. The DB unique constraint catches the
+    // loser with a P2002 - convert that into the controlled error instead of
+    // leaking the raw Prisma error. Defense-in-depth for the race window.
+    let friendship;
+    try {
+      friendship = rejected
+        ? await this.prisma.friendship.update({
+            where: { id: rejected.id },
+            // Reorient to the new request's direction so the surviving row matches
+            // the caller (this also covers reactivation from the opposite side).
+            data: { requesterId, addresseeId, status: 'PENDING' },
+          })
+        : await this.prisma.friendship.create({
+            data: { requesterId, addresseeId, status: 'PENDING' },
+          });
+    } catch (err: any) {
+      if (err?.code === 'P2002') throw new Error('Friendship already exists');
+      throw err;
+    }
 
     const requester = await this.prisma.user.findUnique({
       where: { id: requesterId },
@@ -91,7 +101,10 @@ export class FriendsService {
     const friendship = await this.prisma.friendship.findUnique({
       where: { id: friendshipId },
     });
-    if (!friendship || friendship.addresseeId !== userId) throw new Error('Not authorized');
+    if (friendship?.addresseeId !== userId) throw new Error('Not authorized');
+    if (friendship.status !== 'PENDING') {
+      throw new Error('Only pending requests can be accepted');
+    }
     await this.notifications.removeFriendRequestNotifications(userId, friendshipId);
 
     const updated = await this.prisma.friendship.update({
@@ -123,7 +136,10 @@ export class FriendsService {
     const friendship = await this.prisma.friendship.findUnique({
       where: { id: friendshipId },
     });
-    if (!friendship || friendship.addresseeId !== userId) throw new Error('Not authorized');
+    if (friendship?.addresseeId !== userId) throw new Error('Not authorized');
+    if (friendship.status !== 'PENDING') {
+      throw new Error('Only pending requests can be rejected');
+    }
     await this.notifications.removeFriendRequestNotifications(userId, friendshipId);
     return this.prisma.friendship.update({
       where: { id: friendshipId },
@@ -174,24 +190,7 @@ export class FriendsService {
       else excludedIds.add(other); // PENDING, REJECTED, BLOCKED
     }
 
-    const scores = new Map<string, number>();
-    if (myFriendIds.size > 0) {
-      const rows = await this.prisma.friendship.findMany({
-        where: {
-          OR: [
-            { requesterId: { in: [...myFriendIds] } },
-            { addresseeId: { in: [...myFriendIds] } },
-          ],
-          status: 'ACCEPTED',
-        },
-      });
-      for (const f of rows) {
-        const other = myFriendIds.has(f.requesterId) ? f.addresseeId : f.requesterId;
-        if (excludedIds.has(other) || myFriendIds.has(other)) continue;
-        scores.set(other, (scores.get(other) ?? 0) + 1);
-      }
-    }
-
+    const scores = await this.computeFriendScores(myFriendIds, excludedIds);
     const ranked = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, clamped);
 
     if (ranked.length === 0) {
@@ -210,5 +209,30 @@ export class FriendsService {
     });
     const byId = new Map(users.map((u) => [u.id, u]));
     return ranked.map(([id]) => byId.get(id)).filter(Boolean) as any;
+  }
+
+  /** Compute friend-of-friend mutual-connection scores for suggestions. */
+  private async computeFriendScores(
+    myFriendIds: Set<string>,
+    excludedIds: Set<string>,
+  ): Promise<Map<string, number>> {
+    const scores = new Map<string, number>();
+    if (myFriendIds.size === 0) return scores;
+
+    const rows = await this.prisma.friendship.findMany({
+      where: {
+        OR: [
+          { requesterId: { in: [...myFriendIds] } },
+          { addresseeId: { in: [...myFriendIds] } },
+        ],
+        status: 'ACCEPTED',
+      },
+    });
+    for (const f of rows) {
+      const other = myFriendIds.has(f.requesterId) ? f.addresseeId : f.requesterId;
+      if (excludedIds.has(other) || myFriendIds.has(other)) continue;
+      scores.set(other, (scores.get(other) ?? 0) + 1);
+    }
+    return scores;
   }
 }

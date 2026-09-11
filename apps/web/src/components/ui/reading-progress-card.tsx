@@ -1,12 +1,12 @@
 'use client';
 
 interface ReadingProgressCardProps {
-  coverUrl?: string | null;
-  title: string;
-  author?: string | null;
-  currentPage: number;
-  totalPages: number;
-  onContinue?: () => void;
+  readonly coverUrl?: string | null;
+  readonly title: string;
+  readonly author?: string | null;
+  readonly currentPage: number;
+  readonly totalPages: number;
+  readonly onContinue?: () => void;
 }
 
 export function ReadingProgressCard({
@@ -73,7 +73,7 @@ export function ReadingProgressCard({
         onClick={onContinue}
         className="w-full py-2.5 bg-primary text-on-primary rounded-lg font-display text-small font-bold hover:bg-brand-orange-dark transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
       >
-        <span className="material-symbols-outlined text-[18px]">auto_stories</span>
+        <span className="material-symbols-outlined text-[18px]">auto_stories</span>{' '}
         Continue Reading
       </button>
     </div>

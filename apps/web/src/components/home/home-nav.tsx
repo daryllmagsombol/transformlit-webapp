@@ -14,12 +14,17 @@ export function HomeNav() {
   useEffect(() => setMounted(true), []);
   const isDark = mounted && resolvedTheme === 'dark';
 
+  function getThemeIcon(): string {
+    if (!mounted) return 'dark_mode';
+    return isDark ? 'light_mode' : 'dark_mode';
+  }
+
   return (
     <header className="sticky top-0 z-50 bg-surface/95 backdrop-blur border-b border-outline-variant">
       <nav className="mx-auto max-w-[1200px] px-6 h-16 grid grid-cols-[1fr_auto_1fr] items-center gap-4">
         {/* col 1: logo, left */}
         <Link href="/" className="justify-self-start font-display text-headline-h3 font-bold text-ink-black inline-flex items-center gap-2">
-          <span aria-hidden className="inline-block h-4 w-4 rounded-sm bg-brand" />
+          <span aria-hidden className="inline-block h-4 w-4 rounded-sm bg-brand" />{' '}
           Transform Lit
         </Link>
 
@@ -49,7 +54,7 @@ export function HomeNav() {
             className="btn-ghost"
             whileTap={reduce ? undefined : { scale: 0.97 }}
           >
-            <span className="material-symbols-outlined">{mounted ? (isDark ? 'light_mode' : 'dark_mode') : 'dark_mode'}</span>
+            <span className="material-symbols-outlined">{getThemeIcon()}</span>
           </motion.button>
           <div className="hidden lg:block">
             <motion.span
@@ -76,9 +81,8 @@ export function HomeNav() {
       </nav>
 
       {open && (
-        <div
+        <nav
           id="mobile-menu"
-          role="navigation"
           aria-label="Mobile navigation"
           className="lg:hidden border-t border-outline-variant bg-surface px-6 py-4 flex flex-col gap-2"
         >
@@ -99,7 +103,7 @@ export function HomeNav() {
           >
             Login
           </Link>
-        </div>
+        </nav>
       )}
     </header>
   );

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateGroupInput, UpdateGroupInput } from './models/group.model.js';
-import { GroupCategory } from '@transformlit/shared';
+import { GroupCategory, UserRole } from '@transformlit/shared';
 import { Prisma } from '@prisma/client';
 
 /** Reusable include to count active members and fetch the current user's membership */
@@ -35,9 +35,15 @@ export class GroupsService {
 
   // ── Queries ────────────────────────────────────────────────────────────────
 
-  async listGroups(userId?: string) {
+  async listGroups(userId: string) {
     const groups = await this.prisma.group.findMany({
-      where: { deletedAt: null },
+      where: {
+        deletedAt: null,
+        OR: [
+          { visibility: 'PUBLIC' },
+          { members: { some: { userId, status: 'ACTIVE' } } },
+        ],
+      },
       include: groupInclude(userId),
       orderBy: { createdAt: 'desc' },
     });
@@ -81,22 +87,36 @@ export class GroupsService {
     });
   }
 
-  async findById(id: string, userId?: string) {
+  async findById(id: string, userId: string) {
     const g = await this.prisma.group.findUnique({
       where: { id, deletedAt: null },
       include: groupInclude(userId),
     });
     if (!g) return null;
+    if (!(await this.canView(g, userId))) return null;
     return mapGroup(g, userId);
   }
 
-  async findBySlug(slug: string, userId?: string) {
+  async findBySlug(slug: string, userId: string) {
     const g = await this.prisma.group.findUnique({
       where: { slug, deletedAt: null },
       include: groupInclude(userId),
     });
     if (!g) return null;
+    if (!(await this.canView(g, userId))) return null;
     return mapGroup(g, userId);
+  }
+
+  /** A group is viewable when it is PUBLIC or the requester is an ACTIVE member (no existence leak). */
+  private async canView(
+    group: { id: string; visibility: string },
+    requesterId: string,
+  ): Promise<boolean> {
+    if (group.visibility === 'PUBLIC') return true;
+    const m = await this.prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId: group.id, userId: requesterId } },
+    });
+    return m?.status === 'ACTIVE';
   }
 
   // ── Mutations ──────────────────────────────────────────────────────────────
@@ -104,8 +124,8 @@ export class GroupsService {
   async create(userId: string, input: CreateGroupInput) {
     const slug = input.name
       .toLowerCase()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9-]/g, '');
+      .replaceAll(/\s+/g, '-')
+      .replaceAll(/[^a-z0-9-]/g, '');
     const group = await this.prisma.group.create({
       data: {
         name: input.name,
@@ -126,47 +146,86 @@ export class GroupsService {
   async join(groupId: string, userId: string) {
     const group = await this.prisma.group.findUnique({ where: { id: groupId } });
     if (!group) throw new Error('Group not found');
-    const member = await this.prisma.groupMember.upsert({
-      where: { groupId_userId: { groupId, userId } },
-      update: { status: group.visibility === 'PUBLIC' ? 'ACTIVE' : 'PENDING' },
-      create: {
-        groupId,
-        userId,
-        status: group.visibility === 'PUBLIC' ? 'ACTIVE' : 'PENDING',
-      },
+    const existing = await this.getMembershipFor(groupId, userId);
+    if (existing?.status === 'BANNED') {
+      throw new ForbiddenException('You are banned from this group');
+    }
+    const status = group.visibility === 'PUBLIC' ? 'ACTIVE' : 'PENDING';
+    if (existing) {
+      return this.prisma.groupMember.update({
+        where: { id: existing.id },
+        data: { status },
+      });
+    }
+    return this.prisma.groupMember.create({
+      data: { groupId, userId, status },
     });
-    return member;
   }
 
   async leave(groupId: string, userId: string) {
+    const membership = await this.getMembershipFor(groupId, userId);
+    if (membership?.role === 'OWNER') {
+      const ownerCount = await this.prisma.groupMember.count({
+        where: { groupId, role: 'OWNER', status: 'ACTIVE' },
+      });
+      if (ownerCount <= 1) {
+        throw new BadRequestException('Transfer ownership before leaving');
+      }
+    }
     await this.prisma.groupMember.deleteMany({ where: { groupId, userId } });
     return true;
   }
 
-  async updateGroup(groupId: string, input: UpdateGroupInput) {
+  async updateGroup(
+    groupId: string,
+    actorId: string,
+    input: UpdateGroupInput,
+    actorRole: UserRole,
+  ) {
+    await this.assertCanManageGroup(groupId, actorId, actorRole);
     return this.prisma.group.update({ where: { id: groupId }, data: input });
   }
 
-  async deleteGroup(groupId: string) {
+  async deleteGroup(groupId: string, actorId: string, actorRole: UserRole) {
+    await this.assertCanManageGroup(groupId, actorId, actorRole, { ownerOnly: true });
     return this.prisma.group.update({
       where: { id: groupId },
       data: { deletedAt: new Date() },
     });
   }
 
-  async searchGroups(query: string) {
+  async searchGroups(query: string, userId: string) {
     const groups = await this.prisma.group.findMany({
-      where: { deletedAt: null, name: { contains: query, mode: 'insensitive' } },
+      where: {
+        deletedAt: null,
+        name: { contains: query, mode: 'insensitive' },
+        OR: [
+          { visibility: 'PUBLIC' },
+          { members: { some: { userId, status: 'ACTIVE' } } },
+        ],
+      },
       take: 20,
       include: { _count: { select: { members: { where: { status: 'ACTIVE' } } } } },
     });
-    return groups.map((g) => mapGroup(g));
+    return groups.map((g) => mapGroup(g, userId));
   }
 
-  async listMembers(groupId: string) {
+  async listMembers(groupId: string, requesterId: string) {
+    const group = await this.prisma.group.findUnique({ where: { id: groupId } });
+    if (!group) throw new NotFoundException('Group not found');
+    if (!(await this.canView(group, requesterId))) {
+      throw new ForbiddenException('You do not have access to this group');
+    }
+    const requesterMembership = await this.getMembershipFor(groupId, requesterId);
+    const isModerator =
+      requesterMembership?.status === 'ACTIVE' &&
+      (requesterMembership.role === 'OWNER' || requesterMembership.role === 'MODERATOR');
+
     return this.prisma.groupMember.findMany({
-      where: { groupId },
-      include: { user: true },
+      where: isModerator ? { groupId } : { groupId, status: 'ACTIVE' },
+      include: {
+        user: { select: { id: true, displayName: true, avatarUrl: true } },
+      },
       orderBy: { joinedAt: 'asc' },
     });
   }
@@ -180,13 +239,33 @@ export class GroupsService {
   private async assertCanModerate(groupId: string, actorId: string) {
     const membership = await this.getMembershipFor(groupId, actorId);
     if (
-      !membership ||
-      membership.status !== 'ACTIVE' ||
-      (membership.role !== 'OWNER' && membership.role !== 'MODERATOR')
+      membership?.status !== 'ACTIVE' ||
+      (membership?.role !== 'OWNER' && membership?.role !== 'MODERATOR')
     ) {
       throw new ForbiddenException('You need to be an owner or moderator');
     }
     return membership;
+  }
+
+  /** ACTIVE owner/moderator (or a platform ADMIN) may update; delete requires an ACTIVE OWNER or platform ADMIN. */
+  private async assertCanManageGroup(
+    groupId: string,
+    actorId: string,
+    actorRole: UserRole,
+    opts: { ownerOnly?: boolean } = {},
+  ) {
+    if (actorRole === UserRole.ADMIN) return;
+    const membership = await this.getMembershipFor(groupId, actorId);
+    const canManage =
+      membership?.status === 'ACTIVE' &&
+      (opts.ownerOnly ? membership.role === 'OWNER' : membership.role !== 'MEMBER');
+    if (!canManage) {
+      throw new ForbiddenException(
+        opts.ownerOnly
+          ? 'Only the group owner can delete this group'
+          : 'You need to be an owner or moderator',
+      );
+    }
   }
 
   async approveMember(groupId: string, actorId: string, userId: string) {

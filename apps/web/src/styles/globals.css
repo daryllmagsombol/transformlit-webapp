@@ -237,6 +237,20 @@ button, a, input, select, textarea {
   }
 }
 
+/* ── Dialog reset ─────────────────────────────────────────────── */
+/* Native <dialog> has user-agent defaults (margin:auto, padding, border,
+   width/height:fit-content) that conflict with our flex-centered layout. */
+dialog {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+}
+
 /* ── Utilities ────────────────────────────────────────────────── */
 .text-balance { text-wrap: balance; }
 

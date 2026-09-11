@@ -4,11 +4,11 @@ const mockPush = jest.fn();
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
+  usePathname: () => '/books',
 }));
 
 let mockAuthState: Record<string, unknown> = {
   user: { id: '1', displayName: 'Test User', avatarUrl: null },
-  token: 'test-token',
   isHydrated: true,
 };
 
@@ -75,28 +75,27 @@ describe('BooksClient', () => {
     mockQuery.mockReset();
     mockAuthState = {
       user: { id: '1', displayName: 'Test User', avatarUrl: null },
-      token: 'test-token',
       isHydrated: true,
     };
   });
 
   describe('auth guard', () => {
     it('shows loading spinner when not hydrated', () => {
-      mockAuthState = { user: null, token: 'test-token', isHydrated: false };
+      mockAuthState = { user: { id: '1' }, isHydrated: false };
       render(<BooksClient />);
       expect(screen.getByText('Loading…')).toBeInTheDocument();
     });
 
-    it('shows loading spinner when no token', () => {
-      mockAuthState = { user: null, token: null, isHydrated: true };
+    it('shows loading spinner when no user is signed in', () => {
+      mockAuthState = { user: null, isHydrated: true };
       render(<BooksClient />);
       expect(screen.getByText('Loading…')).toBeInTheDocument();
     });
 
-    it('redirects to login when no token and hydrated', () => {
-      mockAuthState = { user: null, token: null, isHydrated: true };
+    it('redirects to login when no user is signed in and hydrated', () => {
+      mockAuthState = { user: null, isHydrated: true };
       render(<BooksClient />);
-      expect(mockPush).toHaveBeenCalledWith('/login');
+      expect(mockPush).toHaveBeenCalledWith('/login?redirect=%2Fbooks');
     });
   });
 
@@ -380,7 +379,30 @@ describe('BooksClient', () => {
   });
 
   describe('read and buy actions', () => {
-    it('shows info toast when read button is clicked', async () => {
+    it('opens the reader when a read button is clicked', async () => {
+      mockQuery.mockResolvedValueOnce({
+        data: {
+          books: [
+            {
+              id: 'book-1',
+              title: 'Sample',
+              accessLevel: 'FREE',
+              status: 'PUBLISHED',
+              conversionStatus: 'READY',
+              pageCount: 10,
+              coverUrl: null,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+      });
+      render(<BooksClient />);
+      const readButton = await screen.findByTestId('read-btn');
+      fireEvent.click(readButton);
+      expect(mockPush).toHaveBeenCalledWith('/books/book-1/read');
+    });
+
+    it('shows a preparing toast when a book is not ready', async () => {
       mockQuery.mockResolvedValueOnce({
         data: {
           books: [
@@ -397,7 +419,7 @@ describe('BooksClient', () => {
 
       fireEvent.click(screen.getByTestId('read-btn'));
 
-      expect(mockAddToast).toHaveBeenCalledWith('Reader opening soon.', 'info');
+      expect(mockAddToast).toHaveBeenCalledWith('This book is still being prepared.', 'info');
     });
 
     it('shows info toast when buy button is clicked', async () => {

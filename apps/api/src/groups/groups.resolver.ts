@@ -12,7 +12,7 @@ import { GroupsService } from './groups.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Group, GroupMember, CreateGroupInput, UpdateGroupInput } from './models/group.model.js';
-import { GroupCategory, GroupMemberRole } from '@transformlit/shared';
+import { GroupCategory, GroupMemberRole, UserRole } from '@transformlit/shared';
 
 @Resolver(() => Group)
 export class GroupsResolver {
@@ -67,14 +67,20 @@ export class GroupsResolver {
 
   @Query(() => [Group], { name: 'searchGroups' })
   @UseGuards(JwtAuthGuard)
-  async searchGroups(@Args('query') query: string) {
-    return this.groupsService.searchGroups(query);
+  async searchGroups(
+    @Args('query') query: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.groupsService.searchGroups(query, user.id);
   }
 
   @Query(() => [GroupMember], { name: 'groupMembers' })
   @UseGuards(JwtAuthGuard)
-  async groupMembers(@Args('groupId') groupId: string) {
-    return this.groupsService.listMembers(groupId);
+  async groupMembers(
+    @Args('groupId') groupId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.groupsService.listMembers(groupId, user.id);
   }
 
   // ── Mutations ──────────────────────────────────────────────────────────────
@@ -109,16 +115,20 @@ export class GroupsResolver {
   @Mutation(() => Group, { name: 'updateGroup' })
   @UseGuards(JwtAuthGuard)
   async updateGroup(
+    @CurrentUser() user: { id: string; role: UserRole },
     @Args('groupId') groupId: string,
     @Args('input') input: UpdateGroupInput,
   ) {
-    return this.groupsService.updateGroup(groupId, input);
+    return this.groupsService.updateGroup(groupId, user.id, input, user.role);
   }
 
   @Mutation(() => Group, { name: 'deleteGroup' })
   @UseGuards(JwtAuthGuard)
-  async deleteGroup(@Args('groupId') groupId: string) {
-    return this.groupsService.deleteGroup(groupId);
+  async deleteGroup(
+    @CurrentUser() user: { id: string; role: UserRole },
+    @Args('groupId') groupId: string,
+  ) {
+    return this.groupsService.deleteGroup(groupId, user.id, user.role);
   }
 
   @Mutation(() => GroupMember, { name: 'approveGroupMember' })

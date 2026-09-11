@@ -1,8 +1,28 @@
-import { Field, ObjectType, InputType, ID, registerEnumType } from '@nestjs/graphql';
-import { BookAccessLevel, BookStatus } from '@transformlit/shared';
+import { Field, ObjectType, InputType, ID, Int, registerEnumType } from '@nestjs/graphql';
+import { BookAccessLevel, BookFormat, BookStatus, ConversionStatus } from '@transformlit/shared';
 
 registerEnumType(BookAccessLevel, { name: 'BookAccessLevel' });
 registerEnumType(BookStatus, { name: 'BookStatus' });
+registerEnumType(BookFormat, { name: 'BookFormat' });
+registerEnumType(ConversionStatus, { name: 'ConversionStatus' });
+
+@ObjectType()
+export class BookTocEntry {
+  @Field(() => ID)
+  id: string;
+
+  @Field()
+  title: string;
+
+  @Field(() => Int)
+  page: number;
+
+  @Field(() => Int)
+  depth: number;
+
+  @Field(() => Int)
+  order: number;
+}
 
 @ObjectType()
 export class Book {
@@ -32,6 +52,21 @@ export class Book {
 
   @Field(() => BookStatus)
   status: BookStatus;
+
+  @Field(() => BookFormat, { nullable: true })
+  format?: BookFormat;
+
+  @Field(() => ConversionStatus)
+  conversionStatus: ConversionStatus;
+
+  @Field(() => Int, { nullable: true })
+  pageCount?: number;
+
+  /**
+   * Populated by the BooksResolver `toc` resolve field so it is available on
+   * every Book path (`findById`, `listBooks`, `BookProgress.book`).
+   */
+  toc?: BookTocEntry[];
 
   @Field({ nullable: true })
   totalPages?: number;

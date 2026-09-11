@@ -3,10 +3,10 @@
 import { useEffect, useCallback } from 'react';
 
 interface ModalProps {
-  open: boolean;
-  onClose: () => void;
-  title?: string;
-  children: React.ReactNode;
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly title?: string;
+  readonly children: React.ReactNode;
 }
 
 export function Modal({ open, onClose, title, children }: ModalProps) {
@@ -31,11 +31,17 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center" role="dialog" aria-modal="true">
-      <div
-        className="absolute inset-0 bg-black/50 dark:bg-black/70"
-        onClick={onClose}
-      />
+    <dialog
+      className="fixed inset-0 z-[80] flex items-center justify-center"
+      aria-modal="true"
+      open
+    >
+      <button
+         type="button"
+         className="absolute inset-0 bg-black/50 dark:bg-black/70 cursor-default"
+         onClick={onClose}
+         aria-label="Close modal"
+       />
       <div className="relative bg-surface border border-outline-variant rounded-xl shadow-lg max-w-lg w-full mx-4 max-h-[90dvh] overflow-y-auto animate-fade-in p-6">
         {title && (
           <div className="flex items-center justify-between mb-4">
@@ -51,6 +57,6 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
         )}
         {children}
       </div>
-    </div>
+    </dialog>
   );
 }

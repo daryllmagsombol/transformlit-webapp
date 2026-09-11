@@ -19,12 +19,12 @@ function getMemberUserId(m: GraphQLGroupMember): string {
 }
 
 interface GroupMembersProps {
-  groupId: string;
-  canModerate: boolean;
-  isOwner: boolean;
+  readonly groupId: string;
+  readonly canModerate: boolean;
+  readonly isOwner: boolean;
 }
 
-function Avatar({ user, size = 40 }: { user: GraphQLUser; size?: number }) {
+function Avatar({ user, size = 40 }: { readonly user: GraphQLUser; readonly size?: number }) {
   const initial = user.displayName?.[0]?.toUpperCase() ?? '?';
   if (user.avatarUrl) {
     return (
@@ -47,7 +47,7 @@ function Avatar({ user, size = 40 }: { user: GraphQLUser; size?: number }) {
   );
 }
 
-function RoleBadge({ role }: { role: string }) {
+function RoleBadge({ role }: { readonly role: string }) {
   const colors: Record<string, string> = {
     OWNER: 'bg-primary-container text-on-primary-container',
     MODERATOR: 'bg-secondary-container text-on-secondary-container',

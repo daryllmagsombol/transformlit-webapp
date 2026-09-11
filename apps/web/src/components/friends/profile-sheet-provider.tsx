@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, ReactNode } from 'react';
 import { useAuthStore } from '../../store';
 import { UserProfileSheet } from './user-profile-sheet';
 
@@ -17,15 +17,20 @@ export function useProfileSheet() {
   return ctx;
 }
 
-export function ProfileSheetProvider({ children }: { children: ReactNode }) {
+export function ProfileSheetProvider({ children }: { readonly children: ReactNode }) {
   const [userId, setUserId] = useState<string | null>(null);
   const currentUserId = useAuthStore((s) => s.user?.id);
 
   const openProfile = useCallback((id: string) => setUserId(id), []);
   const closeProfile = useCallback(() => setUserId(null), []);
 
+  const contextValue = useMemo(
+    () => ({ openProfile, closeProfile }),
+    [openProfile, closeProfile],
+  );
+
   return (
-    <ProfileSheetContext.Provider value={{ openProfile, closeProfile }}>
+    <ProfileSheetContext.Provider value={contextValue}>
       {children}
       {userId && (
         <UserProfileSheet

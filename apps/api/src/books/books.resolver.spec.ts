@@ -1,5 +1,7 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
+import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { BooksResolver } from './books.resolver';
 import { BooksService } from './books.service';
 
@@ -46,7 +48,7 @@ const mockHighlight = {
   createdAt: new Date('2024-01-01'),
 };
 
-const mockUser = { id: 'user-1' };
+const mockUser = { id: 'user-1', role: 'MEMBER' };
 
 describe('BooksResolver', () => {
   let resolver: BooksResolver;
@@ -56,8 +58,11 @@ describe('BooksResolver', () => {
     const mockBooksService = {
       listBooks: jest.fn().mockResolvedValue([mockBook]),
       findById: jest.fn().mockResolvedValue(mockBook),
+      assertCanRead: jest.fn().mockResolvedValue(mockBook),
+      listToc: jest.fn().mockResolvedValue([]),
       uploadBook: jest.fn().mockResolvedValue(mockBook),
       updateBook: jest.fn().mockResolvedValue({ ...mockBook, title: 'Updated' }),
+      uploadPdf: jest.fn().mockResolvedValue({ ...mockBook, status: 'PUBLISHED' }),
       deleteBook: jest.fn().mockResolvedValue(undefined),
       getProgress: jest.fn().mockResolvedValue(mockProgress),
       saveProgress: jest.fn().mockResolvedValue(mockProgress),
@@ -94,8 +99,9 @@ describe('BooksResolver', () => {
   // ── book query ──────────────────────────────────────────────────────────────
 
   describe('book', () => {
-    it('should delegate to findById', async () => {
-      const result = await resolver.book('book-1');
+    it('gates on assertCanRead then delegates to findById', async () => {
+      const result = await resolver.book(mockUser as never, 'book-1');
+      expect(booksService.assertCanRead).toHaveBeenCalledWith('book-1', 'user-1');
       expect(booksService.findById).toHaveBeenCalledWith('book-1');
       expect(result).toEqual(mockBook);
     });
@@ -145,10 +151,10 @@ describe('BooksResolver', () => {
   // ── updateBook mutation ────────────────────────────────────────────────────
 
   describe('updateBook', () => {
-    it('should delegate to updateBook with id and input', async () => {
+    it('should delegate to updateBook with id, input, and user', async () => {
       const input = { title: 'Updated' };
-      const result = await resolver.updateBook('book-1', input as any);
-      expect(booksService.updateBook).toHaveBeenCalledWith('book-1', input);
+      const result = await resolver.updateBook(mockUser as any, 'book-1', input as any);
+      expect(booksService.updateBook).toHaveBeenCalledWith('book-1', input, 'user-1', 'MEMBER');
       expect(result).toEqual({ ...mockBook, title: 'Updated' });
     });
   });
@@ -157,9 +163,48 @@ describe('BooksResolver', () => {
 
   describe('deleteBook', () => {
     it('should delegate to deleteBook and return true', async () => {
-      const result = await resolver.deleteBook('book-1');
-      expect(booksService.deleteBook).toHaveBeenCalledWith('book-1');
+      const result = await resolver.deleteBook(mockUser as any, 'book-1');
+      expect(booksService.deleteBook).toHaveBeenCalledWith('book-1', 'user-1', 'MEMBER');
       expect(result).toBe(true);
+    });
+  });
+
+  // ── uploadPdf mutation ────────────────────────────────────────────────────
+
+  describe('uploadPdf', () => {
+    const makeFile = (content: Buffer) => ({
+      createReadStream: () => {
+        const { Readable } = require('stream');
+        return Readable.from([content]);
+      },
+    });
+
+    it('should delegate to uploadPdf with buffered content and user', async () => {
+      const pdfContent = Buffer.from('%PDF-1.7 fake');
+      const result = await resolver.uploadPdf(
+        mockUser as any,
+        'book-1',
+        makeFile(pdfContent) as any,
+      );
+      expect(booksService.uploadPdf).toHaveBeenCalledWith(
+        'book-1',
+        pdfContent,
+        '',
+        'user-1',
+        'MEMBER',
+      );
+      expect(result).toEqual({ ...mockBook, status: 'PUBLISHED' });
+    });
+
+    it('should reject when streamed content exceeds the size cap', async () => {
+      const oversized = Buffer.concat([
+        Buffer.from('%PDF-'),
+        Buffer.alloc(MAX_FILE_SIZE_BYTES + 1),
+      ]);
+      await expect(
+        resolver.uploadPdf(mockUser as any, 'book-1', makeFile(oversized) as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(booksService.uploadPdf).not.toHaveBeenCalled();
     });
   });
 
@@ -188,9 +233,9 @@ describe('BooksResolver', () => {
   // ── removeBookmark mutation ────────────────────────────────────────────────
 
   describe('removeBookmark', () => {
-    it('should delegate to removeBookmark and return true', async () => {
-      const result = await resolver.removeBookmark('bm-1');
-      expect(booksService.removeBookmark).toHaveBeenCalledWith('bm-1');
+    it('should delegate to removeBookmark with id and user', async () => {
+      const result = await resolver.removeBookmark(mockUser as any, 'bm-1');
+      expect(booksService.removeBookmark).toHaveBeenCalledWith('bm-1', 'user-1');
       expect(result).toBe(true);
     });
   });
@@ -209,10 +254,102 @@ describe('BooksResolver', () => {
   // ── removeHighlight mutation ───────────────────────────────────────────────
 
   describe('removeHighlight', () => {
-    it('should delegate to removeHighlight and return true', async () => {
-      const result = await resolver.removeHighlight('hl-1');
-      expect(booksService.removeHighlight).toHaveBeenCalledWith('hl-1');
+    it('should delegate to removeHighlight with id and user', async () => {
+      const result = await resolver.removeHighlight(mockUser as any, 'hl-1');
+      expect(booksService.removeHighlight).toHaveBeenCalledWith('hl-1', 'user-1');
       expect(result).toBe(true);
+    });
+  });
+
+  // ── reader manifest ────────────────────────────────────────────────────────
+
+  describe('reader manifest', () => {
+    it('gates bookToc on entitlement before listing the toc', async () => {
+      const entries = [{ id: 't1', title: 'One', page: 1, depth: 0, order: 0 }];
+      booksService.assertCanRead.mockResolvedValue(mockBook);
+      booksService.listToc.mockResolvedValue(entries);
+      await expect(resolver.bookToc(mockUser as never, 'book-1')).resolves.toEqual(entries);
+      expect(booksService.assertCanRead).toHaveBeenCalledWith('book-1', 'user-1');
+      expect(booksService.listToc).toHaveBeenCalledWith('book-1');
+    });
+
+    it('does not leak toc when the book is not readable', async () => {
+      booksService.assertCanRead.mockRejectedValue(new Error('Book not available'));
+      await expect(resolver.bookToc(mockUser as never, 'book-1')).rejects.toThrow(/not available/);
+      expect(booksService.listToc).not.toHaveBeenCalled();
+    });
+
+    it('resolves toc on the list path only for a readable book', async () => {
+      const entries = [{ id: 't1', title: 'One', page: 1, depth: 0, order: 0 }];
+      const readableParent = {
+        id: 'book-1',
+        deletedAt: null,
+        status: 'PUBLISHED',
+        conversionStatus: 'READY',
+        accessLevel: 'FREE',
+        createdById: null,
+      };
+      const prisma = {
+        bookAccess: { findUnique: jest.fn().mockResolvedValue(null) },
+        bookTocEntry: { findMany: jest.fn().mockResolvedValue(entries) },
+      };
+      const gatedResolver = new BooksResolver(
+        new BooksService(prisma as never, {} as never, {} as never),
+      );
+
+      // A DRAFT book must return no entries even though the query does not
+      // filter `books` by status/entitlement (store browse flow).
+      await expect(
+        gatedResolver.toc({ ...readableParent, status: 'DRAFT', toc: entries } as never, mockUser as never),
+      ).resolves.toEqual([]);
+      // A RESTRICTED book without an access row must also return none.
+      await expect(
+        gatedResolver.toc({ ...readableParent, accessLevel: 'RESTRICTED', toc: entries } as never, mockUser as never),
+      ).resolves.toEqual([]);
+      expect(prisma.bookTocEntry.findMany).not.toHaveBeenCalled();
+
+      // A readable book loads the relation when it was not joined.
+      await expect(gatedResolver.toc(readableParent as never, mockUser as never)).resolves.toEqual(entries);
+      expect(prisma.bookTocEntry.findMany).toHaveBeenCalledWith({
+        where: { bookId: 'book-1' },
+        orderBy: { order: 'asc' },
+      });
+    });
+
+    it('reuses the loaded toc relation without querying again', async () => {
+      const entries = [{ id: 't1', title: 'One', page: 1, depth: 0, order: 0 }];
+      const prisma = {
+        bookAccess: { findUnique: jest.fn() },
+        bookTocEntry: { findMany: jest.fn() },
+      };
+      const gatedResolver = new BooksResolver(
+        new BooksService(prisma as never, {} as never, {} as never),
+      );
+      const parent = {
+        id: 'book-1',
+        deletedAt: null,
+        status: 'PUBLISHED',
+        conversionStatus: 'READY',
+        accessLevel: 'FREE',
+        createdById: null,
+        toc: entries,
+      };
+      await expect(gatedResolver.toc(parent as never, mockUser as never)).resolves.toEqual(entries);
+      expect(prisma.bookTocEntry.findMany).not.toHaveBeenCalled();
+      expect(prisma.bookAccess.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('retries a failed conversion atomically and returns the refreshed book', async () => {
+      const service = {
+        assertCanManageBookPublic: jest.fn().mockResolvedValue(undefined),
+        retryConversion: jest.fn().mockResolvedValue({ id: 'book-1', conversionStatus: 'PENDING' }),
+        findById: jest.fn().mockResolvedValue({ id: 'book-1' }),
+      };
+      const localResolver = new BooksResolver(service as never);
+      await localResolver.retryBookConversion({ id: 'user-1', role: UserRole.ADMIN }, 'book-1');
+      expect(service.assertCanManageBookPublic).toHaveBeenCalledWith('book-1', 'user-1', UserRole.ADMIN);
+      expect(service.retryConversion).toHaveBeenCalledWith('book-1');
+      expect(service.findById).toHaveBeenCalledWith('book-1');
     });
   });
 });
