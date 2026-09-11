@@ -42,8 +42,12 @@ function fakeDocument(fnArray: number[]) {
       getViewport: () => ({ transform: [2, 0, 0, 2, 0, 0], width: 20, height: 20 }),
       getTextContent: async () => ({ items: [] }),
       getOperatorList: async () => ({ fnArray, argsArray: [] }),
+      // Mirrors PDFPageProxy.cleanup(), called after each rendered page.
+      cleanup: () => undefined,
     }),
     getOutline: async () => null,
+    // Mirrors PDFDocumentProxy.cleanup(), called periodically and once at the end.
+    cleanup: async () => undefined,
   };
 }
 

@@ -6,6 +6,9 @@ import { ConvertedBook, ConvertedPage, ConvertedTocEntry, TextItemBox } from './
 
 export const RENDER_SCALE = 2;
 
+/** Release document-level pdf.js caches every N pages (see `convert`). */
+const DOC_CLEANUP_INTERVAL = 10;
+
 /**
  * unpdf bundles its own pdf.js build but NOT the decoder resources, so scanned
  * PDFs whose page images are JPEG2000 (`JPXDecode`) or JBIG2 fail to decode and
@@ -241,7 +244,17 @@ export class PdfConverter {
         height: lastHeight,
         itemCount: boxes.length,
       });
+
+      // pdf.js retains each page's operator list and decoded image objects
+      // until released, so a long document accumulates memory for every page
+      // ever rendered and eventually OOMs. Dropping the page's buffers once its
+      // frame and text file are written keeps peak memory flat per page; the
+      // document-level image/font caches are swept less often since that
+      // round-trips to the (in-process) pdf.js worker.
+      page.cleanup();
+      if (index % DOC_CLEANUP_INTERVAL === 0) await doc.cleanup();
     }
+    await doc.cleanup();
 
     const toc = await this.extractToc(doc);
     this.logger.log(`Converted PDF ${input.bookId}: ${pageCount} pages, ${toc.length} toc entries`);
