@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { GraphQLError, GraphQLScalarType, Kind } from 'graphql';
 import { join } from 'node:path';
@@ -8,6 +9,7 @@ import type { ValidationContext } from 'graphql';
 import depthLimit from 'graphql-depth-limit';
 
 import { PrismaModule } from './prisma/prisma.module.js';
+import { StorageModule } from './storage/storage.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { GroupsModule } from './groups/groups.module.js';
@@ -88,6 +90,7 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
 
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
@@ -121,6 +124,7 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
     }),
 
     PrismaModule,
+    StorageModule,
     AzureModule,
     UploadsModule,
     AuthModule,

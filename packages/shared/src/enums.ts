@@ -46,6 +46,19 @@ export enum BookStatus {
   COMING_SOON = 'COMING_SOON',
 }
 
+export enum BookFormat {
+  PDF = 'PDF',
+  EPUB = 'EPUB',
+}
+
+export enum ConversionStatus {
+  NOT_APPLICABLE = 'NOT_APPLICABLE',
+  PENDING = 'PENDING',
+  PROCESSING = 'PROCESSING',
+  READY = 'READY',
+  FAILED = 'FAILED',
+}
+
 export enum AnnouncementStatus {
   DRAFT = 'DRAFT',
   PUBLISHED = 'PUBLISHED',

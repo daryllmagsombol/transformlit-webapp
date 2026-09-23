@@ -25,7 +25,11 @@ const CSP_DIRECTIVES = [
   "font-src 'self' data: https://fonts.gstatic.com https://fonts.googleapis.com",
   // Bible content/fonts/audio from helloao; seeded group media from GCS +
   // Google avatar CDN; felt-paper background texture from transparenttextures.
-  "img-src 'self' data: https://bible.helloao.org https://www.transparenttextures.com https://*.blob.core.windows.net https://lh3.googleusercontent.com",
+  // img-src gains the dev API origin only. Reader page frames load as plain
+  // <img src> (never next/image); prod API is same-origin via 'self'.
+  IS_PROD
+    ? "img-src 'self' data: https://bible.helloao.org https://www.transparenttextures.com https://*.blob.core.windows.net https://lh3.googleusercontent.com"
+    : "img-src 'self' data: http://localhost:3005 https://bible.helloao.org https://www.transparenttextures.com https://*.blob.core.windows.net https://lh3.googleusercontent.com",
   // Chapter audio is streamed from the dedicated audio host (see thisChapterAudioLinks).
   "media-src 'self' https://bible.helloao.org https://audio.bible.helloao.org",
   // fetch() / XHR / WS go to the GraphQL API origin. Prod API is same-origin

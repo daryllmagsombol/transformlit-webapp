@@ -1,17 +1,17 @@
-import { Resolver, Query, Mutation, Args } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Args, ResolveField, Parent } from '@nestjs/graphql';
 import { UseGuards, BadRequestException } from '@nestjs/common';
 import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
-import { BooksService } from './books.service.js';
+import { BooksService, ReadableBookFacts } from './books.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import {
-  Book, BookProgress, Bookmark, Highlight,
+  Book, BookProgress, Bookmark, Highlight, BookTocEntry,
   UploadBookInput, UpdateBookInput, SaveProgressInput,
   AddBookmarkInput, AddHighlightInput,
 } from './models/book.model.js';
 import { GraphQLUpload, FileUpload } from 'graphql-upload-ts';
 
-@Resolver()
+@Resolver(() => Book)
 export class BooksResolver {
   constructor(private readonly booksService: BooksService) {}
 
@@ -23,8 +23,43 @@ export class BooksResolver {
 
   @Query(() => Book, { name: 'book' })
   @UseGuards(JwtAuthGuard)
-  async book(@Args('id') id: string) {
+  async book(@CurrentUser() user: { id: string }, @Args('id') id: string) {
+    await this.booksService.assertCanRead(id, user.id);
     return this.booksService.findById(id);
+  }
+
+  @Query(() => [BookTocEntry], { name: 'bookToc' })
+  @UseGuards(JwtAuthGuard)
+  async bookToc(@CurrentUser() user: { id: string }, @Args('bookId') bookId: string) {
+    // Same entitlement/published/READY/soft-delete gate as page delivery.
+    await this.booksService.assertCanRead(bookId, user.id);
+    return this.booksService.listToc(bookId);
+  }
+
+  /**
+   * Resolves ToC on every Book path. The `books` list is intentionally not
+   * filtered by status/entitlement (store browse), so this gate — not the list
+   * query — is what prevents DRAFT/RESTRICTED ToC leakage to a plain member.
+   */
+  @ResolveField(() => [BookTocEntry], { name: 'toc' })
+  async toc(
+    @Parent() book: ReadableBookFacts & { toc?: BookTocEntry[] },
+    @CurrentUser() user: { id: string },
+  ) {
+    if (!(await this.booksService.canRead(book, user.id))) return [];
+    if (book.toc) return book.toc;
+    return this.booksService.listToc(book.id);
+  }
+
+  @Mutation(() => Book, { name: 'retryBookConversion' })
+  @UseGuards(JwtAuthGuard)
+  async retryBookConversion(
+    @CurrentUser() user: { id: string; role: UserRole },
+    @Args('bookId') bookId: string,
+  ) {
+    await this.booksService.assertCanManageBookPublic(bookId, user.id, user.role);
+    await this.booksService.retryConversion(bookId);
+    return this.booksService.findById(bookId);
   }
 
   @Mutation(() => Book, { name: 'uploadBook' })

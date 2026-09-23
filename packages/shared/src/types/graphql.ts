@@ -99,7 +99,10 @@ export interface GraphQLBook {
   currency?: string | null;
   accessLevel: string;
   status: string;
+  format?: 'PDF' | 'EPUB' | null;
+  conversionStatus?: string | null;
   totalPages?: number | null;
+  pageCount?: number | null;
   myProgress?: GraphQLBookProgress | null;
   createdAt: string;
 }
