@@ -3,10 +3,10 @@
 import { UserAvatar } from './user-avatar';
 
 interface SuggestedFriendCardProps {
-  name: string;
-  tag: string;
-  avatarUrl?: string | null;
-  onAdd: () => void;
+  readonly name: string;
+  readonly tag: string;
+  readonly avatarUrl?: string | null;
+  readonly onAdd: () => void;
 }
 
 export function SuggestedFriendCard({ name, tag, avatarUrl, onAdd }: SuggestedFriendCardProps) {

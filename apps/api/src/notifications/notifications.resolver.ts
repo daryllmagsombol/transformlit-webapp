@@ -6,6 +6,25 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Notification } from './models/notification.model.js';
 
+export interface NotificationReceivedPayload {
+  notificationReceived: any;
+  userId: string;
+}
+
+export interface NotificationReceivedFilterContext {
+  req?: { user?: { id?: string } };
+}
+
+export function notificationReceivedFilter(
+  payload: NotificationReceivedPayload,
+  _variables: { userId: string },
+  context: NotificationReceivedFilterContext,
+): boolean {
+  const authedId = context?.req?.user?.id;
+  if (!authedId) return false;
+  return payload.userId === authedId;
+}
+
 @Resolver()
 export class NotificationsResolver {
   constructor(
@@ -45,9 +64,9 @@ export class NotificationsResolver {
 
   @Subscription(() => Notification, {
     name: 'notificationReceived',
-    filter: (payload: { notificationReceived: any; userId: string }, variables: { userId: string }) =>
-      payload.userId === variables.userId,
-    resolve: (payload: { notificationReceived: any }) => payload.notificationReceived,
+    filter: (payload, variables, context) =>
+      notificationReceivedFilter(payload, variables, context),
+    resolve: (payload: NotificationReceivedPayload) => payload.notificationReceived,
   })
   @UseGuards(JwtAuthGuard)
   notificationReceived(@Args('userId') userId: string) {

@@ -38,9 +38,13 @@ test.describe('Authentication', () => {
     await page.getByRole('button', { name: /log in/i }).click();
     await expect(page).toHaveURL(/.*\/feed/);
 
-    await page.evaluate(() => localStorage.clear());
-    await page.goto('/feed');
+    // Log out through the real UI: the session is an httpOnly cookie, so
+    // clearing localStorage no longer ends the session.
+    await page.getByRole('button', { name: 'User menu' }).click();
+    await page.getByRole('menuitem', { name: /log out/i }).click();
 
+    await expect(page).toHaveURL(/.*\/login/);
+    await page.goto('/feed');
     await expect(page).toHaveURL(/.*\/login/);
   });
 });

@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { createMockUser, MockUser } from './create-mock-user';
 
 export interface MockGroupMember {

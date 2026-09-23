@@ -20,9 +20,9 @@ import { getBookName } from '../../../../../../lib/bible/config';
 import type { ChapterFootnote, ChapterWord } from '../../../../../../lib/bible/types';
 
 interface ReaderProps {
-  translation: string;
-  book: string;
-  chapter: number;
+  readonly translation: string;
+  readonly book: string;
+  readonly chapter: number;
 }
 
 export default function BibleReaderClient({ translation, book, chapter }: ReaderProps) {
@@ -55,7 +55,7 @@ export default function BibleReaderClient({ translation, book, chapter }: Reader
   // #v{n} deep link — scroll AFTER content mounts (hash alone can't target async content)
   useEffect(() => {
     if (!data) return;
-    const m = window.location.hash.match(/^#v(\d+)$/);
+    const m = /^#v(\d+)$/.exec(globalThis.window.location.hash);
     if (!m) return;
     const verse = Number(m[1]);
     const el = document.getElementById(`v${verse}`);

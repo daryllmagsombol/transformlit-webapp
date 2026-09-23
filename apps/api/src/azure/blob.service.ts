@@ -5,7 +5,7 @@ import { BlobServiceClient } from '@azure/storage-blob';
 @Injectable()
 export class BlobService {
   private readonly logger = new Logger(BlobService.name);
-  private client: BlobServiceClient;
+  private readonly client: BlobServiceClient;
 
   constructor(private readonly config: ConfigService) {
     const connStr = this.config.get<string>('AZURE_STORAGE_CONNECTION_STRING');

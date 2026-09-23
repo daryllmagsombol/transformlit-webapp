@@ -38,12 +38,15 @@ export class AuthPayload {
   @Field()
   accessToken: string;
 
-  @Field()
-  refreshToken: string;
-
   @Field(() => User)
   user: User;
 }
+
+// NOTE (httpOnly-refresh migration): the GraphQL auth mutations no longer
+// return a refreshToken — refresh tokens are issued exclusively as an httpOnly
+// cookie by the REST endpoints under AuthController (POST /auth/register,
+// /auth/login, /auth/refresh). registerLocal/loginLocal are kept for back
+// compatibility but cannot set the cookie; prefer the REST endpoints.
 
 @InputType()
 export class RegisterLocalInput {

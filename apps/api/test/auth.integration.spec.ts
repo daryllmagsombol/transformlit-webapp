@@ -9,6 +9,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
+import request from 'supertest';
+import cookieParser from 'cookie-parser';
 
 function isDockerAvailable(): boolean {
   try {
@@ -87,6 +89,8 @@ describe('Auth Integration', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    // Match main.ts: parse httpOnly cookies for the REST auth endpoints.
+    app.use(cookieParser());
     await app.init();
 
     authService = moduleFixture.get<AuthService>(AuthService);
@@ -239,4 +243,102 @@ describe('Auth Integration', () => {
       expect(validated).toBeNull();
     });
   });
+
+  describe('REST cookie auth flows (httpOnly refresh cookie)', () => {
+    it('register sets an httpOnly refresh cookie and returns { accessToken, user } with no refreshToken', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          email: 'rest-register@example.com',
+          password: 'password123',
+          displayName: 'Rest Register',
+        })
+        .expect(201);
+
+      const setCookie = res.headers['set-cookie'] as unknown as string[];
+      expect(setCookie).toBeDefined();
+      const refreshCookie = setCookie.find((c) => c.startsWith('transformlit_refresh='));
+      expect(refreshCookie).toBeDefined();
+      expect(refreshCookie).toContain('HttpOnly');
+      expect(refreshCookie).toContain('SameSite=Lax');
+      expect(refreshCookie).toContain('Path=/');
+      expect(refreshCookie).toContain('Max-Age=');
+      if (process.env.NODE_ENV !== 'development') {
+        expect(refreshCookie).toContain('Secure');
+      }
+
+      expect(res.body).toHaveProperty('accessToken');
+      expect(res.body).toHaveProperty('user');
+      expect(res.body).not.toHaveProperty('refreshToken');
+    });
+
+    it('login sets the refresh cookie and refresh rotates it', async () => {
+      await authService.registerLocal({
+        email: 'refresh-rotate@example.com',
+        password: 'password123',
+        displayName: 'Refresh Rotate',
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'refresh-rotate@example.com', password: 'password123' })
+        .expect(200);
+      expect(res.body).toHaveProperty('accessToken');
+      expect(res.body).not.toHaveProperty('refreshToken');
+
+      const setCookie = res.headers['set-cookie'] as unknown as string[];
+      const jar = supertestAgentCustomJar(setCookie);
+
+      // Rotate with the cookie.
+      const rotated = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', jar)
+        .expect(200);
+      expect(rotated.body).toHaveProperty('accessToken');
+      expect(rotated.body).not.toHaveProperty('refreshToken');
+
+      const rotatedSetCookie = rotated.headers['set-cookie'] as unknown as string[];
+      const rotated2 = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', supertestAgentCustomJar(rotatedSetCookie))
+        .expect(200);
+      expect(rotated2.body).toHaveProperty('accessToken');
+    });
+
+    it('logout clears the refresh cookie and a subsequent refresh returns 401', async () => {
+      await authService.registerLocal({
+        email: 'logout@example.com',
+        password: 'password123',
+        displayName: 'Logout User',
+      });
+
+      const loginRes = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'logout@example.com', password: 'password123' })
+        .expect(200);
+      const jar = supertestAgentCustomJar(loginRes.headers['set-cookie'] as unknown as string[]);
+
+      const logoutRes = await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('Cookie', jar)
+        .expect(200);
+      expect(logoutRes.body).toEqual({});
+
+      const clearCookie = (logoutRes.headers['set-cookie'] as unknown as string[]).find(
+        (c) => c.startsWith('transformlit_refresh='),
+      );
+      expect(clearCookie).toContain('Max-Age=0');
+
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', jar)
+        .expect(401);
+    });
+  });
 });
+
+/** Extract the raw refresh cookie value from a Set-Cookie header for reuse. */
+function supertestAgentCustomJar(setCookie: string[]): string {
+  const cookie = setCookie.find((c) => c.startsWith('transformlit_refresh='));
+  return cookie ? cookie.split(';')[0] : '';
+}

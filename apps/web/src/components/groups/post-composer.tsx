@@ -5,8 +5,8 @@ import { uploadImage, createGroupPost, resolveImageUrl } from '../../lib/groups'
 import { useToast } from '../ui';
 
 interface PostComposerProps {
-  groupId: string;
-  onPosted: () => void;
+  readonly groupId: string;
+  readonly onPosted: () => void;
 }
 
 export function PostComposer({ groupId, onPosted }: PostComposerProps) {
@@ -36,7 +36,7 @@ export function PostComposer({ groupId, onPosted }: PostComposerProps) {
   );
 
   const handleSubmit = useCallback(
-    async (e?: React.FormEvent) => {
+    async (e?: React.SyntheticEvent<HTMLFormElement>) => {
       e?.preventDefault();
       const trimmed = body.trim();
       if (!trimmed && !imageKey) return;

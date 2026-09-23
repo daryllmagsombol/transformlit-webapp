@@ -14,7 +14,7 @@ import {
 import { UserAvatar, useToast, LoadingSpinner } from '../ui';
 import { relativeTime } from '../../lib/time';
 
-export function ChatThread({ conversationId }: { conversationId: string }) {
+export function ChatThread({ conversationId }: { readonly conversationId: string }) {
   const { isReady } = useRequireAuth();
   const router = useRouter();
   const { addToast } = useToast();

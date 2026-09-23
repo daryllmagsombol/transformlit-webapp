@@ -11,7 +11,6 @@ jest.mock('./models/auth.model', () => ({
 
 const mockAuthPayload = {
   accessToken: 'access-token',
-  refreshToken: 'refresh-token',
   user: {
     id: 'user-1',
     email: 'test@example.com',
@@ -54,11 +53,11 @@ describe('AuthResolver', () => {
       expect(result).toEqual(mockAuthPayload);
     });
 
-    it('should return AuthPayload with accessToken, refreshToken, and user', async () => {
+    it('should return AuthPayload with accessToken and user (no refreshToken)', async () => {
       const result = await resolver.registerLocal(input);
       expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
       expect(result).toHaveProperty('user');
+      expect(result).not.toHaveProperty('refreshToken');
     });
   });
 
@@ -71,26 +70,17 @@ describe('AuthResolver', () => {
       expect(result).toEqual(mockAuthPayload);
     });
 
-    it('should return AuthPayload', async () => {
+    it('should return AuthPayload without a refreshToken field', async () => {
       const result = await resolver.loginLocal(input);
       expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
       expect(result).toHaveProperty('user');
+      expect(result).not.toHaveProperty('refreshToken');
     });
   });
 
   describe('refreshToken', () => {
-    it('should delegate to authService.refreshTokens', async () => {
-      const result = await resolver.refreshToken('some-refresh-token');
-      expect(service.refreshTokens).toHaveBeenCalledWith('some-refresh-token');
-      expect(result).toEqual(mockAuthPayload);
-    });
-
-    it('should return AuthPayload', async () => {
-      const result = await resolver.refreshToken('some-refresh-token');
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
-      expect(result).toHaveProperty('user');
+    it('should be removed from the resolver surface (httpOnly-refresh migration)', async () => {
+      expect((resolver as any).refreshToken).toBeUndefined();
     });
   });
 });

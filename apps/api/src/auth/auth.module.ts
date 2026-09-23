@@ -11,6 +11,11 @@ import { JwtStrategy } from './strategies/jwt.strategy.js';
 import { GoogleStrategy } from './strategies/google.strategy.js';
 import { FacebookStrategy } from './strategies/facebook.strategy.js';
 import { MicrosoftStrategy } from './strategies/microsoft.strategy.js';
+import {
+  GoogleOAuthStartGuard,
+  FacebookOAuthStartGuard,
+  MicrosoftOAuthStartGuard,
+} from './oauth-start.guard.js';
 
 @Module({
   imports: [
@@ -34,6 +39,9 @@ import { MicrosoftStrategy } from './strategies/microsoft.strategy.js';
     GoogleStrategy,
     FacebookStrategy,
     MicrosoftStrategy,
+    GoogleOAuthStartGuard,
+    FacebookOAuthStartGuard,
+    MicrosoftOAuthStartGuard,
   ],
   exports: [JwtAuthGuard, RolesGuard, AuthService, JwtModule],
 })

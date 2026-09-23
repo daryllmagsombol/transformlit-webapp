@@ -2,10 +2,20 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { UpdateProfileInput } from './models/user.model.js';
 
+// Public projection excludes PII (email) and moderation-sensitive fields.
+const PUBLIC_USER_SELECT = {
+  id: true,
+  displayName: true,
+  avatarUrl: true,
+  bio: true,
+  createdAt: true,
+} as const;
+
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // Only used for the authenticated actor's own profile (me); keeps email/status.
   async findById(id: string) {
     return this.prisma.user.findUnique({
       where: { id, deletedAt: null },
@@ -18,16 +28,14 @@ export class UsersService {
     });
   }
 
-  async searchUsers(query: string, limit = 20) {
+  async searchUsers(query: string, _actorId?: string, limit = 20) {
     return this.prisma.user.findMany({
       where: {
         deletedAt: null,
-        OR: [
-          { displayName: { contains: query, mode: 'insensitive' } },
-          { email: { contains: query, mode: 'insensitive' } },
-        ],
+        displayName: { contains: query, mode: 'insensitive' },
       },
-      take: limit,
+      select: PUBLIC_USER_SELECT,
+      take: Math.min(limit, 50),
       orderBy: { displayName: 'asc' },
     });
   }
@@ -39,10 +47,11 @@ export class UsersService {
     });
   }
 
-  async listUsers(limit = 50) {
+  async listUsers(_actorId?: string, limit = 50) {
     return this.prisma.user.findMany({
       where: { deletedAt: null },
-      take: limit,
+      select: PUBLIC_USER_SELECT,
+      take: Math.min(limit, 100),
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -50,31 +59,31 @@ export class UsersService {
   async getProfile(userId: string, currentUserId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId, deletedAt: null },
-      select: {
-        id: true,
-        email: true,
-        displayName: true,
-        avatarUrl: true,
-        bio: true,
-        role: true,
-        status: true,
-        createdAt: true,
-      },
     });
 
     if (!user) throw new Error('User not found');
 
-    const [groups, bookProgress, friendCount, groupCount, bookCount] = await Promise.all([
+    const isSelf = userId === currentUserId;
+
+    const profileUser = {
+      id: user.id,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      bio: user.bio,
+      role: user.role,
+      createdAt: user.createdAt,
+      // email + status exposed only to the account owner.
+      ...(isSelf ? { email: user.email, status: user.status } : {}),
+    };
+
+    // Independent queries that depend only on known inputs — fired in one round
+    // trip instead of serially. For non-self viewers the friendship gate runs
+    // alongside the profile counts and decides whether progress may be read.
+    const [groups, friendCount, groupCount, friendship] = await Promise.all([
       this.prisma.groupMember.findMany({
         where: { userId, status: 'ACTIVE', group: { visibility: 'PUBLIC' } },
         include: { group: true },
         take: 20,
-      }),
-      this.prisma.bookProgress.findMany({
-        where: { userId },
-        include: { book: true },
-        orderBy: { lastReadAt: 'desc' },
-        take: 10,
       }),
       this.prisma.friendship.count({
         where: {
@@ -85,23 +94,62 @@ export class UsersService {
       this.prisma.groupMember.count({
         where: { userId, status: 'ACTIVE' },
       }),
-      this.prisma.bookProgress.count({
-        where: { userId },
-      }),
+      isSelf
+        ? Promise.resolve(null)
+        : this.prisma.friendship.findFirst({
+            where: {
+              status: 'ACCEPTED',
+              OR: [
+                { requesterId: userId, addresseeId: currentUserId },
+                { requesterId: currentUserId, addresseeId: userId },
+              ],
+            },
+          }),
     ]);
 
-    let mutualFriends: any[] = [];
-    if (currentUserId !== userId) {
-      const [myRows, theirRows] = await Promise.all([
-        this.prisma.friendship.findMany({
+    const canViewProgress = isSelf || !!friendship;
+
+    let bookProgress: any[] = [];
+    let bookCount = 0;
+    let myRows: { requesterId: string; addresseeId: string }[] = [];
+    let theirRows: { requesterId: string; addresseeId: string }[] = [];
+
+    if (canViewProgress) {
+      const progressQuery = this.prisma.bookProgress.findMany({
+        where: { userId },
+        include: { book: true },
+        orderBy: { lastReadAt: 'desc' },
+        take: 10,
+      });
+      const countQuery = this.prisma.bookProgress.count({
+        where: { userId },
+      });
+
+      if (isSelf) {
+        [bookProgress, bookCount] = await Promise.all([progressQuery, countQuery]);
+      } else {
+        // Mutual friends are derived from both parties' accepted-friendship
+        // rows; fetch both sides in the same round trip as the progress data.
+        const myFriendshipsQuery = this.prisma.friendship.findMany({
           where: { OR: [{ requesterId: currentUserId }, { addresseeId: currentUserId }], status: 'ACCEPTED' },
           select: { requesterId: true, addresseeId: true },
-        }),
-        this.prisma.friendship.findMany({
+        });
+        const theirFriendshipsQuery = this.prisma.friendship.findMany({
           where: { OR: [{ requesterId: userId }, { addresseeId: userId }], status: 'ACCEPTED' },
           select: { requesterId: true, addresseeId: true },
-        }),
-      ]);
+        });
+
+        [bookProgress, bookCount, myRows, theirRows] = await Promise.all([
+          progressQuery,
+          countQuery,
+          myFriendshipsQuery,
+          theirFriendshipsQuery,
+        ]);
+      }
+    }
+
+    let mutualFriends: any[] = [];
+    if (!isSelf && canViewProgress) {
       const myIds = new Set(
         myRows.map((f) => (f.requesterId === currentUserId ? f.addresseeId : f.requesterId)),
       );
@@ -112,12 +160,13 @@ export class UsersService {
       if (mutual.length > 0) {
         mutualFriends = await this.prisma.user.findMany({
           where: { id: { in: mutual }, deletedAt: null },
+          select: { ...PUBLIC_USER_SELECT },
         });
       }
     }
 
     return {
-      user,
+      user: profileUser,
       groups: groups.map((gm) => gm.group),
       bookProgress,
       mutualFriends,

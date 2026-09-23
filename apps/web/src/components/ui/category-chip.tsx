@@ -1,10 +1,10 @@
 'use client';
 
 interface CategoryChipProps {
-  label: string;
-  icon: string;
-  active?: boolean;
-  onClick?: () => void;
+  readonly label: string;
+  readonly icon: string;
+  readonly active?: boolean;
+  readonly onClick?: () => void;
 }
 
 export function CategoryChip({ label, icon, active = false, onClick }: CategoryChipProps) {

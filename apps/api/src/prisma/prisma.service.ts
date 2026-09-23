@@ -9,7 +9,7 @@ export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
-  private pool: Pool;
+  private readonly pool: Pool;
 
   constructor(config: ConfigService) {
     const url = config.getOrThrow<string>('DATABASE_URL');

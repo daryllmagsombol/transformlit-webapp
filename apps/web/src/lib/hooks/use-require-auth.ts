@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '../../store';
 
 type RequireAuthResult = {
-  /** True when auth state is hydrated AND a token exists. */
+  /** True when auth state is hydrated AND a signed-in user exists. */
   isReady: boolean;
 };
 
@@ -12,9 +12,12 @@ type RequireAuthResult = {
  *
  * Returns `isReady = false` while:
  * - the auth store hasn't hydrated yet (prevents redirect flash on refresh), or
- * - the user has no token
+ * - the store has no signed-in user
  *
- * When hydration completes and no token is present, redirects to /login.
+ * When hydration completes and no user is present, redirects to
+ * `/login?redirect=<current path>` so the user can return to the page they
+ * originally tried to visit after signing in. The `/login` route itself is
+ * never given a redirect query (avoids a self-referential loop).
  *
  * Usage:
  * ```tsx
@@ -25,15 +28,24 @@ type RequireAuthResult = {
  */
 export function useRequireAuth(): RequireAuthResult {
   const router = useRouter();
-  const token = useAuthStore((s) => s.token);
+  const pathname = usePathname();
+  const user = useAuthStore((s) => s.user);
   const isHydrated = useAuthStore((s) => s.isHydrated);
 
   useEffect(() => {
-    if (isHydrated && !token) {
-      router.push('/login');
+    if (isHydrated && !user) {
+      const redirect = pathname && pathname !== '/login' ? pathname : null;
+      router.push(
+        redirect
+          ? `/login?redirect=${encodeURIComponent(redirect)}`
+          : '/login',
+      );
     }
-  }, [isHydrated, token, router]);
+  }, [isHydrated, user, pathname, router]);
 
-  const isReady = isHydrated && !!token;
+  // Protected content must not render until hydration completes AND the user
+  // presence is known, otherwise a brief unauthenticated frame could flash for
+  // an actually-logged-in user.
+  const isReady = isHydrated && !!user;
   return { isReady };
 }

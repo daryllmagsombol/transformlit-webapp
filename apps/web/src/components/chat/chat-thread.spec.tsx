@@ -13,6 +13,7 @@ jest.mock('../../lib/chat-queries', () => ({
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ back: jest.fn() }),
   useParams: () => ({ id: 'c1' }),
+  usePathname: () => '/chat',
 }));
 
 var mockAddToast = jest.fn();
@@ -33,7 +34,7 @@ const msg = (id: string, senderId: string, body: string, createdAt = '2026-09-02
 
 beforeEach(() => {
   useChatStore.getState().reset();
-  useAuthStore.setState({ user: { id: 'u1' } as any, token: 't', isHydrated: true });
+  useAuthStore.setState({ user: { id: 'u1' } as any, isHydrated: true });
   mockAddToast.mockClear();
   (chatQueries.fetchMessages as jest.Mock).mockClear();
   useChatStore.getState().setConversations([

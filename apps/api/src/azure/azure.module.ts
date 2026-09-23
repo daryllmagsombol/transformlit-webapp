@@ -1,11 +1,10 @@
 import { Module } from '@nestjs/common';
-import { BlobService } from './blob.service.js';
-import { EmailService } from './email.service.js';
 
 @Module({
-  providers: [BlobService, EmailService],
-  exports: [BlobService, EmailService],
+  providers: [],
+  exports: [],
 })
 export class AzureModule {}
 
-export { BlobService, EmailService };
+export { BlobService } from './blob.service.js';
+export { EmailService } from './email.service.js';

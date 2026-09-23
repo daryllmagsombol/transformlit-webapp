@@ -3,9 +3,6 @@ export {
   getAccessToken,
   setAccessToken,
   removeAccessToken,
-  getRefreshToken,
-  setRefreshToken,
-  removeRefreshToken,
   clearAuth,
   isTokenExpiringSoon,
 } from './auth';

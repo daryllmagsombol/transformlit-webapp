@@ -1,7 +1,7 @@
 import { gql } from '@apollo/client';
 import { apolloClient } from './apollo-client';
 import { API_BASE } from './constants';
-import { useAuthStore } from '../store';
+import { getAccessToken } from './auth';
 import type {
   GraphQLGroup,
   GraphQLGroupMember,
@@ -59,7 +59,7 @@ export function resolveImageUrl(key?: string | null): string | undefined {
 
 /** Upload an image via the REST endpoint; returns the storage key */
 export async function uploadImage(file: File): Promise<string> {
-  const token = useAuthStore.getState().token;
+  const token = getAccessToken();
   const form = new FormData();
   form.append('file', file);
   const res = await fetch(`${API_BASE}/uploads`, {

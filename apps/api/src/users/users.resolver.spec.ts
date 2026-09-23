@@ -61,17 +61,17 @@ describe('UsersResolver', () => {
   });
 
   describe('users', () => {
-    it('should delegate to listUsers', async () => {
-      const result = await resolver.users();
-      expect(service.listUsers).toHaveBeenCalled();
+    it('should delegate to listUsers with current user id', async () => {
+      const result = await resolver.users({ id: 'user-1' });
+      expect(service.listUsers).toHaveBeenCalledWith('user-1');
       expect(result).toEqual([mockUser]);
     });
   });
 
   describe('searchUsers', () => {
-    it('should delegate to searchUsers with query', async () => {
-      const result = await resolver.searchUsers('test');
-      expect(service.searchUsers).toHaveBeenCalledWith('test');
+    it('should delegate to searchUsers with current user id and query', async () => {
+      const result = await resolver.searchUsers({ id: 'user-1' }, 'test');
+      expect(service.searchUsers).toHaveBeenCalledWith('test', 'user-1');
       expect(result).toEqual([mockUser]);
     });
   });

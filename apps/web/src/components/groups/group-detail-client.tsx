@@ -10,7 +10,7 @@ import { GroupPosts } from './group-posts';
 import { GroupMembers } from './group-members';
 import { GroupSettings } from './group-settings';
 
-export function GroupDetailClient({ slug }: { slug: string }) {
+export function GroupDetailClient({ slug }: { readonly slug: string }) {
   const { isReady } = useRequireAuth();
   const [group, setGroup] = useState<GraphQLGroup | null>(null);
   const [loading, setLoading] = useState(true);

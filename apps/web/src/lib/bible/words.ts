@@ -25,15 +25,14 @@ export interface WordSpan {
 
 /** Offsets into the flattened verse text are cumulative per content item. */
 export function mapWordSpans(content: VerseContentItem[], words: ChapterWord[]): WordSpan[] {
-  const offsets = content.map((item) =>
-    typeof item === 'string'
-      ? item.length
-      : 'text' in item && typeof item.text === 'string'
-        ? item.text.length
-        : 'heading' in item && typeof item.heading === 'string'
-          ? item.heading.length
-          : 0,
-  );
+  function getItemLength(item: VerseContentItem): number {
+    if (typeof item === 'string') return item.length;
+    if ('text' in item && typeof item.text === 'string') return item.text.length;
+    if ('heading' in item && typeof item.heading === 'string') return item.heading.length;
+    return 0;
+  }
+
+  const offsets = content.map(getItemLength);
   const baseAt = (index: number) => offsets.slice(0, index).reduce((a, b) => a + b, 0);
 
   const spans: WordSpan[] = [];

@@ -1,6 +1,9 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotificationsResolver } from './notifications.resolver';
+import {
+  NotificationsResolver,
+  notificationReceivedFilter,
+} from './notifications.resolver';
 import { NotificationsService } from './notifications.service';
 import { PubSubService } from './notifications.pubsub.js';
 
@@ -104,6 +107,32 @@ describe('NotificationsResolver', () => {
 
       expect(pubSub.asyncIterator).toHaveBeenCalledWith('notificationReceived');
       expect(result).toBe(mockIterator);
+    });
+  });
+
+  describe('notificationReceivedFilter', () => {
+    const payload = { notificationReceived: mockNotification, userId: 'user-1' };
+    const variables = { userId: 'user-1' };
+
+    it('delivers when payload.userId matches the authenticated user', () => {
+      const context = { req: { user: { id: 'user-1' } } };
+      expect(notificationReceivedFilter(payload, variables, context)).toBe(true);
+    });
+
+    it('drops when payload.userId does not match the authenticated user', () => {
+      const context = { req: { user: { id: 'user-2' } } };
+      expect(notificationReceivedFilter(payload, variables, context)).toBe(false);
+    });
+
+    it('drops when the client-submitted userId is spoofed', () => {
+      const context = { req: { user: { id: 'user-2' } } };
+      const spoofedVariables = { userId: 'user-1' };
+      expect(notificationReceivedFilter(payload, spoofedVariables, context)).toBe(false);
+    });
+
+    it('drops when no authenticated user is present in the context', () => {
+      expect(notificationReceivedFilter(payload, variables, {})).toBe(false);
+      expect(notificationReceivedFilter(payload, variables, { req: {} })).toBe(false);
     });
   });
 });

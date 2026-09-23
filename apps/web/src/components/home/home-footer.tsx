@@ -7,7 +7,7 @@ export function HomeFooter() {
       <div className="mx-auto max-w-[1200px] px-6 py-14 grid gap-10 md:grid-cols-[1.5fr_1fr_1fr_1fr]">
         <div className="space-y-3">
           <p className="font-display text-headline-h3 font-bold text-ink-black inline-flex items-center gap-2">
-            <span aria-hidden className="inline-block h-4 w-4 rounded-sm bg-brand" />
+            <span aria-hidden className="inline-block h-4 w-4 rounded-sm bg-brand" />{' '}
             Transform Lit
           </p>
           <p className="font-body text-body text-on-surface-variant max-w-xs">{TAGLINE}</p>
@@ -63,7 +63,7 @@ export function HomeFooter() {
   );
 }
 
-function FooterColumn({ title, links }: { title: string; links: { label: string; href: string }[] }) {
+function FooterColumn({ title, links }: { readonly title: string; readonly links: { readonly label: string; readonly href: string }[] }) {
   return (
     <div className="space-y-3">
       <p className="font-micro text-micro uppercase tracking-[0.1em] text-on-surface-variant">{title}</p>

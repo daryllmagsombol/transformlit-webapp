@@ -30,7 +30,7 @@ describe('ChatProvider', () => {
 
   beforeEach(() => {
     useChatStore.getState().reset();
-    useAuthStore.setState({ user: { id: 'u1' } as any, token: 't', isHydrated: true });
+    useAuthStore.setState({ user: { id: 'u1' } as any, isHydrated: true });
     unsub = jest.fn();
     reconnectHandler = null;
     mockSubscribe.mockReset();

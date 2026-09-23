@@ -44,7 +44,7 @@ export type ChapterContent =
 export interface ChapterFootnote {
   noteId: number;
   text: string;
-  caller: '+' | string | null;
+  caller: string | null;
   reference?: { chapter: number; verse: number };
 }
 

@@ -1,9 +1,9 @@
 type UserAvatarProps = {
-  avatarUrl?: string | null;
-  displayName?: string;
-  size?: 'sm' | 'md';
-  userId?: string;
-  onPress?: (userId: string) => void;
+  readonly avatarUrl?: string | null;
+  readonly displayName?: string;
+  readonly size?: 'sm' | 'md';
+  readonly userId?: string;
+  readonly onPress?: (userId: string) => void;
 };
 
 export function UserAvatar({ avatarUrl, displayName, size = 'md', userId, onPress }: UserAvatarProps) {

@@ -7,7 +7,6 @@ const mockAddToast = jest.fn();
 
 let mockAuthState: Record<string, unknown> = {
   user: { id: 'u1', displayName: 'Me', avatarUrl: null },
-  token: 'test-token',
   isHydrated: true,
 };
 
@@ -71,7 +70,6 @@ describe('UserProfileClient', () => {
     mockMutate.mockReset();
     mockAuthState = {
       user: { id: 'u1', displayName: 'Me', avatarUrl: null },
-      token: 'test-token',
       isHydrated: true,
     };
   });
@@ -108,7 +106,6 @@ describe('UserProfileClient', () => {
   it('hides the Mutual Friends section on the user own profile', async () => {
     mockAuthState = {
       user: { id: 'u2', displayName: 'Emily', avatarUrl: null },
-      token: 'test-token',
       isHydrated: true,
     };
     await renderProfile(makeProfile());

@@ -1,39 +1,22 @@
-const ACCESS_TOKEN_KEY = 'accessToken';
-const REFRESH_TOKEN_KEY = 'refreshToken';
+// The access token is short-lived (15m) and kept ONLY in browser memory.
+// The long-lived refresh token is an httpOnly cookie handled by the API and
+// is never exposed to JS or persisted to localStorage.
+let memoryAccessToken: string | null = null;
 
 export function getAccessToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(ACCESS_TOKEN_KEY);
+  return memoryAccessToken;
 }
 
 export function setAccessToken(token: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(ACCESS_TOKEN_KEY, token);
+  memoryAccessToken = token;
 }
 
 export function removeAccessToken(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-}
-
-export function getRefreshToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
-}
-
-export function setRefreshToken(token: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(REFRESH_TOKEN_KEY, token);
-}
-
-export function removeRefreshToken(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  memoryAccessToken = null;
 }
 
 export function clearAuth(): void {
   removeAccessToken();
-  removeRefreshToken();
 }
 
 interface JwtPayload {
@@ -44,7 +27,7 @@ interface JwtPayload {
 
 export function decodeJwt(token: string): JwtPayload | null {
   try {
-    const base64 = token.split('.')[1]?.replace(/-/g, '+').replace(/_/g, '/');
+    const base64 = token.split('.')[1]?.replaceAll('-', '+').replaceAll('_', '/');
     if (!base64) return null;
     const json = atob(base64);
     return JSON.parse(json) as JwtPayload;

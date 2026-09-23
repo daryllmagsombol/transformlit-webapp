@@ -14,13 +14,13 @@ import { timeAgo } from '../../lib/time-ago';
 import { useToast } from '../ui';
 
 interface PostCardProps {
-  post: GraphQLGroupPost;
-  canModerate: boolean;
-  currentUser: GraphQLUser | null;
-  onChanged: () => void;
+  readonly post: GraphQLGroupPost;
+  readonly canModerate: boolean;
+  readonly currentUser: GraphQLUser | null;
+  readonly onChanged: () => void;
 }
 
-function Avatar({ user, size = 40 }: { user?: GraphQLUser | null; size?: number }) {
+function Avatar({ user, size = 40 }: { readonly user?: GraphQLUser | null; readonly size?: number }) {
   const initial = user?.displayName?.[0]?.toUpperCase() ?? '?';
   if (user?.avatarUrl) {
     return (
@@ -72,6 +72,8 @@ export function PostCard({ post, canModerate, currentUser, onChanged }: PostCard
   }, [commentsOpen, loadComments]);
 
   const handleLike = useCallback(async () => {
+    const originalLiked = liked;
+    const originalLikeCount = likeCount;
     const nextLiked = !liked;
     const nextCount = nextLiked ? likeCount + 1 : Math.max(0, likeCount - 1);
     setLiked(nextLiked);
@@ -79,16 +81,16 @@ export function PostCard({ post, canModerate, currentUser, onChanged }: PostCard
     try {
       const result = await toggleGroupPostLike(post.id);
       setLiked(result);
-      setLikeCount(result ? likeCount + 1 : Math.max(0, likeCount - 1));
+      setLikeCount(result ? originalLikeCount + 1 : Math.max(0, originalLikeCount - 1));
     } catch {
-      setLiked(liked);
-      setLikeCount(likeCount);
+      setLiked(() => originalLiked);
+      setLikeCount(() => originalLikeCount);
       addToast('Failed to update like.', 'error');
     }
   }, [liked, likeCount, post.id, addToast]);
 
   const handleDeletePost = useCallback(async () => {
-    if (!window.confirm('Delete this post?')) return;
+    if (!globalThis.window.confirm('Delete this post?')) return;
     try {
       await deleteGroupPost(post.id);
       onChanged();
@@ -98,7 +100,7 @@ export function PostCard({ post, canModerate, currentUser, onChanged }: PostCard
   }, [post.id, onChanged, addToast]);
 
   const handleAddComment = useCallback(
-    async (e?: React.FormEvent) => {
+    async (e?: React.SyntheticEvent<HTMLFormElement>) => {
       e?.preventDefault();
       const trimmed = commentBody.trim();
       if (!trimmed) return;
@@ -118,7 +120,7 @@ export function PostCard({ post, canModerate, currentUser, onChanged }: PostCard
 
   const handleDeleteComment = useCallback(
     async (commentId: string) => {
-      if (!window.confirm('Delete this comment?')) return;
+      if (!globalThis.window.confirm('Delete this comment?')) return;
       try {
         await deleteGroupPostComment(commentId);
         await loadComments();

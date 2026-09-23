@@ -19,14 +19,17 @@ export class UsersResolver {
 
   @Query(() => [User], { name: 'users' })
   @UseGuards(JwtAuthGuard)
-  async users() {
-    return this.usersService.listUsers();
+  async users(@CurrentUser() user: { id: string }) {
+    return this.usersService.listUsers(user.id);
   }
 
   @Query(() => [User], { name: 'searchUsers' })
   @UseGuards(JwtAuthGuard)
-  async searchUsers(@Args('query') query: string) {
-    return this.usersService.searchUsers(query);
+  async searchUsers(
+    @CurrentUser() user: { id: string },
+    @Args('query') query: string,
+  ) {
+    return this.usersService.searchUsers(query, user.id);
   }
 
   @Query(() => UserProfile, { name: 'userProfile' })

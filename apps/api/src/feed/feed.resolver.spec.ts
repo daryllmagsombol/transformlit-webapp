@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
+import { UserRole } from '@transformlit/shared';
 import { FeedResolver } from './feed.resolver';
 import { FeedService } from './feed.service';
 
@@ -24,7 +25,7 @@ const mockVerse = {
   version: 'ESV',
 };
 
-const mockUser = { id: 'user-1' };
+const mockUser = { id: 'user-1', role: UserRole.MEMBER };
 
 describe('FeedResolver', () => {
   let resolver: FeedResolver;
@@ -67,9 +68,13 @@ describe('FeedResolver', () => {
   // ── announcement query ────────────────────────────────────────────────────
 
   describe('announcement', () => {
-    it('should delegate to getAnnouncement with id', async () => {
-      const result = await resolver.announcement('ann-1');
-      expect(feedService.getAnnouncement).toHaveBeenCalledWith('ann-1');
+    it('should delegate to getAnnouncement with id and user', async () => {
+      const result = await resolver.announcement('ann-1', mockUser as any);
+      expect(feedService.getAnnouncement).toHaveBeenCalledWith(
+        'ann-1',
+        'user-1',
+        UserRole.MEMBER,
+      );
       expect(result).toEqual(mockAnnouncement);
     });
   });
@@ -98,10 +103,15 @@ describe('FeedResolver', () => {
   // ── updateAnnouncement mutation ───────────────────────────────────────────
 
   describe('updateAnnouncement', () => {
-    it('should delegate to updateAnnouncement with id and input', async () => {
+    it('should delegate to updateAnnouncement with id, input, and user', async () => {
       const input = { title: 'Updated' };
-      const result = await resolver.updateAnnouncement('ann-1', input as any);
-      expect(feedService.updateAnnouncement).toHaveBeenCalledWith('ann-1', input);
+      const result = await resolver.updateAnnouncement(mockUser as any, 'ann-1', input as any);
+      expect(feedService.updateAnnouncement).toHaveBeenCalledWith(
+        'ann-1',
+        input,
+        'user-1',
+        UserRole.MEMBER,
+      );
       expect(result).toEqual({ ...mockAnnouncement, title: 'Updated' });
     });
   });
@@ -109,9 +119,13 @@ describe('FeedResolver', () => {
   // ── publishAnnouncement mutation ──────────────────────────────────────────
 
   describe('publishAnnouncement', () => {
-    it('should delegate to publishAnnouncement with id and user id', async () => {
-      const result = await resolver.publishAnnouncement(mockUser, 'ann-1');
-      expect(feedService.publishAnnouncement).toHaveBeenCalledWith('ann-1', 'user-1');
+    it('should delegate to publishAnnouncement with id, user id, and role', async () => {
+      const result = await resolver.publishAnnouncement(mockUser as any, 'ann-1');
+      expect(feedService.publishAnnouncement).toHaveBeenCalledWith(
+        'ann-1',
+        'user-1',
+        UserRole.MEMBER,
+      );
       expect(result).toEqual({ ...mockAnnouncement, status: 'PUBLISHED' });
     });
   });
@@ -119,9 +133,13 @@ describe('FeedResolver', () => {
   // ── unpublishAnnouncement mutation ────────────────────────────────────────
 
   describe('unpublishAnnouncement', () => {
-    it('should delegate to unpublishAnnouncement with id', async () => {
-      const result = await resolver.unpublishAnnouncement('ann-1');
-      expect(feedService.unpublishAnnouncement).toHaveBeenCalledWith('ann-1');
+    it('should delegate to unpublishAnnouncement with id and user', async () => {
+      const result = await resolver.unpublishAnnouncement(mockUser as any, 'ann-1');
+      expect(feedService.unpublishAnnouncement).toHaveBeenCalledWith(
+        'ann-1',
+        'user-1',
+        UserRole.MEMBER,
+      );
       expect(result).toEqual({ ...mockAnnouncement, status: 'DRAFT' });
     });
   });
@@ -130,8 +148,12 @@ describe('FeedResolver', () => {
 
   describe('deleteAnnouncement', () => {
     it('should delegate to deleteAnnouncement and return true', async () => {
-      const result = await resolver.deleteAnnouncement('ann-1');
-      expect(feedService.deleteAnnouncement).toHaveBeenCalledWith('ann-1');
+      const result = await resolver.deleteAnnouncement(mockUser as any, 'ann-1');
+      expect(feedService.deleteAnnouncement).toHaveBeenCalledWith(
+        'ann-1',
+        'user-1',
+        UserRole.MEMBER,
+      );
       expect(result).toBe(true);
     });
   });

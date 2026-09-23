@@ -9,19 +9,19 @@ import { useCrossReferences } from '../../lib/hooks/use-cross-references';
 import type { ChapterFootnote, ChapterWord, CrossRefReference } from '../../lib/bible/types';
 
 interface StudySheetProps {
-  open: boolean;
-  onClose: () => void;
-  verse: number | null;
-  verseText: string;
-  footnotes: ChapterFootnote[];
-  wordsForVerse: ChapterWord[];
-  translation: string;
-  book: string;
-  chapter: number;
-  bookName: string;
-  onNavigate: (href: string) => void;
-  activeWord?: ChapterWord | null;
-  activeWordText?: string;
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly verse: number | null;
+  readonly verseText: string;
+  readonly footnotes: ChapterFootnote[];
+  readonly wordsForVerse: ChapterWord[];
+  readonly translation: string;
+  readonly book: string;
+  readonly chapter: number;
+  readonly bookName: string;
+  readonly onNavigate: (href: string) => void;
+  readonly activeWord?: ChapterWord | null;
+  readonly activeWordText?: string;
 }
 
 export function StudySheet({
@@ -46,9 +46,9 @@ export function StudySheet({
     if (open && verse !== null) load();
   }, [open, verse, load]);
 
-  const crossRefs: CrossRefReference[] = verse !== null ? (byVerse[verse] ?? []) : [];
+  const crossRefs: CrossRefReference[] = verse === null ? [] : (byVerse[verse] ?? []);
 
-  const reference = verse !== null ? `${bookName} ${chapter}:${verse}` : bookName;
+  const reference = verse === null ? bookName : `${bookName} ${chapter}:${verse}`;
 
   const copy = useCallback(async () => {
     try {

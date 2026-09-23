@@ -18,15 +18,15 @@ export function PartnerCta() {
             </p>
             <ul className="space-y-3 font-body text-body text-on-surface-variant">
               <li className="flex items-start gap-3">
-                <span aria-hidden className="material-symbols-outlined text-primary">church</span>
+                <span aria-hidden className="material-symbols-outlined text-primary">church</span>{' '}
                 Church discipleship programs and small groups
               </li>
               <li className="flex items-start gap-3">
-                <span aria-hidden className="material-symbols-outlined text-primary">school</span>
+                <span aria-hidden className="material-symbols-outlined text-primary">school</span>{' '}
                 Leadership trainings and events
               </li>
               <li className="flex items-start gap-3">
-                <span aria-hidden className="material-symbols-outlined text-primary">menu_book</span>
+                <span aria-hidden className="material-symbols-outlined text-primary">menu_book</span>{' '}
                 Curriculum licensing and bulk book orders
               </li>
             </ul>

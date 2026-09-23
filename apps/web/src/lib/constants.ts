@@ -62,7 +62,7 @@ export const GROUP_METADATA: Record<string, GroupMeta> = {
 };
 
 const DEFAULT_META: GroupMeta = {
-  activityText: (_name, count) => `${count} member${count !== 1 ? 's' : ''}`,
+  activityText: (_name, count) => `${count} member${count === 1 ? '' : 's'}`,
   timeLabel: '',
 };
 

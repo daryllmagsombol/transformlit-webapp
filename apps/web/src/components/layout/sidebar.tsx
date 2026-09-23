@@ -17,7 +17,7 @@ export function Sidebar() {
 
   // Open sidebar on desktop, close on mobile — respond to resize across breakpoint
   useEffect(() => {
-    const mq = window.matchMedia('(min-width: 768px)');
+    const mq = globalThis.window.matchMedia('(min-width: 768px)');
     const handler = (e: MediaQueryListEvent | MediaQueryList) => {
       setSidebarOpen(e.matches);
     };
@@ -30,9 +30,11 @@ export function Sidebar() {
     <>
       {/* Mobile overlay */}
       {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/30 z-40 md:hidden"
+        <button
+          type="button"
+          className="fixed inset-0 bg-black/30 z-40 md:hidden cursor-default"
           onClick={() => setSidebarOpen(false)}
+          aria-label="Close sidebar"
         />
       )}
 
@@ -78,7 +80,7 @@ export function Sidebar() {
               &ldquo;Steady steps lead to deep wisdom.&rdquo;
             </p>
             <button className="mt-4 w-full py-2 bg-primary text-on-primary rounded-md font-display text-small font-bold flex items-center justify-center gap-2 hover:bg-brand-orange-dark transition-colors active:scale-95">
-              <span className="material-symbols-outlined text-[18px]">auto_stories</span>
+              <span className="material-symbols-outlined text-[18px]">auto_stories</span>{' '}
               Track Progress
             </button>
           </div>
@@ -90,14 +92,14 @@ export function Sidebar() {
             href="/settings"
             className="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-highest transition-all text-micro uppercase tracking-wider"
           >
-            <span className="material-symbols-outlined text-lg">settings</span>
+            <span className="material-symbols-outlined text-lg">settings</span>{' '}
             Settings
           </Link>
           <Link
             href="/help"
             className="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-highest transition-all text-micro uppercase tracking-wider"
           >
-            <span className="material-symbols-outlined text-lg">help</span>
+            <span className="material-symbols-outlined text-lg">help</span>{' '}
             Help
           </Link>
           <ThemeToggle />

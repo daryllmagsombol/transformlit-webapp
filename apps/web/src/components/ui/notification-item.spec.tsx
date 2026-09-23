@@ -61,7 +61,7 @@ describe('NotificationItem', () => {
       />
     );
 
-    fireEvent.click(screen.getByText('Test').closest('div[role="button"]')!);
+    fireEvent.click(screen.getByText('Test').closest('button')!);
     expect(onPress).toHaveBeenCalled();
   });
 });

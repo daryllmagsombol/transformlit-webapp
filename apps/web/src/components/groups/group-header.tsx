@@ -15,10 +15,10 @@ const VISIBILITY_ICONS: Record<string, string> = {
 const TABS = ['posts', 'members', 'settings'] as const;
 
 interface GroupHeaderProps {
-  group: GraphQLGroup;
-  onChanged: () => void;
-  onTabChange: (tab: 'posts' | 'members' | 'settings') => void;
-  activeTab: 'posts' | 'members' | 'settings';
+  readonly group: GraphQLGroup;
+  readonly onChanged: () => void;
+  readonly onTabChange: (tab: 'posts' | 'members' | 'settings') => void;
+  readonly activeTab: 'posts' | 'members' | 'settings';
 }
 
 export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupHeaderProps) {
@@ -69,8 +69,8 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
   }, [group.id, isOwner, onChanged, router, addToast]);
 
   const handleShare = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    navigator.clipboard.writeText(window.location.href).then(
+    if (globalThis.window === undefined) return;
+    navigator.clipboard.writeText(globalThis.window.location.href).then(
       () => addToast('Link copied to clipboard.', 'success'),
       () => addToast('Failed to copy link.', 'error'),
     );
@@ -100,7 +100,7 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1 bg-surface-container rounded-full px-3 py-1 font-small text-small text-on-surface-variant border border-outline-variant/50">
-              {group.category?.replace(/_/g, ' ') ?? 'Group'}
+              {group.category?.replaceAll('_', ' ') ?? 'Group'}
             </span>
             <span className="inline-flex items-center gap-1 bg-surface-container rounded-full px-3 py-1 font-small text-small text-on-surface-variant border border-outline-variant/50">
               <span className="material-symbols-outlined text-sm">{VISIBILITY_ICONS[group.visibility] ?? 'public'}</span>
@@ -108,7 +108,7 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
             </span>
             <span className="inline-flex items-center gap-1 font-small text-small text-on-surface-variant">
               <span className="material-symbols-outlined text-sm">group</span>
-              {group.memberCount} member{group.memberCount !== 1 ? 's' : ''}
+              {group.memberCount} member              {group.memberCount === 1 ? '' : 's'}
             </span>
           </div>
           <h1 className="font-display text-headline-h3 md:text-headline-h2 text-on-surface">{group.name}</h1>
@@ -123,7 +123,7 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
             onClick={handleShare}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-outline-variant bg-surface-container text-on-surface font-small text-small hover:bg-surface-container-high transition-colors"
           >
-            <span className="material-symbols-outlined text-sm">share</span>
+            <span className="material-symbols-outlined text-sm">share</span>{' '}
             Share
           </button>
 
@@ -135,8 +135,8 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
                 disabled={acting}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-outline-variant bg-surface-container text-on-surface font-small text-small hover:bg-surface-container-high transition-colors"
               >
-                <span className="material-symbols-outlined text-sm">check</span>
-                Joined
+                <span className="material-symbols-outlined text-sm">check</span>{' '}
+                Joined{' '}
                 <span className="material-symbols-outlined text-sm">expand_more</span>
               </button>
               {showLeaveConfirm && (
@@ -169,20 +169,26 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
       {/* Tabs */}
       <div className="bg-surface-container rounded-full p-1 inline-flex w-full md:w-auto">
         {TABS.map((tab) => {
-          const disabled = tab === 'members' ? !isActiveMember && !isOwner && group.myRole !== 'MODERATOR' : tab === 'settings' && !isOwner;
+          function isTabDisabled(): boolean {
+            if (tab === 'members') return !isActiveMember && !isOwner && group.myRole !== 'MODERATOR';
+            if (tab === 'settings') return !isOwner;
+            return false;
+          }
+          function getTabClassName(): string {
+            const base = 'flex-1 md:flex-none px-4 py-2 rounded-full font-small text-small font-semibold capitalize transition-colors min-w-[80px]';
+            const active = activeTab === tab
+              ? 'bg-primary-container text-on-primary-container'
+              : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high';
+            const disabledClass = isTabDisabled() ? 'opacity-40 cursor-not-allowed' : '';
+            return `${base} ${active} ${disabledClass}`;
+          }
           return (
             <button
               key={tab}
               type="button"
-              onClick={() => !disabled && onTabChange(tab)}
-              disabled={disabled}
-              className={`
-                flex-1 md:flex-none px-4 py-2 rounded-full font-small text-small font-semibold capitalize transition-colors min-w-[80px]
-                ${activeTab === tab
-                  ? 'bg-primary-container text-on-primary-container'
-                  : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'}
-                ${disabled ? 'opacity-40 cursor-not-allowed' : ''}
-              `}
+              onClick={() => !isTabDisabled() && onTabChange(tab)}
+              disabled={isTabDisabled()}
+              className={getTabClassName()}
             >
               {tab}
             </button>

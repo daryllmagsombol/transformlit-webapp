@@ -4,7 +4,7 @@ import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 
 type ThemeToggleProps = {
-  className?: string;
+  readonly className?: string;
 };
 
 export function ThemeToggle({ className = '' }: ThemeToggleProps) {

@@ -8,8 +8,8 @@ export interface NavLink {
 }
 
 interface ChapterNavProps {
-  prev: NavLink | null;
-  next: NavLink | null;
+  readonly prev: NavLink | null;
+  readonly next: NavLink | null;
 }
 
 export function ChapterNav({ prev, next }: ChapterNavProps) {

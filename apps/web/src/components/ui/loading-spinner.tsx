@@ -1,10 +1,10 @@
 type LoadingSpinnerProps = {
   /** Show the "Loading…" label below the spinner. Default: true */
-  showLabel?: boolean;
+  readonly showLabel?: boolean;
   /** Wrap in a min-h-screen flex centering container. Default: true */
-  fullScreen?: boolean;
+  readonly fullScreen?: boolean;
   /** Custom className for the outer wrapper */
-  className?: string;
+  readonly className?: string;
 };
 
 export function LoadingSpinner({

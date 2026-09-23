@@ -5,9 +5,9 @@ import { refToHref } from '../../lib/bible/refs';
 import type { CrossRefReference } from '../../lib/bible/types';
 
 interface CrossRefListProps {
-  refs: CrossRefReference[];
-  translation: string;
-  onNavigate: (href: string) => void;
+  readonly refs: CrossRefReference[];
+  readonly translation: string;
+  readonly onNavigate: (href: string) => void;
 }
 
 export function CrossRefList({ refs, translation, onNavigate }: CrossRefListProps) {
@@ -17,7 +17,8 @@ export function CrossRefList({ refs, translation, onNavigate }: CrossRefListProp
   return (
     <div className="flex flex-wrap gap-2">
       {refs.map((r, i) => {
-        const label = `${getBookName(r.book)} ${r.chapter}:${r.verse}${r.endVerse ? `–${r.endVerse}` : ''}`;
+        const endRange = r.endVerse ? `–${r.endVerse}` : '';
+        const label = `${getBookName(r.book)} ${r.chapter}:${r.verse}${endRange}`;
         return (
           <button
             key={`${r.book}-${r.chapter}-${r.verse}-${i}`}

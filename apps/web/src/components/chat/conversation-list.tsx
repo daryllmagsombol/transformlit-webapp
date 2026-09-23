@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useChatStore } from '../../store/chat-store';
@@ -40,11 +40,16 @@ export function ConversationList() {
   const title = (c: ChatConversation) =>
     c.type === 'GROUP' ? c.group?.name ?? 'Group' : c.otherUser?.displayName ?? 'User';
 
+  const skeletonKeys = useMemo(
+    () => Array.from({ length: 4 }, () => crypto.randomUUID()),
+    [],
+  );
+
   if (!isReady || loading) {
     return (
       <div className="space-y-3">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-16 bg-surface-container-high rounded-xl animate-pulse" />
+        {skeletonKeys.map((key) => (
+          <div key={key} className="h-16 bg-surface-container-high rounded-xl animate-pulse" />
         ))}
       </div>
     );
@@ -85,7 +90,7 @@ export function ConversationList() {
           href="/friends"
           className="font-display font-headline-h4 px-6 h-11 rounded-md bg-brand-orange-dark text-on-primary flex items-center gap-2 shadow-sm hover:brightness-110 active:scale-95 transition-all"
         >
-          <span className="material-symbols-outlined text-[20px]">group</span>
+          <span className="material-symbols-outlined text-[20px]">group</span>{' '}
           Find friends
         </Link>
       </div>
@@ -96,15 +101,20 @@ export function ConversationList() {
     <ul className="space-y-2" aria-label="Conversations">
       {conversations.map((c) => {
         const active = pathname === `/chat/${c.id}`;
+        function getLinkClassName(): string {
+          const base = 'flex items-center gap-3 p-3 rounded-xl border transition-all';
+          if (active) return `${base} bg-primary-container/60 border-primary`;
+          return `${base} bg-surface-container-lowest border-outline-variant hover:border-primary`;
+        }
+        function getUnreadCount(): string {
+          if (c.unreadCount > 9) return '9+';
+          return String(c.unreadCount);
+        }
         return (
           <li key={c.id}>
             <Link
               href={`/chat/${c.id}`}
-              className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                active
-                  ? 'bg-primary-container/60 border-primary'
-                  : 'bg-surface-container-lowest border-outline-variant hover:border-primary'
-              }`}
+              className={getLinkClassName()}
             >
               {c.type === 'GROUP' ? (
                 <div className="w-9 h-9 rounded-full bg-primary-fixed flex items-center justify-center overflow-hidden shrink-0">
@@ -132,7 +142,7 @@ export function ConversationList() {
                   </p>
                   {c.unreadCount > 0 && (
                     <span className="inline-flex items-center justify-center h-5 min-w-5 px-1 rounded-full bg-brand-orange-dark text-white font-bold text-[10px] shrink-0">
-                      {c.unreadCount > 9 ? '9+' : c.unreadCount}
+                      {getUnreadCount()}
                     </span>
                   )}
                 </div>

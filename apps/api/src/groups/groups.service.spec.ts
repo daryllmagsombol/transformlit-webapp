@@ -1,8 +1,13 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { GroupsService } from './groups.service';
 import { PrismaService } from '../prisma/prisma.service';
-import type { GroupCategory, GroupVisibility } from '@transformlit/shared';
+import { UserRole, type GroupCategory, type GroupVisibility } from '@transformlit/shared';
 
 const mockGroup = {
   id: 'group-1',
@@ -18,6 +23,8 @@ const mockGroup = {
   updatedAt: new Date('2024-01-01'),
   deletedAt: null,
 };
+
+const privateGroup = { ...mockGroup, id: 'group-2', visibility: 'PRIVATE' };
 
 const mockMember = {
   id: 'member-1',
@@ -94,38 +101,44 @@ describe('GroupsService', () => {
   // ── listGroups ──────────────────────────────────────────────────────────────
 
   describe('listGroups', () => {
-    it('should find non-deleted groups', async () => {
+    it('should find non-deleted PUBLIC groups or groups the user is an ACTIVE member of', async () => {
       prisma.group.findMany.mockResolvedValue([groupWithCount(mockGroup)]);
-      await service.listGroups();
+      await service.listGroups('user-1');
       expect(prisma.group.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { deletedAt: null },
+          where: {
+            deletedAt: null,
+            OR: [
+              { visibility: 'PUBLIC' },
+              { members: { some: { userId: 'user-1', status: 'ACTIVE' } } },
+            ],
+          },
         }),
       );
     });
 
     it('should include ACTIVE member count via _count', async () => {
       prisma.group.findMany.mockResolvedValue([groupWithCount(mockGroup, 5)]);
-      const result = await service.listGroups();
+      const result = await service.listGroups('user-1');
       expect(result[0].memberCount).toBe(5);
     });
 
-    it('should include user role when userId provided', async () => {
+    it('should include user role when the user is a member', async () => {
       const withRole = groupWithCount(mockGroup, 3, [{ role: 'OWNER', userId: 'user-1' }]);
       prisma.group.findMany.mockResolvedValue([withRole]);
       const result = await service.listGroups('user-1');
       expect(result[0].myRole).toBe('OWNER');
     });
 
-    it('should return null myRole when userId not provided', async () => {
+    it('should return null myRole when user has no membership', async () => {
       prisma.group.findMany.mockResolvedValue([groupWithCount(mockGroup, 3)]);
-      const result = await service.listGroups();
+      const result = await service.listGroups('user-1');
       expect(result[0].myRole).toBeNull();
     });
 
     it('should map via mapGroup helper', async () => {
       prisma.group.findMany.mockResolvedValue([groupWithCount(mockGroup, 7)]);
-      const result = await service.listGroups();
+      const result = await service.listGroups('user-1');
       expect(result[0]).toEqual(
         expect.objectContaining({
           ...mockGroup,
@@ -137,7 +150,7 @@ describe('GroupsService', () => {
 
     it('should order by createdAt descending', async () => {
       prisma.group.findMany.mockResolvedValue([]);
-      await service.listGroups();
+      await service.listGroups('user-1');
       expect(prisma.group.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           orderBy: { createdAt: 'desc' },
@@ -258,7 +271,7 @@ describe('GroupsService', () => {
   describe('findById', () => {
     it('should find group by id where deletedAt is null', async () => {
       prisma.group.findUnique.mockResolvedValue(groupWithCount(mockGroup));
-      await service.findById('group-1');
+      await service.findById('group-1', 'user-1');
       expect(prisma.group.findUnique).toHaveBeenCalledWith({
         where: { id: 'group-1', deletedAt: null },
         include: expect.any(Object),
@@ -267,7 +280,7 @@ describe('GroupsService', () => {
 
     it('should return null if not found', async () => {
       prisma.group.findUnique.mockResolvedValue(null);
-      const result = await service.findById('nonexistent');
+      const result = await service.findById('nonexistent', 'user-1');
       expect(result).toBeNull();
     });
 
@@ -283,15 +296,62 @@ describe('GroupsService', () => {
       );
     });
 
-    it('should include member count without userId', async () => {
+    it('should include member count with null myRole when user has no membership', async () => {
       prisma.group.findUnique.mockResolvedValue(groupWithCount(mockGroup, 8));
-      const result = await service.findById('group-1');
+      const result = await service.findById('group-1', 'user-1');
       expect(result).toEqual(
         expect.objectContaining({
           memberCount: 8,
           myRole: null,
         }),
       );
+    });
+
+    it('should hide a PRIVATE group from a non-member (no existence leak)', async () => {
+      prisma.group.findUnique.mockResolvedValue(groupWithCount(privateGroup));
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      const result = await service.findById('group-2', 'user-1');
+      expect(result).toBeNull();
+    });
+
+    it('should return a PRIVATE group to an ACTIVE member', async () => {
+      prisma.group.findUnique.mockResolvedValue(groupWithCount(privateGroup));
+      prisma.groupMember.findUnique.mockResolvedValue({ ...mockMember, role: 'MEMBER' });
+      const result = await service.findById('group-2', 'user-1');
+      expect(result).toEqual(expect.objectContaining({ id: 'group-2', visibility: 'PRIVATE' }));
+    });
+  });
+
+  // ── findBySlug ──────────────────────────────────────────────────────────────
+
+  describe('findBySlug', () => {
+    it('should find group by slug where deletedAt is null', async () => {
+      prisma.group.findUnique.mockResolvedValue(groupWithCount(mockGroup));
+      await service.findBySlug('test-group-1234567890', 'user-1');
+      expect(prisma.group.findUnique).toHaveBeenCalledWith({
+        where: { slug: 'test-group-1234567890', deletedAt: null },
+        include: expect.any(Object),
+      });
+    });
+
+    it('should return null if not found', async () => {
+      prisma.group.findUnique.mockResolvedValue(null);
+      const result = await service.findBySlug('nonexistent', 'user-1');
+      expect(result).toBeNull();
+    });
+
+    it('should hide a PRIVATE group from a non-member (no existence leak)', async () => {
+      prisma.group.findUnique.mockResolvedValue(groupWithCount(privateGroup));
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      const result = await service.findBySlug('group-2', 'user-1');
+      expect(result).toBeNull();
+    });
+
+    it('should return a PRIVATE group to an ACTIVE member', async () => {
+      prisma.group.findUnique.mockResolvedValue(groupWithCount(privateGroup));
+      prisma.groupMember.findUnique.mockResolvedValue({ ...mockMember, role: 'MEMBER' });
+      const result = await service.findBySlug('group-2', 'user-1');
+      expect(result).toEqual(expect.objectContaining({ id: 'group-2', visibility: 'PRIVATE' }));
     });
   });
 
@@ -386,28 +446,61 @@ describe('GroupsService', () => {
       await expect(service.join('bad-id', 'user-1')).rejects.toThrow('Group not found');
     });
 
-    it('should upsert membership with ACTIVE status for PUBLIC groups', async () => {
+    it('should create membership with ACTIVE status for PUBLIC groups when no row exists', async () => {
       prisma.group.findUnique.mockResolvedValue({ ...mockGroup, visibility: 'PUBLIC' });
+      prisma.groupMember.findUnique.mockResolvedValue(null);
       await service.join('group-1', 'user-1');
-      expect(prisma.groupMember.upsert).toHaveBeenCalledWith({
-        where: { groupId_userId: { groupId: 'group-1', userId: 'user-1' } },
-        update: { status: 'ACTIVE' },
-        create: { groupId: 'group-1', userId: 'user-1', status: 'ACTIVE' },
+      expect(prisma.groupMember.create).toHaveBeenCalledWith({
+        data: { groupId: 'group-1', userId: 'user-1', status: 'ACTIVE' },
       });
+      expect(prisma.groupMember.update).not.toHaveBeenCalled();
     });
 
-    it('should upsert membership with PENDING status for PRIVATE groups', async () => {
+    it('should create membership with PENDING status for PRIVATE groups when no row exists', async () => {
       prisma.group.findUnique.mockResolvedValue({ ...mockGroup, visibility: 'PRIVATE' });
+      prisma.groupMember.findUnique.mockResolvedValue(null);
       await service.join('group-1', 'user-1');
-      expect(prisma.groupMember.upsert).toHaveBeenCalledWith({
-        where: { groupId_userId: { groupId: 'group-1', userId: 'user-1' } },
-        update: { status: 'PENDING' },
-        create: { groupId: 'group-1', userId: 'user-1', status: 'PENDING' },
+      expect(prisma.groupMember.create).toHaveBeenCalledWith({
+        data: { groupId: 'group-1', userId: 'user-1', status: 'PENDING' },
       });
     });
 
-    it('should return the upserted member', async () => {
+    it('should update an existing non-banned membership instead of creating', async () => {
       prisma.group.findUnique.mockResolvedValue({ ...mockGroup, visibility: 'PUBLIC' });
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        groupId: 'group-1',
+        userId: 'user-1',
+        role: 'MEMBER',
+        status: 'PENDING',
+      });
+      await service.join('group-1', 'user-1');
+      expect(prisma.groupMember.update).toHaveBeenCalledWith({
+        where: { id: 'member-1' },
+        data: { status: 'ACTIVE' },
+      });
+      expect(prisma.groupMember.create).not.toHaveBeenCalled();
+    });
+
+    it('should reject a BANNED user even on a PUBLIC group', async () => {
+      prisma.group.findUnique.mockResolvedValue({ ...mockGroup, visibility: 'PUBLIC' });
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        groupId: 'group-1',
+        userId: 'user-1',
+        role: 'MEMBER',
+        status: 'BANNED',
+      });
+      await expect(service.join('group-1', 'user-1')).rejects.toThrow(
+        'You are banned from this group',
+      );
+      expect(prisma.groupMember.create).not.toHaveBeenCalled();
+      expect(prisma.groupMember.update).not.toHaveBeenCalled();
+    });
+
+    it('should return the created member', async () => {
+      prisma.group.findUnique.mockResolvedValue({ ...mockGroup, visibility: 'PUBLIC' });
+      prisma.groupMember.findUnique.mockResolvedValue(null);
       const result = await service.join('group-1', 'user-1');
       expect(result).toEqual(mockMember);
     });
@@ -416,8 +509,38 @@ describe('GroupsService', () => {
   // ── leave ───────────────────────────────────────────────────────────────────
 
   describe('leave', () => {
-    it('should delete membership', async () => {
+    it('should delete membership for a non-owner', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'MEMBER',
+        status: 'ACTIVE',
+      });
       await service.leave('group-1', 'user-1');
+      expect(prisma.groupMember.deleteMany).toHaveBeenCalledWith({
+        where: { groupId: 'group-1', userId: 'user-1' },
+      });
+    });
+
+    it('should throw BadRequestException when the sole ACTIVE owner tries to leave', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'OWNER',
+        status: 'ACTIVE',
+      });
+      prisma.groupMember.count.mockResolvedValue(1);
+      await expect(service.leave('group-1', 'user-1')).rejects.toThrow(BadRequestException);
+      expect(prisma.groupMember.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('should allow an owner to leave when another ACTIVE owner exists', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'OWNER',
+        status: 'ACTIVE',
+      });
+      prisma.groupMember.count.mockResolvedValue(2);
+      const result = await service.leave('group-1', 'user-1');
+      expect(result).toBe(true);
       expect(prisma.groupMember.deleteMany).toHaveBeenCalledWith({
         where: { groupId: 'group-1', userId: 'user-1' },
       });
@@ -432,19 +555,77 @@ describe('GroupsService', () => {
   // ── updateGroup ─────────────────────────────────────────────────────────────
 
   describe('updateGroup', () => {
-    it('should update group with provided fields', async () => {
-      const input = { name: 'Updated Name', description: 'Updated desc' };
-      await service.updateGroup('group-1', input);
+    const input = { name: 'Updated Name', description: 'Updated desc' };
+
+    it('should allow an ACTIVE owner to update', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'OWNER',
+        status: 'ACTIVE',
+      });
+      await service.updateGroup('group-1', 'user-1', input, UserRole.MEMBER);
       expect(prisma.group.update).toHaveBeenCalledWith({
         where: { id: 'group-1' },
         data: input,
       });
     });
 
+    it('should allow an ACTIVE moderator to update', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'MODERATOR',
+        status: 'ACTIVE',
+      });
+      await service.updateGroup('group-1', 'user-1', input, UserRole.MEMBER);
+      expect(prisma.group.update).toHaveBeenCalledWith({
+        where: { id: 'group-1' },
+        data: input,
+      });
+    });
+
+    it('should allow a platform ADMIN to update without membership', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      await service.updateGroup('group-1', 'user-1', input, UserRole.ADMIN);
+      expect(prisma.group.update).toHaveBeenCalledWith({
+        where: { id: 'group-1' },
+        data: input,
+      });
+    });
+
+    it('should forbid a plain ACTIVE member from updating', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'MEMBER',
+        status: 'ACTIVE',
+      });
+      await expect(
+        service.updateGroup('group-1', 'user-1', input, UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.group.update).not.toHaveBeenCalled();
+    });
+
+    it('should forbid a non-member from updating', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      await expect(
+        service.updateGroup('group-1', 'user-1', input, UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.group.update).not.toHaveBeenCalled();
+    });
+
     it('should return updated group', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'OWNER',
+        status: 'ACTIVE',
+      });
       const updated = { ...mockGroup, name: 'Updated Name' };
       prisma.group.update.mockResolvedValue(updated);
-      const result = await service.updateGroup('group-1', { name: 'Updated Name' });
+      const result = await service.updateGroup(
+        'group-1',
+        'user-1',
+        { name: 'Updated Name' },
+        UserRole.MEMBER,
+      );
       expect(result).toEqual(updated);
     });
   });
@@ -452,18 +633,57 @@ describe('GroupsService', () => {
   // ── deleteGroup ─────────────────────────────────────────────────────────────
 
   describe('deleteGroup', () => {
-    it('should soft delete by setting deletedAt', async () => {
-      await service.deleteGroup('group-1');
+    it('should soft delete by setting deletedAt for an ACTIVE owner', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'OWNER',
+        status: 'ACTIVE',
+      });
+      await service.deleteGroup('group-1', 'user-1', UserRole.MEMBER);
       expect(prisma.group.update).toHaveBeenCalledWith({
         where: { id: 'group-1' },
         data: expect.objectContaining({ deletedAt: expect.any(Date) }),
       });
     });
 
+    it('should allow a platform ADMIN to soft delete without membership', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      await service.deleteGroup('group-1', 'user-1', UserRole.ADMIN);
+      expect(prisma.group.update).toHaveBeenCalledWith({
+        where: { id: 'group-1' },
+        data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+      });
+    });
+
+    it('should forbid an ACTIVE moderator from deleting', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'MODERATOR',
+        status: 'ACTIVE',
+      });
+      await expect(
+        service.deleteGroup('group-1', 'user-1', UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.group.update).not.toHaveBeenCalled();
+    });
+
+    it('should forbid a non-member from deleting', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      await expect(
+        service.deleteGroup('group-1', 'user-1', UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.group.update).not.toHaveBeenCalled();
+    });
+
     it('should return updated group', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'OWNER',
+        status: 'ACTIVE',
+      });
       const deleted = { ...mockGroup, deletedAt: new Date('2024-06-01') };
       prisma.group.update.mockResolvedValue(deleted);
-      const result = await service.deleteGroup('group-1');
+      const result = await service.deleteGroup('group-1', 'user-1', UserRole.MEMBER);
       expect(result).toEqual(deleted);
     });
   });
@@ -471,14 +691,18 @@ describe('GroupsService', () => {
   // ── searchGroups ────────────────────────────────────────────────────────────
 
   describe('searchGroups', () => {
-    it('should search case-insensitive by name', async () => {
+    it('should search case-insensitive by name among PUBLIC or joined groups', async () => {
       prisma.group.findMany.mockResolvedValue([]);
-      await service.searchGroups('test');
+      await service.searchGroups('test', 'user-1');
       expect(prisma.group.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             deletedAt: null,
             name: { contains: 'test', mode: 'insensitive' },
+            OR: [
+              { visibility: 'PUBLIC' },
+              { members: { some: { userId: 'user-1', status: 'ACTIVE' } } },
+            ],
           },
         }),
       );
@@ -486,7 +710,7 @@ describe('GroupsService', () => {
 
     it('should limit to 20 results', async () => {
       prisma.group.findMany.mockResolvedValue([]);
-      await service.searchGroups('test');
+      await service.searchGroups('test', 'user-1');
       expect(prisma.group.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ take: 20 }),
       );
@@ -494,13 +718,13 @@ describe('GroupsService', () => {
 
     it('should include ACTIVE member count', async () => {
       prisma.group.findMany.mockResolvedValue([groupWithCount(mockGroup, 12)]);
-      const result = await service.searchGroups('test');
+      const result = await service.searchGroups('test', 'user-1');
       expect(result[0].memberCount).toBe(12);
     });
 
     it('should return mapped groups', async () => {
       prisma.group.findMany.mockResolvedValue([groupWithCount(mockGroup, 5)]);
-      const result = await service.searchGroups('test');
+      const result = await service.searchGroups('test', 'user-1');
       expect(result[0]).toEqual(
         expect.objectContaining({
           ...mockGroup,
@@ -514,22 +738,98 @@ describe('GroupsService', () => {
   // ── listMembers ─────────────────────────────────────────────────────────────
 
   describe('listMembers', () => {
-    it('should find all members for a group', async () => {
-      await service.listMembers('group-1');
-      expect(prisma.groupMember.findMany).toHaveBeenCalledWith({
-        where: { groupId: 'group-1' },
-        include: { user: true },
-        orderBy: { joinedAt: 'asc' },
-      });
+    it('should throw NotFoundException when the group does not exist', async () => {
+      prisma.group.findUnique.mockResolvedValue(null);
+      await expect(service.listMembers('group-1', 'user-1')).rejects.toThrow(NotFoundException);
     });
 
-    it('should include user objects', async () => {
-      const result = await service.listMembers('group-1');
-      expect(result[0].user).toEqual(mockUser);
+    it('should forbid a non-member from listing a PRIVATE group', async () => {
+      prisma.group.findUnique.mockResolvedValue({ ...mockGroup, visibility: 'PRIVATE' });
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      await expect(service.listMembers('group-1', 'user-1')).rejects.toThrow(ForbiddenException);
+      expect(prisma.groupMember.findMany).not.toHaveBeenCalled();
+    });
+
+    it('should allow an ACTIVE member to list members of a PRIVATE group', async () => {
+      prisma.group.findUnique.mockResolvedValue({ ...mockGroup, visibility: 'PRIVATE' });
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'MEMBER',
+        status: 'ACTIVE',
+      });
+      await service.listMembers('group-1', 'user-1');
+      expect(prisma.groupMember.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { groupId: 'group-1', status: 'ACTIVE' },
+        }),
+      );
+    });
+
+    it('should only expose ACTIVE members to regular members and non-members', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'MEMBER',
+        status: 'ACTIVE',
+      });
+      await service.listMembers('group-1', 'user-1');
+      expect(prisma.groupMember.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { groupId: 'group-1', status: 'ACTIVE' },
+        }),
+      );
+    });
+
+    it('should expose all members (incl. PENDING/BANNED) to an ACTIVE owner', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'OWNER',
+        status: 'ACTIVE',
+      });
+      await service.listMembers('group-1', 'user-1');
+      expect(prisma.groupMember.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { groupId: 'group-1' },
+        }),
+      );
+    });
+
+    it('should expose all members (incl. PENDING/BANNED) to an ACTIVE moderator', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'MODERATOR',
+        status: 'ACTIVE',
+      });
+      await service.listMembers('group-1', 'user-1');
+      expect(prisma.groupMember.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { groupId: 'group-1' },
+        }),
+      );
+    });
+
+    it('should never select email/bio - projects member users to id/displayName/avatarUrl', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'OWNER',
+        status: 'ACTIVE',
+      });
+      await service.listMembers('group-1', 'user-1');
+      expect(prisma.groupMember.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: {
+            user: { select: { id: true, displayName: true, avatarUrl: true } },
+          },
+        }),
+      );
     });
 
     it('should order by joinedAt ascending', async () => {
-      await service.listMembers('group-1');
+      prisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        role: 'MEMBER',
+        status: 'ACTIVE',
+      });
+      await service.listMembers('group-1', 'user-1');
       expect(prisma.groupMember.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           orderBy: { joinedAt: 'asc' },
@@ -539,7 +839,7 @@ describe('GroupsService', () => {
 
     it('should return empty array when no members', async () => {
       prisma.groupMember.findMany.mockResolvedValue([]);
-      const result = await service.listMembers('group-1');
+      const result = await service.listMembers('group-1', 'user-1');
       expect(result).toEqual([]);
     });
   });

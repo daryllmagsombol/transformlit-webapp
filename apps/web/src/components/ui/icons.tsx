@@ -2,7 +2,7 @@
 // Extracted from login-form.tsx and register-form.tsx to avoid duplication.
 
 export type IconProps = {
-  className?: string;
+  readonly className?: string;
 };
 
 export function MailIcon({ className }: IconProps) {

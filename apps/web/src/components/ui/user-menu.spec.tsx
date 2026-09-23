@@ -4,6 +4,8 @@ import { UserMenu } from './user-menu';
 var mockPush: jest.Mock;
 var mockClearAuthStore: jest.Mock;
 var mockClearAuthStorage: jest.Mock;
+var mockResetApolloState: jest.Mock;
+var mockFetch: jest.Mock;
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
@@ -24,6 +26,14 @@ jest.mock('../../lib/auth', () => ({
   clearAuth: () => mockClearAuthStorage(),
 }));
 
+jest.mock('../../lib/apollo-client', () => ({
+  resetApolloState: () => mockResetApolloState(),
+}));
+
+jest.mock('../../lib/constants', () => ({
+  API_BASE: 'http://localhost:3005',
+}));
+
 const mockUser = {
   id: 'user-1',
   email: 'jane@example.com',
@@ -38,6 +48,9 @@ describe('UserMenu', () => {
     mockPush = jest.fn();
     mockClearAuthStore = jest.fn();
     mockClearAuthStorage = jest.fn();
+    mockResetApolloState = jest.fn();
+    mockFetch = jest.fn().mockResolvedValue({ ok: true });
+    global.fetch = mockFetch as unknown as typeof fetch;
   });
 
   describe('trigger', () => {
@@ -111,16 +124,52 @@ describe('UserMenu', () => {
   });
 
   describe('logout', () => {
-    it('clears auth and navigates to login when Log out is clicked', () => {
+    it('clears auth and navigates to login when Log out is clicked', async () => {
       render(<UserMenu user={mockUser} />);
 
       fireEvent.click(screen.getByRole('button', { expanded: false }));
       fireEvent.click(screen.getByRole('menuitem', { name: /log out/i }));
 
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          'http://localhost:3005/auth/logout',
+          expect.objectContaining({
+            method: 'POST',
+            credentials: 'include',
+          }),
+        );
+      });
+
       expect(mockClearAuthStorage).toHaveBeenCalledTimes(1);
       expect(mockClearAuthStore).toHaveBeenCalledTimes(1);
       expect(mockPush).toHaveBeenCalledWith('/login');
       expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    });
+
+    it('still clears local auth when the logout endpoint fails', async () => {
+      mockFetch.mockRejectedValue(new Error('network down'));
+
+      render(<UserMenu user={mockUser} />);
+
+      fireEvent.click(screen.getByRole('button', { expanded: false }));
+      fireEvent.click(screen.getByRole('menuitem', { name: /log out/i }));
+
+      await waitFor(() => {
+        expect(mockClearAuthStorage).toHaveBeenCalledTimes(1);
+      });
+      expect(mockClearAuthStore).toHaveBeenCalledTimes(1);
+      expect(mockPush).toHaveBeenCalledWith('/login');
+    });
+
+    it('resets the Apollo cache on logout to prevent cross-user data leaks', async () => {
+      render(<UserMenu user={mockUser} />);
+
+      fireEvent.click(screen.getByRole('button', { expanded: false }));
+      fireEvent.click(screen.getByRole('menuitem', { name: /log out/i }));
+
+      await waitFor(() => {
+        expect(mockResetApolloState).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });

@@ -2,9 +2,6 @@ import {
   getAccessToken,
   setAccessToken,
   removeAccessToken,
-  getRefreshToken,
-  setRefreshToken,
-  removeRefreshToken,
   clearAuth,
   decodeJwt,
   getTokenExpiry,
@@ -20,7 +17,7 @@ function buildJwt(payload: Record<string, unknown>): string {
 
 describe('auth utilities', () => {
   beforeEach(() => {
-    localStorage.clear();
+    clearAuth();
   });
 
   describe('access token', () => {
@@ -28,7 +25,7 @@ describe('auth utilities', () => {
       expect(getAccessToken()).toBeNull();
     });
 
-    it('stores and retrieves an access token', () => {
+    it('stores and retrieves an access token in memory', () => {
       setAccessToken('abc123');
       expect(getAccessToken()).toBe('abc123');
     });
@@ -40,30 +37,11 @@ describe('auth utilities', () => {
     });
   });
 
-  describe('refresh token', () => {
-    it('returns null when no token is stored', () => {
-      expect(getRefreshToken()).toBeNull();
-    });
-
-    it('stores and retrieves a refresh token', () => {
-      setRefreshToken('ref456');
-      expect(getRefreshToken()).toBe('ref456');
-    });
-
-    it('removes the refresh token', () => {
-      setRefreshToken('ref456');
-      removeRefreshToken();
-      expect(getRefreshToken()).toBeNull();
-    });
-  });
-
   describe('clearAuth', () => {
-    it('removes both tokens', () => {
+    it('clears the in-memory access token', () => {
       setAccessToken('access');
-      setRefreshToken('refresh');
       clearAuth();
       expect(getAccessToken()).toBeNull();
-      expect(getRefreshToken()).toBeNull();
     });
   });
 

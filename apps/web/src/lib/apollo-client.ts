@@ -2,14 +2,13 @@ import {
   ApolloClient,
   ApolloLink,
   InMemoryCache,
-  createHttpLink,
-  split,
+  CombinedGraphQLErrors,
 } from '@apollo/client';
-import { setContext } from '@apollo/client/link/context';
-import { onError } from '@apollo/client/link/error';
-import { CombinedGraphQLErrors } from '@apollo/client/errors';
+import { HttpLink } from '@apollo/client/link/http';
+import { SetContextLink } from '@apollo/client/link/context';
+import { ErrorLink } from '@apollo/client/link/error';
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
-import { getMainDefinition } from '@apollo/client/utilities';
+import { OperationTypeNode } from 'graphql';
 import { Observable } from 'rxjs';
 import { createClient } from 'graphql-ws';
 import type { GraphQLUser } from '@transformlit/shared';
@@ -17,16 +16,15 @@ import { useAuthStore } from '../store';
 import {
   clearAuth,
   getAccessToken,
-  getRefreshToken,
   isTokenExpiringSoon,
   setAccessToken,
-  setRefreshToken,
 } from './auth';
+import { API_BASE } from './constants';
 
 const httpUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/graphql';
 const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:3005/graphql';
 
-const isServer = typeof window === 'undefined';
+const isServer = globalThis.window === undefined;
 
 /* ------------------------------------------------------------------ */
 /*  Token refresh helpers                                             */
@@ -36,9 +34,8 @@ let refreshPromise: Promise<boolean> | null = null;
 let lastRefreshAttempt = 0;
 const MIN_REFRESH_INTERVAL_MS = 30_000;
 
-interface RefreshPayload {
+interface RestRefreshPayload {
   accessToken: string;
-  refreshToken: string;
   user: GraphQLUser;
 }
 
@@ -46,64 +43,41 @@ function redirectToLogin() {
   clearAuth();
   useAuthStore.getState().clearAuth();
   if (!isServer) {
-    window.location.href = '/login';
+    globalThis.window.location.href = '/login';
   }
 }
 
-async function callRefreshMutation(refreshToken: string): Promise<RefreshPayload> {
-  const response = await fetch(httpUrl, {
+/**
+ * Calls the REST refresh endpoint. The httpOnly `transformlit_refresh` cookie
+ * is sent automatically via credentials:'include'; no token is read from JS.
+ */
+async function callRestRefresh(): Promise<RestRefreshPayload> {
+  const response = await fetch(`${API_BASE}/auth/refresh`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({
-      query: `
-        mutation RefreshToken($refreshToken: String!) {
-          refreshToken(refreshToken: $refreshToken) {
-            accessToken
-            refreshToken
-            user { id email displayName avatarUrl role status createdAt }
-          }
-        }
-      `,
-      variables: { refreshToken },
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
   });
 
   if (!response.ok) {
     throw new Error(`Refresh failed: ${response.status}`);
   }
 
-  const result = (await response.json()) as {
-    data?: { refreshToken: RefreshPayload };
-    errors?: Array<{ message?: string }>;
-  };
-
-  if (result.errors?.length) {
-    throw new Error(result.errors[0].message ?? 'Refresh failed');
-  }
-
-  if (!result.data?.refreshToken) {
-    throw new Error('Refresh response missing tokens');
-  }
-
-  return result.data.refreshToken;
+  return (await response.json()) as RestRefreshPayload;
 }
 
 async function doRefreshTokens(): Promise<boolean> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) {
-    redirectToLogin();
-    return false;
+  // Skip if the in-memory access token is still valid.
+  const currentToken = getAccessToken();
+  if (currentToken && !isTokenExpiringSoon(currentToken)) {
+    return true;
   }
 
   lastRefreshAttempt = Date.now();
   try {
-    const payload = await callRefreshMutation(refreshToken);
+    const payload = await callRestRefresh();
     setAccessToken(payload.accessToken);
-    setRefreshToken(payload.refreshToken);
-    useAuthStore
-      .getState()
-      .setAuth(payload.user, payload.accessToken, payload.refreshToken);
+    useAuthStore.getState().setAuth(payload.user, payload.accessToken);
     return true;
   } catch {
     redirectToLogin();
@@ -117,6 +91,26 @@ export function refreshTokens(): Promise<boolean> {
     refreshPromise = null;
   });
   return refreshPromise;
+}
+
+/**
+ * Restores an existing session on cold start / OAuth redirect: if an access
+ * token is already present (memory) it is a no-op; otherwise it tries the REST
+ * refresh endpoint using the httpOnly cookie. On failure the user is treated
+ * as signed out (no hard redirect — callers decide).
+ */
+export async function bootstrapAuth(): Promise<boolean> {
+  if (getAccessToken()) return true;
+  try {
+    const payload = await callRestRefresh();
+    setAccessToken(payload.accessToken);
+    useAuthStore.getState().setAuth(payload.user, payload.accessToken);
+    return true;
+  } catch {
+    clearAuth();
+    useAuthStore.getState().clearAuth();
+    return false;
+  }
 }
 
 function isUnauthorizedError(error: unknown): boolean {
@@ -182,16 +176,16 @@ function notifyWsReconnected(): void {
 /*  Apollo links                                                      */
 /* ------------------------------------------------------------------ */
 
-const httpLink = createHttpLink({
+const httpLink = new HttpLink({
   uri: httpUrl,
   credentials: 'include',
 });
 
-const authLink = setContext((_, { headers }) => {
+const authLink = new SetContextLink((prevContext, _operation) => {
   const token = isServer ? null : getAccessToken();
   return {
     headers: {
-      ...headers,
+      ...((prevContext as { headers?: Record<string, string> })?.headers ?? {}),
       authorization: token ? `Bearer ${token}` : '',
     },
   };
@@ -228,48 +222,63 @@ const proactiveRefreshLink = new ApolloLink((operation, forward) => {
  * Intercepts 401/UNAUTHENTICATED responses, performs a rotating refresh,
  * and retries the failed request with the new access token.
  */
-const errorLink = onError(({ error, operation, forward }) => {
-  if (!isUnauthorizedError(error)) return;
+const errorLink = new ErrorLink(({ error, operation, forward }) => {
+  if (isUnauthorizedError(error)) {
+    // Login/registration hit unauthenticated endpoints: an "Invalid credentials"
+    // (UNAUTHENTICATED) response is a business error, NOT an expired session.
+    // Intercepting it here would try a refresh, find no session, and force a
+    // page reload — destroying the form and any error toast mid-login.
+    const isLoginOrRegister = operation.operationName === 'LoginLocal' || operation.operationName === 'RegisterLocal';
+    if (isLoginOrRegister) return;
 
-  // Login/registration hit unauthenticated endpoints: an "Invalid credentials"
-  // (UNAUTHENTICATED) response is a business error, NOT an expired session.
-  // Intercepting it here would try a refresh, find no token, and force a page
-  // reload — destroying the form and any error toast mid-login.
-  if (operation.operationName === 'LoginLocal' || operation.operationName === 'RegisterLocal') return;
-  // No session to refresh — let the original error propagate to the caller.
-  if (!getRefreshToken()) return;
+    const context = operation.getContext();
+    if (context.authRetry) return;
+    operation.setContext({ ...context, authRetry: true });
 
-  const context = operation.getContext();
-  if (context.authRetry) return;
-  operation.setContext({ ...context, authRetry: true });
-
-  return new Observable((subscriber) => {
-    refreshTokens()
-      .then((success) => {
-        if (!success) throw new Error('Session expired');
-        const token = getAccessToken();
-        operation.setContext(({ headers = {} }) => ({
-          headers: {
-            ...headers,
-            authorization: token ? `Bearer ${token}` : '',
-          },
-        }));
-        return forward(operation);
-      })
-      .then((observable) => {
-        observable.subscribe(subscriber);
-      })
-      .catch((err) => subscriber.error(err));
-  });
+    return new Observable((subscriber) => {
+      // No-session case: refreshTokens() fails fast via the REST refresh call
+      // (401 without a cookie) and redirects to login.
+      refreshTokens()
+        .then((success) => {
+          if (!success) throw new Error('Session expired');
+          const token = getAccessToken();
+          operation.setContext(({ headers = {} }) => ({
+            headers: {
+              ...headers,
+              authorization: token ? `Bearer ${token}` : '',
+            },
+          }));
+          return forward(operation);
+        })
+        .then((observable) => {
+          observable.subscribe(subscriber);
+        })
+        .catch((err) => subscriber.error(err));
+    });
+  }
 });
 
-const wsLink = !isServer
-  ? new GraphQLWsLink(
+const wsLink = isServer
+  ? null
+  : new GraphQLWsLink(
       createClient({
         url: wsUrl,
-        connectionParams: () => {
+        connectionParams: async () => {
+          // Ensure a fresh in-memory access token BEFORE the socket opens.
+          // After a full page load the persisted `user` restores instantly but
+          // the memory-only access token is gone (and it is not persisted), so
+          // an immediate subscribe would send an empty Authorization header and
+          // the WS connection dies — HTTP self-heals via the error link's
+          // 401→refresh, but a WebSocket cannot. Refreshing here (a no-op when
+          // the token is still valid) makes the realtime layer as resilient as
+          // the HTTP layer.
           const token = getAccessToken();
-          return { authorization: token ? `Bearer ${token}` : '' };
+          if (token && !isTokenExpiringSoon(token)) {
+            return { authorization: `Bearer ${token}` };
+          }
+          const ok = await refreshTokens();
+          const fresh = getAccessToken();
+          return { authorization: ok && fresh ? `Bearer ${fresh}` : '' };
         },
         on: {
           // graphql-ws v6 has no `reconnected` event; the `connected` listener
@@ -280,23 +289,18 @@ const wsLink = !isServer
           },
         },
       }),
-    )
-  : null;
+    );
 
 const splitLink =
-  !isServer && wsLink
-    ? split(
-        ({ query }) => {
-          const definition = getMainDefinition(query);
-          return (
-            definition.kind === 'OperationDefinition' &&
-            definition.operation === 'subscription'
-          );
+  isServer || wsLink === null
+    ? httpLink
+    : ApolloLink.split(
+        ({ operationType }) => {
+          return operationType === OperationTypeNode.SUBSCRIPTION;
         },
         wsLink,
         httpLink,
-      )
-    : httpLink;
+      );
 
 export const apolloClient = new ApolloClient({
   link: ApolloLink.from([errorLink, proactiveRefreshLink, authLink, splitLink]),
@@ -307,3 +311,16 @@ export const apolloClient = new ApolloClient({
     query: { fetchPolicy: 'no-cache' },
   },
 });
+
+/**
+ * Resets the Apollo cache so no data from the previous session (or previous
+ * user) survives into the next one. Best-effort by design: a failed reset
+ * must never break the logout/sign-in flow, so errors are swallowed here.
+ */
+export async function resetApolloState(): Promise<void> {
+  try {
+    await apolloClient.resetStore();
+  } catch {
+    // A cache reset failure must not interrupt logout or navigation.
+  }
+}

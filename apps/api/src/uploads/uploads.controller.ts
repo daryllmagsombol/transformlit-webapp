@@ -49,9 +49,19 @@ export class UploadsController {
 
   @Get(':key')
   async serve(@Param('key') key: string, @Res() res: Response) {
-    if (!this.uploads.localFileExists(key)) throw new NotFoundException();
+    // Serve only keys whose extension we can map to a known image type. This
+    // stops the route from ever streaming an arbitrary local file should a key
+    // resolve oddly, even though resolveLocalPath already basenames and
+    // rejects URL-style keys.
     const ext = this.uploads.extOf(key);
-    res.type(CONTENT_TYPE_BY_EXT[ext] ?? 'application/octet-stream');
+    const contentType = CONTENT_TYPE_BY_EXT[ext];
+    if (!contentType) throw new NotFoundException();
+    if (!this.uploads.localFileExists(key)) throw new NotFoundException();
+    res.type(contentType);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Keys are UUID-addressed and content-addressed in practice, so the files
+    // are immutable and safe to cache for a year in shared/public caches.
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     createReadStream(this.uploads.resolveLocalPath(key)!).pipe(res);
   }
 }

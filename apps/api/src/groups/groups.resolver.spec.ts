@@ -3,7 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { GroupsResolver } from './groups.resolver';
 import { GroupsService } from './groups.service';
 import type { Group } from './models/group.model';
-import { GroupMemberRole, type GroupCategory, type GroupVisibility } from '@transformlit/shared';
+import { GroupMemberRole, UserRole, type GroupCategory, type GroupVisibility } from '@transformlit/shared';
 
 const mockGroup = {
   id: 'group-1',
@@ -28,7 +28,7 @@ const mockMember = {
   joinedAt: new Date('2024-01-01'),
 };
 
-const mockUser = { id: 'user-1' };
+const mockUser = { id: 'user-1', role: UserRole.MEMBER };
 
 describe('GroupsResolver', () => {
   let resolver: GroupsResolver;
@@ -135,9 +135,9 @@ describe('GroupsResolver', () => {
   // ── searchGroups query ──────────────────────────────────────────────────────
 
   describe('searchGroups', () => {
-    it('should delegate to searchGroups with query string', async () => {
-      const result = await resolver.searchGroups('test');
-      expect(service.searchGroups).toHaveBeenCalledWith('test');
+    it('should delegate to searchGroups with query and user id', async () => {
+      const result = await resolver.searchGroups('test', mockUser);
+      expect(service.searchGroups).toHaveBeenCalledWith('test', 'user-1');
       expect(result).toEqual([mockGroup]);
     });
   });
@@ -145,9 +145,9 @@ describe('GroupsResolver', () => {
   // ── groupMembers query ──────────────────────────────────────────────────────
 
   describe('groupMembers', () => {
-    it('should delegate to listMembers with groupId', async () => {
-      const result = await resolver.groupMembers('group-1');
-      expect(service.listMembers).toHaveBeenCalledWith('group-1');
+    it('should delegate to listMembers with groupId and user id', async () => {
+      const result = await resolver.groupMembers('group-1', mockUser);
+      expect(service.listMembers).toHaveBeenCalledWith('group-1', 'user-1');
       expect(result).toEqual([mockMember]);
     });
   });
@@ -186,10 +186,15 @@ describe('GroupsResolver', () => {
   // ── updateGroup mutation ────────────────────────────────────────────────────
 
   describe('updateGroup', () => {
-    it('should delegate to updateGroup with groupId and input', async () => {
+    it('should delegate to updateGroup with groupId, user, and input', async () => {
       const input = { name: 'Updated' };
-      const result = await resolver.updateGroup('group-1', input);
-      expect(service.updateGroup).toHaveBeenCalledWith('group-1', input);
+      const result = await resolver.updateGroup(mockUser, 'group-1', input);
+      expect(service.updateGroup).toHaveBeenCalledWith(
+        'group-1',
+        'user-1',
+        input,
+        'MEMBER',
+      );
       expect(result).toEqual(expect.objectContaining({ name: 'Updated' }));
     });
   });
@@ -197,9 +202,9 @@ describe('GroupsResolver', () => {
   // ── deleteGroup mutation ────────────────────────────────────────────────────
 
   describe('deleteGroup', () => {
-    it('should delegate to deleteGroup with groupId', async () => {
-      const result = await resolver.deleteGroup('group-1');
-      expect(service.deleteGroup).toHaveBeenCalledWith('group-1');
+    it('should delegate to deleteGroup with groupId and user', async () => {
+      const result = await resolver.deleteGroup(mockUser, 'group-1');
+      expect(service.deleteGroup).toHaveBeenCalledWith('group-1', 'user-1', 'MEMBER');
       expect(result).toEqual(expect.objectContaining({ deletedAt: expect.any(Date) }));
     });
   });

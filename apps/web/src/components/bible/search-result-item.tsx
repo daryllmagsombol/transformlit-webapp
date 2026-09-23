@@ -5,9 +5,9 @@ import { refToHref } from '../../lib/bible/refs';
 import type { SearchResult } from '../../lib/bible/search/matcher';
 
 interface SearchResultItemProps {
-  result: SearchResult;
-  translation: string;
-  onNavigate: (href: string) => void;
+  readonly result: SearchResult;
+  readonly translation: string;
+  readonly onNavigate: (href: string) => void;
 }
 
 export function SearchResultItem({ result, translation, onNavigate }: SearchResultItemProps) {

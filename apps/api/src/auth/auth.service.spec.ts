@@ -1,6 +1,11 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
-import { UnauthorizedException } from '@nestjs/common';
+import {
+  UnauthorizedException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -45,6 +50,7 @@ describe('AuthService', () => {
     refreshToken: {
       create: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
   };
 
@@ -94,6 +100,7 @@ describe('AuthService', () => {
     prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
     mockTx.refreshToken.create.mockResolvedValue({});
     mockTx.refreshToken.update.mockResolvedValue({});
+    mockTx.refreshToken.updateMany.mockResolvedValue({ count: 1 });
     jwtService.sign.mockReturnValue('mock-access-token');
   });
 
@@ -172,12 +179,53 @@ describe('AuthService', () => {
       });
     });
 
-    it('should propagate Prisma unique constraint errors', async () => {
+    it('should reject passwords shorter than 8 characters before hashing', async () => {
       (argon2.hash as jest.Mock).mockResolvedValue('hashed-pw');
-      const error = new Error('Unique constraint') as any;
+      await expect(
+        service.registerLocal({ ...input, password: 'short' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(argon2.hash).not.toHaveBeenCalled();
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('should reject passwords longer than 128 characters before hashing', async () => {
+      (argon2.hash as jest.Mock).mockResolvedValue('hashed-pw');
+      await expect(
+        service.registerLocal({ ...input, password: 'a'.repeat(129) }),
+      ).rejects.toThrow(BadRequestException);
+      expect(argon2.hash).not.toHaveBeenCalled();
+    });
+
+    it('should accept a password of exactly 8 characters', async () => {
+      (argon2.hash as jest.Mock).mockResolvedValue('hashed-pw');
+      await service.registerLocal({ ...input, password: '12345678' });
+      expect(prisma.user.create).toHaveBeenCalled();
+    });
+
+    it('should map a Prisma P2002 duplicate-email error to a generic ConflictException', async () => {
+      (argon2.hash as jest.Mock).mockResolvedValue('hashed-pw');
+      const error = new Error('Unique constraint failed on emailNormalized') as any;
       error.code = 'P2002';
       prisma.user.create.mockRejectedValue(error);
-      await expect(service.registerLocal(input)).rejects.toThrow('Unique constraint');
+      await expect(service.registerLocal(input)).rejects.toThrow(ConflictException);
+      await expect(service.registerLocal(input)).rejects.toThrow('Unable to register');
+    });
+
+    it('should not leak the raw Prisma error message for a P2002 conflict', async () => {
+      (argon2.hash as jest.Mock).mockResolvedValue('hashed-pw');
+      const error = new Error('Unique constraint failed on the fields: (`emailNormalized`)') as any;
+      error.code = 'P2002';
+      prisma.user.create.mockRejectedValue(error);
+      await expect(service.registerLocal(input)).rejects.toThrow('Unable to register');
+      await expect(service.registerLocal(input)).rejects.not.toThrow(/emailNormalized/i);
+    });
+
+    it('should re-throw non-P2002 Prisma errors unchanged', async () => {
+      (argon2.hash as jest.Mock).mockResolvedValue('hashed-pw');
+      const error = new Error('connection reset') as any;
+      error.code = 'P1001';
+      prisma.user.create.mockRejectedValue(error);
+      await expect(service.registerLocal(input)).rejects.toThrow('connection reset');
     });
   });
 
@@ -302,13 +350,31 @@ describe('AuthService', () => {
       expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
     });
 
-    it('should revoke old token in transaction', async () => {
+    it('should guard-revoke the old token in the transaction with a conditional updateMany', async () => {
       await service.refreshTokens('valid-token');
-      expect(mockTx.refreshToken.update).toHaveBeenCalledWith(
+      expect(mockTx.refreshToken.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'rt-1' },
+          where: { id: 'rt-1', revokedAt: null },
           data: expect.objectContaining({ revokedAt: expect.any(Date) }),
         }),
+      );
+      // The old unconditional single-row update must no longer be used.
+      expect(mockTx.refreshToken.update).not.toHaveBeenCalled();
+    });
+
+    it('should abort rotation without minting tokens when the guarded revoke matches 0 rows (concurrent reuse)', async () => {
+      mockTx.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+      await expect(service.refreshTokens('valid-token')).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(mockTx.refreshToken.create).not.toHaveBeenCalled();
+      expect(jwtService.sign).not.toHaveBeenCalled();
+    });
+
+    it('should abort rotation and roll back when the token was already revoked mid-flight', async () => {
+      mockTx.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+      await expect(service.refreshTokens('valid-token')).rejects.toThrow(
+        UnauthorizedException,
       );
     });
 
@@ -422,11 +488,14 @@ describe('AuthService', () => {
       });
     });
 
-    it('should link new identity to existing user with the same email', async () => {
+    it('should link new identity to existing verified-email local user with the same email', async () => {
       prisma.identity.findUnique.mockResolvedValue(null);
       prisma.user.findUnique.mockResolvedValue(mockUser);
 
-      const result = await service.findOrCreateOAuthUser(profile);
+      const result = await service.findOrCreateOAuthUser({
+        ...profile,
+        emailVerified: true,
+      });
 
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { emailNormalized: 'oauth@example.com' },
@@ -452,6 +521,48 @@ describe('AuthService', () => {
         accessToken: 'mock-access-token',
         refreshToken: expect.any(String),
         user: mockUser,
+      });
+    });
+
+    it('should throw ForbiddenException when linking to an existing local account with an unverified email', async () => {
+      prisma.identity.findUnique.mockResolvedValue(null);
+      prisma.user.findUnique.mockResolvedValue(mockUser);
+
+      await expect(
+        service.findOrCreateOAuthUser({ ...profile, emailVerified: false }),
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        service.findOrCreateOAuthUser({ ...profile, emailVerified: false }),
+      ).rejects.toThrow('Verify your email or log in with your password first');
+      expect(prisma.identity.create).not.toHaveBeenCalled();
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('should throw ForbiddenException when no verified flag is present and an existing local account matches', async () => {
+      prisma.identity.findUnique.mockResolvedValue(null);
+      prisma.user.findUnique.mockResolvedValue(mockUser);
+
+      await expect(service.findOrCreateOAuthUser(profile)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(prisma.identity.create).not.toHaveBeenCalled();
+    });
+
+    it('should still link to an existing OAuth-only (no password) account regardless of verification', async () => {
+      prisma.identity.findUnique.mockResolvedValue(null);
+      const oauthOnlyUser = { ...mockUser, passwordHash: null };
+      prisma.user.findUnique.mockResolvedValue(oauthOnlyUser);
+
+      const result = await service.findOrCreateOAuthUser({
+        ...profile,
+        emailVerified: false,
+      });
+
+      expect(prisma.identity.create).toHaveBeenCalled();
+      expect(result).toEqual({
+        accessToken: 'mock-access-token',
+        refreshToken: expect.any(String),
+        user: oauthOnlyUser,
       });
     });
   });

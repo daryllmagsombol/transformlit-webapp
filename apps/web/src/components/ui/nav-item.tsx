@@ -3,13 +3,13 @@
 import Link from 'next/link';
 
 type NavItemProps = {
-  label: string;
-  href: string;
-  icon: string;
-  active?: boolean;
-  variant?: 'sidebar' | 'bottom';
-  badge?: number;
-  className?: string;
+  readonly label: string;
+  readonly href: string;
+  readonly icon: string;
+  readonly active?: boolean;
+  readonly variant?: 'sidebar' | 'bottom';
+  readonly badge?: number;
+  readonly className?: string;
 };
 
 export function NavItem({ label, href, icon, active = false, variant = 'sidebar', badge, className = '' }: NavItemProps) {

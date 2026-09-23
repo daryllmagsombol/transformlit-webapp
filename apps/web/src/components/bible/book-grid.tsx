@@ -5,12 +5,12 @@ import { isOldTestament } from '../../lib/bible/refs';
 import type { TranslationBook } from '../../lib/bible/types';
 
 interface BookGridProps {
-  books: TranslationBook[];
-  translation: string;
-  loading: boolean;
+  readonly books: TranslationBook[];
+  readonly translation: string;
+  readonly loading: boolean;
 }
 
-function BookCard({ book, translation }: { book: TranslationBook; translation: string }) {
+function BookCard({ book, translation }: { readonly book: TranslationBook; readonly translation: string }) {
   return (
     <Link
       href={`/bible/${translation}/${book.id}/1`}

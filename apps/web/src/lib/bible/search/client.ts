@@ -7,7 +7,7 @@ import { createSearchWorker } from './worker-factory';
 export class SearchClient {
   private worker: Worker | null = null;
   private nextId = 0;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private onProgressCb: ((phase: 'downloading' | 'building', pct: number) => void) | null = null;
 
   onProgress(cb: (phase: 'downloading' | 'building', pct: number) => void): void {

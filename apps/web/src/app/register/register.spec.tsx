@@ -16,25 +16,13 @@ jest.mock('next/link', () => {
 let mockSetAuth = jest.fn();
 let mockAuthState: Record<string, unknown> = {
   user: null,
-  token: null,
   isHydrated: false,
   setAuth: mockSetAuth,
+  clearAuth: jest.fn(),
 };
 
 jest.mock('../../store', () => ({
   useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector(mockAuthState),
-}));
-
-const mockMutate = jest.fn();
-
-jest.mock('@apollo/client', () => ({
-  gql: (strings: TemplateStringsArray) => strings[0],
-}));
-
-jest.mock('../../lib/apollo-client', () => ({
-  apolloClient: {
-    mutate: mockMutate,
-  },
 }));
 
 const mockAddToast = jest.fn();
@@ -79,7 +67,33 @@ jest.mock('../../lib/constants', () => ({
   API_BASE: 'http://localhost:3005',
 }));
 
+const mockFetch = jest.fn();
+global.fetch = mockFetch as unknown as typeof fetch;
+
 import RegisterForm from './register-form';
+
+const registerUser = {
+  id: '1',
+  email: 'test@example.com',
+  displayName: 'Test User',
+  avatarUrl: null,
+};
+
+function fillForm() {
+  fireEvent.change(screen.getByLabelText('Full Name'), {
+    target: { value: 'Test User' },
+  });
+  fireEvent.change(screen.getByLabelText('Email Address'), {
+    target: { value: 'test@example.com' },
+  });
+  fireEvent.change(screen.getByLabelText('Password'), {
+    target: { value: 'password123' },
+  });
+}
+
+function submit() {
+  fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+}
 
 describe('RegisterForm', () => {
   beforeEach(() => {
@@ -87,14 +101,14 @@ describe('RegisterForm', () => {
     mockPush.mockClear();
     mockReplace.mockClear();
     mockSetAuth.mockClear();
+    mockAddToast.mockClear();
+    mockFetch.mockReset();
     mockAuthState = {
       user: null,
-      token: null,
       isHydrated: false,
       setAuth: mockSetAuth,
+      clearAuth: jest.fn(),
     };
-    mockMutate.mockReset();
-    mockAddToast.mockClear();
   });
 
   describe('rendering', () => {
@@ -138,7 +152,7 @@ describe('RegisterForm', () => {
   describe('validation', () => {
     it('shows errors when submitting empty form', async () => {
       render(<RegisterForm />);
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      submit();
       await waitFor(() => {
         expect(screen.getAllByRole('alert').length).toBeGreaterThanOrEqual(3);
       });
@@ -155,7 +169,7 @@ describe('RegisterForm', () => {
       fireEvent.change(screen.getByLabelText('Password'), {
         target: { value: 'password123' },
       });
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      submit();
       await waitFor(() => {
         expect(screen.getByText('Please enter a valid email address')).toBeInTheDocument();
       });
@@ -172,7 +186,7 @@ describe('RegisterForm', () => {
       fireEvent.change(screen.getByLabelText('Password'), {
         target: { value: 'short' },
       });
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      submit();
       await waitFor(() => {
         expect(screen.getByText('Password must be at least 8 characters')).toBeInTheDocument();
       });
@@ -189,142 +203,91 @@ describe('RegisterForm', () => {
       fireEvent.change(screen.getByLabelText('Password'), {
         target: { value: 'password123' },
       });
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      submit();
       await waitFor(() => {
         expect(screen.getByText('Name must be at least 2 characters')).toBeInTheDocument();
       });
     });
 
-    it('does not call mutation when validation fails', async () => {
+    it('does not call fetch when validation fails', async () => {
       render(<RegisterForm />);
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      submit();
       await waitFor(() => {
         expect(screen.getAllByRole('alert').length).toBeGreaterThanOrEqual(1);
       });
-      expect(mockMutate).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 
   describe('successful registration', () => {
-    it('calls GraphQL registerLocal mutation on valid submit', async () => {
-      mockMutate.mockResolvedValue({
-        data: {
-          registerLocal: {
-            user: { id: '1', email: 'test@example.com', displayName: 'Test User', avatarUrl: null },
-            accessToken: 'access-tok',
-            refreshToken: 'refresh-tok',
-          },
-        },
+    it('calls POST /auth/register with credentials on valid submit', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ accessToken: 'access-tok', user: registerUser }),
       });
 
       render(<RegisterForm />);
-
-      fireEvent.change(screen.getByLabelText('Full Name'), {
-        target: { value: 'Test User' },
-      });
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
-        expect(mockMutate).toHaveBeenCalledTimes(1);
+        expect(mockFetch).toHaveBeenCalledTimes(1);
       });
 
-      expect(mockMutate).toHaveBeenCalledWith(
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3005/auth/register',
         expect.objectContaining({
-          variables: {
-            input: {
-              displayName: 'Test User',
-              email: 'test@example.com',
-              password: 'password123',
-            },
-          },
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            displayName: 'Test User',
+            email: 'test@example.com',
+            password: 'password123',
+          }),
         }),
       );
     });
 
     it('redirects to /feed after successful registration', async () => {
-      mockMutate.mockResolvedValue({
-        data: {
-          registerLocal: {
-            user: { id: '1', email: 'test@example.com', displayName: 'Test User', avatarUrl: null },
-            accessToken: 'access-tok',
-            refreshToken: 'refresh-tok',
-          },
-        },
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ accessToken: 'access-tok', user: registerUser }),
       });
 
       render(<RegisterForm />);
-
-      fireEvent.change(screen.getByLabelText('Full Name'), {
-        target: { value: 'Test User' },
-      });
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
         expect(mockPush).toHaveBeenCalledWith('/feed');
       });
     });
 
-    it('calls setAuth with user and tokens on success', async () => {
-      const user = { id: '1', email: 'test@example.com', displayName: 'Test User', avatarUrl: null };
-      mockMutate.mockResolvedValue({
-        data: {
-          registerLocal: { user, accessToken: 'access-tok', refreshToken: 'refresh-tok' },
-        },
+    it('calls setAuth with user and access token on success', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ accessToken: 'access-tok', user: registerUser }),
       });
 
       render(<RegisterForm />);
-
-      fireEvent.change(screen.getByLabelText('Full Name'), {
-        target: { value: 'Test User' },
-      });
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
-        expect(mockSetAuth).toHaveBeenCalledWith(user, 'access-tok', 'refresh-tok');
+        expect(mockSetAuth).toHaveBeenCalledWith(registerUser, 'access-tok');
       });
     });
 
     it('shows success toast on registration', async () => {
-      mockMutate.mockResolvedValue({
-        data: {
-          registerLocal: {
-            user: { id: '1', email: 'test@example.com', displayName: 'Test User', avatarUrl: null },
-            accessToken: 'access-tok',
-            refreshToken: 'refresh-tok',
-          },
-        },
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ accessToken: 'access-tok', user: registerUser }),
       });
 
       render(<RegisterForm />);
-
-      fireEvent.change(screen.getByLabelText('Full Name'), {
-        target: { value: 'Test User' },
-      });
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
         expect(mockAddToast).toHaveBeenCalledWith(
@@ -336,23 +299,16 @@ describe('RegisterForm', () => {
   });
 
   describe('failed registration', () => {
-    it('displays error toast when mutation fails', async () => {
-      mockMutate.mockRejectedValue({
-        graphQLErrors: [{ message: 'Email already in use' }],
+    it('displays error toast when registration fails with a parsed body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: 'Email already in use' }),
       });
 
       render(<RegisterForm />);
-
-      fireEvent.change(screen.getByLabelText('Full Name'), {
-        target: { value: 'Test User' },
-      });
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
         expect(mockAddToast).toHaveBeenCalledWith('Email already in use', 'error');
@@ -360,20 +316,11 @@ describe('RegisterForm', () => {
     });
 
     it('shows default error message when no specific message available', async () => {
-      mockMutate.mockRejectedValue({});
+      mockFetch.mockResolvedValue({ ok: false, status: 500 });
 
       render(<RegisterForm />);
-
-      fireEvent.change(screen.getByLabelText('Full Name'), {
-        target: { value: 'Test User' },
-      });
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
         expect(mockAddToast).toHaveBeenCalledWith(
@@ -384,41 +331,35 @@ describe('RegisterForm', () => {
     });
 
     it('does not redirect on failed registration', async () => {
-      mockMutate.mockRejectedValue({
-        graphQLErrors: [{ message: 'Email already in use' }],
-      });
+      mockFetch.mockResolvedValue({ ok: false, status: 400 });
 
       render(<RegisterForm />);
-
-      fireEvent.change(screen.getByLabelText('Full Name'), {
-        target: { value: 'Test User' },
-      });
-      fireEvent.change(screen.getByLabelText('Email Address'), {
-        target: { value: 'test@example.com' },
-      });
-      fireEvent.change(screen.getByLabelText('Password'), {
-        target: { value: 'password123' },
-      });
-      fireEvent.submit(screen.getByText('Sign Up').closest('form')!);
+      fillForm();
+      submit();
 
       await waitFor(() => {
-        expect(mockAddToast).toHaveBeenCalledWith('Email already in use', 'error');
+        expect(mockAddToast).toHaveBeenCalledWith(
+          'Registration failed. Please try again.',
+          'error',
+        );
       });
       expect(mockPush).not.toHaveBeenCalled();
     });
   });
 
   describe('already authenticated', () => {
-    it('redirects to /feed when user is already logged in', () => {
+    it('redirects to /feed when user is already logged in', async () => {
       mockAuthState = {
         user: { id: '1' },
-        token: 'existing-token',
         isHydrated: true,
         setAuth: mockSetAuth,
+        clearAuth: jest.fn(),
       };
 
       render(<RegisterForm />);
-      expect(mockReplace).toHaveBeenCalledWith('/feed');
+      await waitFor(() => {
+        expect(mockReplace).toHaveBeenCalledWith('/feed');
+      });
     });
   });
 });

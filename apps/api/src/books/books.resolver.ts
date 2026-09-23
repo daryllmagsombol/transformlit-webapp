@@ -1,5 +1,6 @@
 import { Resolver, Query, Mutation, Args } from '@nestjs/graphql';
-import { UseGuards } from '@nestjs/common';
+import { UseGuards, BadRequestException } from '@nestjs/common';
+import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { BooksService } from './books.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
@@ -38,32 +39,47 @@ export class BooksResolver {
   @Mutation(() => Book, { name: 'updateBook' })
   @UseGuards(JwtAuthGuard)
   async updateBook(
+    @CurrentUser() user: { id: string; role: UserRole },
     @Args('id') id: string,
     @Args('input') input: UpdateBookInput,
   ) {
-    return this.booksService.updateBook(id, input);
+    return this.booksService.updateBook(id, input, user.id, user.role);
   }
 
   @Mutation(() => Book, { name: 'uploadPdf' })
   @UseGuards(JwtAuthGuard)
   async uploadPdf(
+    @CurrentUser() user: { id: string; role: UserRole },
     @Args('bookId') bookId: string,
     @Args('file', { type: () => GraphQLUpload }) file: FileUpload,
   ) {
-    const { createReadStream, filename } = await file;
+    const { createReadStream } = file;
     const buffer = await new Promise<Buffer>((resolve, reject) => {
       const chunks: Buffer[] = [];
-      createReadStream().on('data', (chunk) => chunks.push(chunk));
-      createReadStream().on('end', () => resolve(Buffer.concat(chunks)));
-      createReadStream().on('error', reject);
+      let size = 0;
+      const stream = createReadStream();
+      stream.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > MAX_FILE_SIZE_BYTES) {
+          stream.destroy();
+          reject(new BadRequestException('File exceeds maximum allowed size'));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      stream.on('end', () => resolve(Buffer.concat(chunks)));
+      stream.on('error', reject);
     });
-    return this.booksService.uploadPdf(bookId, buffer, filename);
+    return this.booksService.uploadPdf(bookId, buffer, '', user.id, user.role);
   }
 
   @Mutation(() => Boolean, { name: 'deleteBook' })
   @UseGuards(JwtAuthGuard)
-  async deleteBook(@Args('id') id: string) {
-    await this.booksService.deleteBook(id);
+  async deleteBook(
+    @CurrentUser() user: { id: string; role: UserRole },
+    @Args('id') id: string,
+  ) {
+    await this.booksService.deleteBook(id, user.id, user.role);
     return true;
   }
 
@@ -105,8 +121,11 @@ export class BooksResolver {
 
   @Mutation(() => Boolean, { name: 'removeBookmark' })
   @UseGuards(JwtAuthGuard)
-  async removeBookmark(@Args('id') id: string) {
-    await this.booksService.removeBookmark(id);
+  async removeBookmark(
+    @CurrentUser() user: { id: string },
+    @Args('id') id: string,
+  ) {
+    await this.booksService.removeBookmark(id, user.id);
     return true;
   }
 
@@ -130,8 +149,11 @@ export class BooksResolver {
 
   @Mutation(() => Boolean, { name: 'removeHighlight' })
   @UseGuards(JwtAuthGuard)
-  async removeHighlight(@Args('id') id: string) {
-    await this.booksService.removeHighlight(id);
+  async removeHighlight(
+    @CurrentUser() user: { id: string },
+    @Args('id') id: string,
+  ) {
+    await this.booksService.removeHighlight(id, user.id);
     return true;
   }
 }

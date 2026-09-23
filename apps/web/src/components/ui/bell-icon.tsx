@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { gql } from '@apollo/client';
 import { apolloClient } from '../../lib/apollo-client';
 
@@ -22,13 +22,13 @@ const NOTIFICATION_SUBSCRIPTION = gql`
 `;
 
 interface BellIconProps {
-  userId: string;
-  onClick: () => void;
+  readonly userId: string;
+  readonly onClick: () => void;
 }
 
 export function BellIcon({ userId, onClick }: BellIconProps) {
   const [count, setCount] = useState(0);
-  const [isSubscribed, setIsSubscribed] = useState(false);
+  const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
 
   const fetchCount = useCallback(async () => {
     try {
@@ -46,14 +46,20 @@ export function BellIcon({ userId, onClick }: BellIconProps) {
   // Listen for clear event from notification panel/page
   useEffect(() => {
     const handleClear = () => fetchCount();
-    window.addEventListener('notifications-cleared', handleClear);
-    return () => window.removeEventListener('notifications-cleared', handleClear);
+    globalThis.window.addEventListener('notifications-cleared', handleClear);
+    return () => globalThis.window.removeEventListener('notifications-cleared', handleClear);
   }, [fetchCount]);
 
+  // Own the live subscription in a ref keyed ONLY on userId. There is no
+  // isSubscribed state in the dependency list: adding one would trigger a
+  // re-render after setState, running the cleanup (unsubscribe) and then
+  // re-running the effect — net result: the subscription never persists.
+  // With [userId] as the sole dep the subscription survives unrelated
+  // re-renders (count updates, etc.) and is torn down only when the user
+  // changes or the component unmounts.
   useEffect(() => {
-    if (!userId || isSubscribed) return;
+    if (!userId) return;
 
-    setIsSubscribed(true);
     const observable = apolloClient.subscribe({
       query: NOTIFICATION_SUBSCRIPTION,
       variables: { userId },
@@ -68,10 +74,13 @@ export function BellIcon({ userId, onClick }: BellIconProps) {
       },
     });
 
+    subscriptionRef.current = subscription;
+
     return () => {
       subscription.unsubscribe();
+      subscriptionRef.current = null;
     };
-  }, [userId, isSubscribed]);
+  }, [userId]);
 
   return (
     <button
