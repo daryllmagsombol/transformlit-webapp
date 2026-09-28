@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
@@ -9,6 +10,7 @@ import type { ValidationContext } from 'graphql';
 import depthLimit from 'graphql-depth-limit';
 
 import { PrismaModule } from './prisma/prisma.module.js';
+import { ContextThrottlerGuard } from './common/guards/context-throttler.guard.js';
 import { StorageModule } from './storage/storage.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
@@ -137,5 +139,6 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
     NotificationsModule,
     HealthModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: ContextThrottlerGuard }],
 })
 export class AppModule {}

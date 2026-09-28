@@ -44,12 +44,13 @@ describe('GroupVisibility', () => {
 });
 
 describe('GroupMemberRole', () => {
-  it('should have exactly 2 members', () => {
-    expect(Object.keys(GroupMemberRole)).toHaveLength(2);
+  it('should have exactly 3 members', () => {
+    expect(Object.keys(GroupMemberRole)).toHaveLength(3);
   });
 
   it('should have correct values', () => {
     expect(GroupMemberRole.OWNER).toBe('OWNER');
+    expect(GroupMemberRole.MODERATOR).toBe('MODERATOR');
     expect(GroupMemberRole.MEMBER).toBe('MEMBER');
   });
 });
