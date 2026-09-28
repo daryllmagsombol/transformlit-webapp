@@ -85,6 +85,11 @@ const nextConfig: NextConfig = {
             key: 'Permissions-Policy',
             value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=()',
           },
+          // Enforce HTTPS for two years, all subdomains, and allow preload list inclusion.
+          {
+            key: 'Strict-Transport-Security',
+            value: 'max-age=63072000; includeSubDomains; preload',
+          },
           {
             key: 'Content-Security-Policy',
             value: Object.entries(cspDirectives())

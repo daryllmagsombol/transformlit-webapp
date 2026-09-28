@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -26,11 +26,33 @@ const loginSchema = z.object({
 type LoginFormValues = z.infer<typeof loginSchema>;
 
 /* ------------------------------------------------------------------ */
+/*  Post-login redirect safety                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Only same-origin, relative redirect targets are allowed. Rejects
+ * protocol-relative (`//evil.com`), backslash-smuggled (`/\evil.com`) and
+ * absolute (`https://evil.com`, `javascript:`) forms so that a crafted
+ * `?redirect=` can never turn login into an open redirect.
+ */
+function safeRedirectTarget(raw: string | null): string {
+  if (!raw || !raw.startsWith('/')) return '/feed';
+  if (raw.startsWith('//') || raw.startsWith('/\\')) return '/feed';
+  if (raw.includes('://') || raw.includes('\\')) return '/feed';
+  return raw;
+}
+
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  oauth_failed: 'Social sign-in failed. Please try again.',
+};
+
+/* ------------------------------------------------------------------ */
 /*  LoginForm                                                         */
 /* ------------------------------------------------------------------ */
 
 export default function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const setAuth = useAuthStore((s) => s.setAuth);
   const user = useAuthStore((s) => s.user);
   const isHydrated = useAuthStore((s) => s.isHydrated);
@@ -38,6 +60,16 @@ export default function LoginForm() {
 
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  // Validated, same-origin post-login destination from `?redirect=` (falls
+  // back to /feed). The ref lets the submit handler read the latest value
+  // without re-creating its callback.
+  const redirectTarget = useMemo(
+    () => safeRedirectTarget(searchParams.get('redirect')),
+    [searchParams],
+  );
+  const redirectTargetRef = useRef(redirectTarget);
+  redirectTargetRef.current = redirectTarget;
 
   const {
     register,
@@ -59,7 +91,7 @@ export default function LoginForm() {
       const signedIn = await bootstrapAuth();
       if (cancelled) return;
       if (signedIn && useAuthStore.getState().user) {
-        router.replace('/feed');
+        router.replace(redirectTargetRef.current);
       }
     })();
     return () => {
@@ -67,10 +99,17 @@ export default function LoginForm() {
     };
   }, [router]);
 
+  /* ---------- OAuth failure surfaced from the callback ---------- */
+  useEffect(() => {
+    const errorCode = searchParams.get('error');
+    const message = errorCode ? OAUTH_ERROR_MESSAGES[errorCode] : undefined;
+    if (message) addToast(message, 'error');
+  }, [searchParams, addToast]);
+
   /* ---------- Redirect already-authenticated users ---------- */
   useEffect(() => {
     if (isHydrated && user) {
-      router.replace('/feed');
+      router.replace(redirectTargetRef.current);
     }
   }, [isHydrated, user, router]);
 
@@ -112,7 +151,7 @@ export default function LoginForm() {
         setAuth(data.user, data.accessToken);
 
         addToast('Welcome back!', 'success');
-        router.push('/feed');
+        router.push(redirectTargetRef.current);
       } catch (err: any) {
         const message = err?.message ?? 'Invalid email or password';
         addToast(message, 'error');
