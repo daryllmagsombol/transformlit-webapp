@@ -186,4 +186,50 @@ describe('VerseList', () => {
     );
     expect(container.querySelector('#v1')?.className).toContain('border-primary');
   });
+
+  it('highlights only the active word', () => {
+    const words: ChapterWords = {
+      verses: {
+        '1': [
+          { contentIndex: 0, start: 0, end: 9, strongs: ['G3870'], lemma: 'παρακαλέω' },
+          { contentIndex: 0, start: 12, end: 16, strongs: ['G3870'], lemma: 'παρακαλέω' },
+        ],
+      },
+    };
+    render(
+      <VerseList
+        content={content}
+        footnotes={footnotes}
+        words={words}
+        activeWord={{ verse: 1, word: { contentIndex: 0, start: 12, end: 16, strongs: ['G3870'] } }}
+        onVerseClick={() => {}}
+        onFootnoteClick={() => {}}
+      />,
+    );
+    const active = screen.getByText('urge');
+    const inactive = screen.getByText('Therefore');
+    expect(active).toHaveAttribute('aria-pressed', 'true');
+    expect(active.className).toContain('bg-primary-container');
+    expect(inactive).toHaveAttribute('aria-pressed', 'false');
+    expect(inactive.className).not.toContain('bg-primary-container');
+  });
+
+  it('ignores an active word from a different verse', () => {
+    const words: ChapterWords = {
+      verses: {
+        '1': [{ contentIndex: 0, start: 12, end: 16, strongs: ['G3870'], lemma: 'παρακαλέω' }],
+      },
+    };
+    render(
+      <VerseList
+        content={content}
+        footnotes={footnotes}
+        words={words}
+        activeWord={{ verse: 99, word: { contentIndex: 0, start: 12, end: 16, strongs: ['G3870'] } }}
+        onVerseClick={() => {}}
+        onFootnoteClick={() => {}}
+      />,
+    );
+    expect(screen.getByText('urge')).toHaveAttribute('aria-pressed', 'false');
+  });
 });

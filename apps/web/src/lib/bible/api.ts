@@ -15,6 +15,24 @@ interface CacheEntry<T> {
 
 const cache = new Map<string, CacheEntry<unknown>>();
 
+/**
+ * Bounded L1 cache. Long reading sessions touch many chapters (and their
+ * words/cross-ref payloads), so an unbounded Map would grow for the tab's
+ * lifetime. Map preserves insertion order, so the first key is the least
+ * recently written; deleting before re-inserting keeps recency accurate.
+ */
+const MAX_CACHE_ENTRIES = 50;
+
+function setCache(url: string, entry: CacheEntry<unknown>): void {
+  cache.delete(url);
+  cache.set(url, entry);
+  while (cache.size > MAX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
 export async function fetchBible<T>(path: string, useCache = true): Promise<T> {
   const url = `${BIBLE_API_BASE}${path}`;
   const existing = cache.get(url) as CacheEntry<T> | undefined;
@@ -28,7 +46,7 @@ export async function fetchBible<T>(path: string, useCache = true): Promise<T> {
 
     const res = await fetch(url, { headers });
     if (res.status === 304 && existing) {
-      cache.set(url, { etag: existing.etag, data: existing.data });
+      setCache(url, { etag: existing.etag, data: existing.data });
       return existing.data;
     }
     if (!res.ok) {
@@ -37,7 +55,7 @@ export async function fetchBible<T>(path: string, useCache = true): Promise<T> {
     const data = (await res.json()) as T;
     const etag = res.headers.get('etag');
     if (useCache) {
-      cache.set(url, { etag, data });
+      setCache(url, { etag, data });
     }
     return data;
   };
@@ -49,7 +67,7 @@ export async function fetchBible<T>(path: string, useCache = true): Promise<T> {
   });
   if (useCache) {
     const prev = cache.get(url) as CacheEntry<T> | undefined;
-    cache.set(url, { etag: prev?.etag ?? null, data: prev?.data as T, inflight: promise });
+    setCache(url, { etag: prev?.etag ?? null, data: prev?.data as T, inflight: promise });
     try {
       return await promise;
     } finally {

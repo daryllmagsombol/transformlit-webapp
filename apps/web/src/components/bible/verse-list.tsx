@@ -18,9 +18,30 @@ interface VerseListProps {
   readonly words?: ChapterWords;
   readonly selectedVerse?: number | null;
   readonly highlightedVerse?: number | null;
+  readonly activeWord?: { verse: number; word: ChapterWord } | null;
   readonly onVerseClick?: (verse: number) => void;
   readonly onFootnoteClick?: (note: ChapterFootnote) => void;
   readonly onWordClick?: (verse: number, word: ChapterWord) => void;
+}
+
+const WORD_BUTTON_CLASS =
+  'inline-target underline decoration-dotted underline-offset-2 text-primary';
+const ACTIVE_WORD_BUTTON_CLASS =
+  'inline-target underline decoration-dotted underline-offset-2 text-on-primary-container bg-primary-container/40 rounded';
+
+/** True when `span` is the exact word the study sheet is focused on. */
+function isActiveSpan(
+  span: ReturnType<typeof mapWordSpans>[number],
+  verseNumber: number,
+  activeWord: VerseListProps['activeWord'],
+): boolean {
+  if (!activeWord || activeWord.verse !== verseNumber) return false;
+  const target = activeWord.word;
+  return (
+    span.word.contentIndex === target.contentIndex &&
+    span.word.start === target.start &&
+    span.word.end === target.end
+  );
 }
 
 const POEM_INDENTS = ['pl-0', 'pl-2', 'pl-4', 'pl-6', 'pl-8'];
@@ -69,6 +90,7 @@ function renderWordSpans(
   spans: ReturnType<typeof mapWordSpans>,
   verseNumber: number,
   onWordClick?: (verse: number, word: ChapterWord) => void,
+  activeWord?: VerseListProps['activeWord'],
 ) {
   const pieceSpans = spans.filter(
     (s) => s.start >= pieceStart && s.end <= pieceStart + text.length,
@@ -78,12 +100,14 @@ function renderWordSpans(
   return (
     <>
       {pieceSpans.map((span) => {
+        const isActive = isActiveSpan(span, verseNumber, activeWord);
         const el = (
           <Fragment key={`span-${span.start}-${span.end}`}>
             {text.slice(cursor, span.start - pieceStart)}
             <button
               type="button"
-              className="inline-target underline decoration-dotted underline-offset-2 text-primary"
+              className={isActive ? ACTIVE_WORD_BUTTON_CLASS : WORD_BUTTON_CLASS}
+              aria-pressed={isActive}
               onClick={() => onWordClick?.(verseNumber, span.word)}
             >
               {text.slice(span.start - pieceStart, span.end - pieceStart)}
@@ -113,6 +137,7 @@ export function VerseList({
   words,
   selectedVerse,
   highlightedVerse,
+  activeWord,
   onVerseClick,
   onFootnoteClick,
   onWordClick,
@@ -183,7 +208,7 @@ export function VerseList({
                   const pieceStart = baseAt(item.content, pieceIndex);
                   return (
                     <Fragment key={`text-${text.slice(0, 30)}`}>
-                      {renderWordSpans(text, pieceStart, spans, item.number, onWordClick)}
+                      {renderWordSpans(text, pieceStart, spans, item.number, onWordClick, activeWord)}
                     </Fragment>
                   );
                 }
@@ -202,7 +227,7 @@ export function VerseList({
                 const className = buildFormattedClassName(piece);
                 return (
                   <span key={`formatted-${text.slice(0, 30)}`} className={className}>
-                    {renderWordSpans(text, pieceStart, spans, item.number, onWordClick)}
+                    {renderWordSpans(text, pieceStart, spans, item.number, onWordClick, activeWord)}
                   </span>
                 );
               })}

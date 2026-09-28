@@ -1,9 +1,14 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import BibleReaderClient from './bible-reader-client';
 import * as chapterHook from '../../../../../../lib/hooks/use-chapter';
 import * as booksHook from '../../../../../../lib/hooks/use-bible-books';
 import { ToastProvider } from '../../../../../../components/ui';
-import type { BibleChapter, ChapterWords, TranslationBook } from '../../../../../../lib/bible/types';
+import type {
+  BibleChapter,
+  ChapterWords,
+  CrossRefReference,
+  TranslationBook,
+} from '../../../../../../lib/bible/types';
 
 function renderWithProviders(ui: React.ReactElement) {
   return render(<ToastProvider>{ui}</ToastProvider>);
@@ -13,8 +18,22 @@ jest.mock('../../../../../../lib/bible/search/worker-factory', () => ({
   createSearchWorker: jest.fn(),
 }));
 
+// Controls the cross-reference buttons rendered inside StudySheet, so tests can
+// drive the app's real `navigate` path through the public component surface.
+const mockCrossRefs: { byVerse: Record<number, CrossRefReference[]> } = { byVerse: {} };
+
+jest.mock('../../../../../../lib/hooks/use-cross-references', () => ({
+  useCrossReferences: () => ({
+    byVerse: mockCrossRefs.byVerse,
+    loading: false,
+    load: jest.fn(),
+  }),
+}));
+
+const mockRouterReplace = jest.fn();
+
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: jest.fn(), push: jest.fn() }),
+  useRouter: () => ({ replace: mockRouterReplace, push: jest.fn() }),
   usePathname: () => '/bible/BSB/ROM/12',
 }));
 
@@ -24,6 +43,11 @@ jest.mock('../../../../../../lib/hooks/use-require-auth', () => ({
 
 jest.mock('../../../../../../lib/hooks/use-chapter', () => ({ useChapter: jest.fn() }));
 jest.mock('../../../../../../lib/hooks/use-bible-books', () => ({ useBibleBooks: jest.fn() }));
+
+// The BookChapterPicker fetches the verse count for the selected chapter.
+jest.mock('../../../../../../lib/bible/api', () => ({
+  getChapter: jest.fn().mockResolvedValue({ numberOfVerses: 21 }),
+}));
 
 const books: TranslationBook[] = [
   { id: 'ROM', name: 'Romans', commonName: 'Romans', title: null, order: 45, numberOfChapters: 16, firstChapterNumber: 1, lastChapterNumber: 16, totalNumberOfVerses: 433 },
@@ -73,6 +97,9 @@ describe('BibleReaderClient', () => {
   beforeEach(() => {
     mockHooks();
     window.location.hash = '';
+    mockRouterReplace.mockClear();
+    mockCrossRefs.byVerse = {};
+    (Element.prototype.scrollIntoView as jest.Mock).mockClear();
   });
 
   it('renders the toolbar and verse text', async () => {
@@ -134,6 +161,90 @@ describe('BibleReaderClient', () => {
     window.location.hash = '#v1';
     const { container } = renderWithProviders(<BibleReaderClient translation="BSB" book="ROM" chapter={12} />);
     await waitFor(() => expect(container.querySelector('#v1')?.className).toContain('border-primary'));
+  });
+
+  it('scrolls and highlights on a manual hashchange event', async () => {
+    const { container } = renderWithProviders(<BibleReaderClient translation="BSB" book="ROM" chapter={12} />);
+    await waitFor(() => expect(screen.getByLabelText('Verse 1')).toBeInTheDocument());
+
+    const verse = container.querySelector('#v1');
+    const scrollSpy = jest.spyOn(verse as Element, 'scrollIntoView');
+    window.location.hash = '#v1';
+    fireEvent(globalThis.window, new Event('hashchange'));
+
+    await waitFor(() => expect(scrollSpy).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' }));
+    await waitFor(() => expect(container.querySelector('#v1')?.className).toContain('border-primary'));
+  });
+
+  it('does not scroll for a hash that does not match #v{n}', async () => {
+    globalThis.window.location.hash = '#not-a-verse';
+    renderWithProviders(<BibleReaderClient translation="BSB" book="ROM" chapter={12} />);
+    await waitFor(() => expect(screen.getByLabelText('Verse 1')).toBeInTheDocument());
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('scrolls to the verse from an in-app cross-reference without relying on hashchange', async () => {
+    mockCrossRefs.byVerse = { 1: [{ book: 'ROM', chapter: 12, verse: 1 }] };
+    const { container } = renderWithProviders(<BibleReaderClient translation="BSB" book="ROM" chapter={12} />);
+    await waitFor(() => expect(screen.getByLabelText('Verse 1')).toBeInTheDocument());
+
+    // Open the study sheet, then exercise the real navigate() path via CrossRefList.
+    fireEvent.click(screen.getByLabelText('Verse 1'));
+    const crossRefButton = await screen.findByRole('button', { name: 'Romans 12:1' });
+
+    const verse = container.querySelector('#v1');
+    const scrollSpy = jest.spyOn(verse as Element, 'scrollIntoView');
+    fireEvent.click(crossRefButton);
+
+    // No hashchange is dispatched: App Router uses pushState/replaceState, which
+    // never emit one, so the scroll must come from navigate() directly.
+    expect(mockRouterReplace).toHaveBeenCalledWith('/bible/BSB/ROM/12#v1');
+    await waitFor(() => expect(scrollSpy).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' }));
+    await waitFor(() => expect(container.querySelector('#v1')?.className).toContain('border-primary'));
+  });
+
+  it('scrolls to the picked verse once the target chapter data is present', async () => {
+    const view = renderWithProviders(<BibleReaderClient translation="BSB" book="ROM" chapter={12} />);
+    await waitFor(() => expect(screen.getByLabelText('Choose book and chapter')).toBeInTheDocument());
+
+    // Open the picker, switch to chapter 13, then pick verse 5.
+    fireEvent.click(screen.getByLabelText('Choose book and chapter'));
+    const chapterGrid = await screen.findByTestId('chapter-grid');
+    fireEvent.click(within(chapterGrid).getByRole('link', { name: '13' }));
+    const verseGrid = await screen.findByTestId('verse-grid');
+    fireEvent.click(within(verseGrid).getByRole('link', { name: '5' }));
+
+    // Cross-chapter navigation records the pending verse; the target DOM does not
+    // exist yet, so no scroll has happened.
+    expect(mockRouterReplace).toHaveBeenCalledWith('/bible/BSB/ROM/13#v5');
+
+    // Simulate the async chapter fetch resolving: new route props + new hook data.
+    const nextChapterData: BibleChapter = {
+      ...baseChapter,
+      numberOfVerses: 21,
+      chapter: {
+        number: 13,
+        content: [
+          { type: 'verse', number: 1, content: ['Verse one.'] },
+          { type: 'verse', number: 5, content: ['Target verse five.'] },
+        ],
+        footnotes: [],
+      },
+    };
+    mockHooks({ chapter: nextChapterData });
+    (Element.prototype.scrollIntoView as jest.Mock).mockClear();
+    view.rerender(
+      <ToastProvider>
+        <BibleReaderClient translation="BSB" book="ROM" chapter={13} />
+      </ToastProvider>,
+    );
+
+    await waitFor(() =>
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' }),
+    );
+    // The target verse (not verse 1) is the highlighted/scrolled one.
+    await waitFor(() => expect(view.container.querySelector('#v5')?.className).toContain('border-primary'));
+    expect(view.container.querySelector('#v1')?.className).not.toContain('border-primary');
   });
 
   it('shows word study details when a tappable word is clicked', async () => {
