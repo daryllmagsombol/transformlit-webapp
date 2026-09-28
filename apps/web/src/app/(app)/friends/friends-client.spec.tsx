@@ -47,6 +47,29 @@ jest.mock('../../../components/ui', () => ({
   UserSearchInput: () => null,
   LoadingSpinner: () => <div data-testid="loading-spinner" />,
   Modal: () => null,
+  ConfirmDialog: ({
+    open,
+    onClose,
+    onConfirm,
+    title,
+    message,
+    confirmLabel = 'Confirm',
+  }: {
+    open: boolean;
+    onClose: () => void;
+    onConfirm: () => void;
+    title: string;
+    message: string;
+    confirmLabel?: string;
+  }) =>
+    open ? (
+      <div role="dialog" aria-label={title}>
+        <p>{title}</p>
+        <p>{message}</p>
+        <button onClick={onClose}>Cancel</button>
+        <button onClick={onConfirm}>{confirmLabel}</button>
+      </div>
+    ) : null,
 }));
 
 jest.mock('../../../components/friends/user-profile-sheet', () => ({
@@ -118,6 +141,12 @@ describe('FriendsClient', () => {
 
     fireEvent.click(screen.getByText('Add Friend'));
 
+    // A confirmation dialog is shown before the mutation fires.
+    expect(screen.getByText('Send friend request?')).toBeInTheDocument();
+    expect(mockMutate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('Send Request'));
+
     await waitFor(() => {
       expect(mockMutate).toHaveBeenCalledWith(
         expect.objectContaining({ variables: { addresseeId: 's1' } }),
@@ -125,6 +154,20 @@ describe('FriendsClient', () => {
       expect(mockAddToast).toHaveBeenCalledWith('Friend request sent!', 'success');
     });
     expect(screen.queryByText('Ada Lovelace')).not.toBeInTheDocument();
+  });
+
+  it('does not send a friend request when the confirmation is cancelled', async () => {
+    mockSuggestionLoad([{ id: 's1', displayName: 'Ada Lovelace', avatarUrl: null, bio: null }]);
+
+    render(<FriendsClient />);
+
+    await waitFor(() => expect(screen.getByText('Ada Lovelace')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Add Friend'));
+    fireEvent.click(screen.getByText('Cancel'));
+
+    expect(mockMutate).not.toHaveBeenCalled();
+    expect(screen.getByText('Ada Lovelace')).toBeInTheDocument();
   });
 
   it('shows an error toast and keeps the card when the request fails', async () => {
@@ -137,6 +180,7 @@ describe('FriendsClient', () => {
     mockMutate.mockRejectedValueOnce(new Error('nope'));
 
     fireEvent.click(screen.getByText('Add Friend'));
+    fireEvent.click(screen.getByText('Send Request'));
 
     await waitFor(() =>
       expect(mockAddToast).toHaveBeenCalledWith('Failed to send friend request.', 'error'),

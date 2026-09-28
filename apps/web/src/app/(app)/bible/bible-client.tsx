@@ -6,7 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
 import { useBibleBooks } from '../../../lib/hooks/use-bible-books';
 import { useBibleStore } from '../../../store/bible-store';
-import { BookGrid, TranslationPicker, SearchPanel } from '../../../components/bible';
+import { BookGrid, TranslationPicker, SearchPanel, BookChapterPicker } from '../../../components/bible';
 import { LoadingSpinner } from '../../../components/ui';
 import { QUICK_TRACKS, getCuratedTranslation, findCuratedTranslation, getBookName } from '../../../lib/bible/config';
 import { refToHref } from '../../../lib/bible/refs';
@@ -18,6 +18,8 @@ export default function BibleClient() {
   const view = searchParams.get('view');
   const translationParam = searchParams.get('translation');
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [chapterPickerOpen, setChapterPickerOpen] = useState(false);
+  const [pickerBook, setPickerBook] = useState<string | null>(null);
   const [mode, setMode] = useState<'browse' | 'search'>(view === 'search' ? 'search' : 'browse');
 
   const translation = useBibleStore((s) => s.translation);
@@ -34,6 +36,18 @@ export default function BibleClient() {
   }, [translationParam, setTranslation]);
 
   const curated = getCuratedTranslation(translation);
+
+  // The picker opens only when the user clicks a book in the grid, pre-selecting
+  // that book. Closing it clears the selection so the next open starts fresh.
+  const handleSelectBook = (bookId: string) => {
+    setPickerBook(bookId);
+    setChapterPickerOpen(true);
+  };
+
+  const handleCloseChapterPicker = () => {
+    setChapterPickerOpen(false);
+    setPickerBook(null);
+  };
 
   if (!isReady) return <LoadingSpinner />;
 
@@ -126,11 +140,25 @@ export default function BibleClient() {
             }}
           />
         ) : (
-          <BookGrid books={books} translation={translation} loading={loading} />
+          <BookGrid
+            books={books}
+            translation={translation}
+            loading={loading}
+            onSelectBook={handleSelectBook}
+          />
         )}
       </div>
 
       <TranslationPicker open={pickerOpen} onClose={() => setPickerOpen(false)} />
+
+      <BookChapterPicker
+        open={chapterPickerOpen}
+        onClose={handleCloseChapterPicker}
+        books={books}
+        translation={translation}
+        bookId={pickerBook ?? undefined}
+        chapter={undefined}
+      />
     </>
   );
 }

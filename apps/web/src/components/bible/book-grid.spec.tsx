@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { BookGrid } from './book-grid';
 import type { TranslationBook } from '../../lib/bible/types';
 
@@ -14,5 +14,14 @@ describe('BookGrid', () => {
     expect(screen.getByText('New Testament')).toBeInTheDocument();
     const link = screen.getByRole('link', { name: /Genesis/ });
     expect(link).toHaveAttribute('href', '/bible/BSB/GEN/1');
+  });
+
+  it('calls onSelectBook with the book id when provided, instead of linking', () => {
+    const onSelectBook = jest.fn();
+    render(<BookGrid books={books} translation="BSB" loading={false} onSelectBook={onSelectBook} />);
+
+    expect(screen.queryByRole('link', { name: /Genesis/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Matthew/ }));
+    expect(onSelectBook).toHaveBeenCalledWith('MAT');
   });
 });

@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
 import { relativeTime } from '../../../lib/time';
 import { useToast, NotificationItem } from '../../../components/ui';
+import { Stagger, StaggerItem } from '../../../components/ui/stagger';
 
 const NOTIFICATIONS_QUERY = gql`
   query AllNotifications($limit: Int!) {
@@ -267,9 +268,13 @@ function renderNotificationsContent(
               </span>
             )}
           </div>
-          <div className="space-y-3">
-            {items.map((n) => renderNotificationItem(n, onItemPress, onItemAccept, onItemReject))}
-          </div>
+          <Stagger className="space-y-3">
+            {items.map((n) => (
+              <StaggerItem key={n.id}>
+                {renderNotificationItem(n, onItemPress, onItemAccept, onItemReject)}
+              </StaggerItem>
+            ))}
+          </Stagger>
         </section>
       ))}
     </div>

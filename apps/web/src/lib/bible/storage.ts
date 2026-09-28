@@ -26,9 +26,24 @@ class IndexedDBKV implements KVStore {
       (db) =>
         new Promise<T>((resolve, reject) => {
           const tx = db.transaction('kv', mode);
+          // Settle exactly once: a transaction can abort/error after the request
+          // has already succeeded (and vice versa), and callers awaiting this
+          // promise must never hang on a silent abort.
+          let settled = false;
+          const fail = (message: string) => {
+            if (settled) return;
+            settled = true;
+            reject(new Error(message));
+          };
+          tx.onabort = () => fail(tx.error?.message ?? 'IndexedDB transaction aborted');
+          tx.onerror = () => fail(tx.error?.message ?? 'IndexedDB transaction failed');
           const req = op(tx.objectStore('kv'));
-          req.onsuccess = () => resolve(req.result);
-          req.onerror = () => reject(new Error(req.error?.message ?? 'IndexedDB request failed'));
+          req.onsuccess = () => {
+            if (settled) return;
+            settled = true;
+            resolve(req.result);
+          };
+          req.onerror = () => fail(req.error?.message ?? 'IndexedDB request failed');
         }),
     );
   }

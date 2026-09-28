@@ -50,10 +50,41 @@ export async function fetchGroupBySlug(slug: string): Promise<GraphQLGroup | nul
   return data?.groupBySlug ?? null;
 }
 
+/**
+ * Hosts whose absolute image URLs the app is allowed to render, mirroring
+ * `images.remotePatterns` in next.config.ts plus the API origin. A stored
+ * `imageKey` is attacker-influenced, so an unknown `http(s)` URL must be
+ * dropped rather than passed through verbatim (prevents arbitrary external
+ * tracking pixels and keeps <img src> inside the configured allowlist).
+ */
+const ALLOWED_REMOTE_IMAGE_HOSTS = ['lh3.googleusercontent.com'];
+const BLOB_HOST_SUFFIX = '.blob.core.windows.net';
+const API_ORIGIN = (() => {
+  try {
+    return new URL(API_BASE).origin;
+  } catch {
+    return '';
+  }
+})();
+
+function isAllowedRemoteImage(url: URL): boolean {
+  if (API_ORIGIN && url.origin === API_ORIGIN) return true;
+  if (url.protocol !== 'https:') return false;
+  if (ALLOWED_REMOTE_IMAGE_HOSTS.includes(url.hostname)) return true;
+  return url.hostname === 'blob.core.windows.net' || url.hostname.endsWith(BLOB_HOST_SUFFIX);
+}
+
 /** Resolve a stored image key to a displayable URL */
 export function resolveImageUrl(key?: string | null): string | undefined {
   if (!key) return undefined;
-  if (key.startsWith('http')) return key;
+  if (key.startsWith('http')) {
+    try {
+      if (isAllowedRemoteImage(new URL(key))) return key;
+    } catch {
+      // Malformed URL — fall through and treat the value as a storage key.
+    }
+    return undefined;
+  }
   return `${API_BASE}/${key}`;
 }
 

@@ -1,6 +1,8 @@
 'use client';
 
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, ReactNode } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { toastVariants } from '../../lib/motion';
 
 interface Toast {
   id: string;
@@ -23,15 +25,21 @@ export function useToast() {
 function ToastItem({
   toast,
   onDismiss,
+  skipAnimation,
 }: {
   readonly toast: Toast;
   readonly onDismiss: (id: string) => void;
+  readonly skipAnimation: boolean;
 }) {
   const colorMap = { success: 'bg-success', error: 'bg-error', info: 'bg-accent' };
   return (
-    <div
-      key={toast.id}
-      className={`${colorMap[toast.type]} text-white px-4 py-3 rounded-sm shadow-lift animate-fade-in flex items-center gap-2`}
+    <motion.div
+      layout
+      variants={toastVariants}
+      initial={skipAnimation ? false : 'hidden'}
+      animate="visible"
+      exit="exit"
+      className={`${colorMap[toast.type]} text-white px-4 py-3 rounded-sm shadow-lift flex items-center gap-2`}
       role="alert"
     >
       <span className="text-sm font-medium">{toast.message}</span>
@@ -42,12 +50,14 @@ function ToastItem({
       >
         ✕
       </button>
-    </div>
+    </motion.div>
   );
 }
 
 export function ToastProvider({ children }: { readonly children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const reduce = useReducedMotion();
+  const skipAnimation = reduce === true;
 
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -72,9 +82,11 @@ export function ToastProvider({ children }: { readonly children: ReactNode }) {
     <ToastContext.Provider value={contextValue}>
       {children}
       <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2" aria-live="polite">
-        {toasts.map((t) => (
-          <ToastItem key={t.id} toast={t} onDismiss={removeToast} />
-        ))}
+        <AnimatePresence initial={false}>
+          {toasts.map((t) => (
+            <ToastItem key={t.id} toast={t} onDismiss={removeToast} skipAnimation={skipAnimation} />
+          ))}
+        </AnimatePresence>
       </div>
     </ToastContext.Provider>
   );

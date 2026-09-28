@@ -12,6 +12,8 @@ export function useBibleSearch(translation: string) {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const clientRef = useRef<SearchClientType | null>(null);
+  // Monotonic search id: an older slow search must not overwrite newer results.
+  const searchSeqRef = useRef(0);
   const setIndexStatus = useBibleStore((s) => s.setIndexStatus);
 
   const getClient = useCallback(() => {
@@ -29,6 +31,7 @@ export function useBibleSearch(translation: string) {
     try {
       await client.ensureIndex(translation);
       setIndexStatus(translation, 'ready');
+      setError(null);
     } catch {
       setError('Could not prepare this translation for search.');
     } finally {
@@ -43,7 +46,9 @@ export function useBibleSearch(translation: string) {
         return;
       }
       const client = getClient();
+      const seq = (searchSeqRef.current += 1);
       const found = await client.search(translation, q);
+      if (seq !== searchSeqRef.current) return;
       setResults(found);
     },
     [translation, getClient],

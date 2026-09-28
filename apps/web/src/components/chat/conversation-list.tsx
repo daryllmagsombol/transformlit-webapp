@@ -7,6 +7,7 @@ import { useChatStore } from '../../store/chat-store';
 import { fetchConversations, ChatConversation } from '../../lib/chat-queries';
 import { useRequireAuth } from '../../lib/hooks/use-require-auth';
 import { UserAvatar, useToast } from '../ui';
+import { Stagger, StaggerItem } from '../ui/stagger';
 import { relativeTime } from '../../lib/time';
 
 export function ConversationList() {
@@ -98,7 +99,7 @@ export function ConversationList() {
   }
 
   return (
-    <ul className="space-y-2" aria-label="Conversations">
+    <Stagger as="ul" className="space-y-2" ariaLabel="Conversations">
       {conversations.map((c) => {
         const active = pathname === `/chat/${c.id}`;
         function getLinkClassName(): string {
@@ -111,7 +112,7 @@ export function ConversationList() {
           return String(c.unreadCount);
         }
         return (
-          <li key={c.id}>
+          <StaggerItem as="li" key={c.id}>
             <Link
               href={`/chat/${c.id}`}
               className={getLinkClassName()}
@@ -148,9 +149,9 @@ export function ConversationList() {
                 </div>
               </div>
             </Link>
-          </li>
+          </StaggerItem>
         );
       })}
-    </ul>
+    </Stagger>
   );
 }

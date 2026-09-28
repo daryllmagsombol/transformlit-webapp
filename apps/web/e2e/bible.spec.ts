@@ -10,7 +10,11 @@ test('bible library → chapter → study sheet', async ({ page }) => {
 
   await page.goto('/bible');
   await expect(page.getByRole('heading', { name: 'Bible' })).toBeVisible();
-  await page.getByRole('link', { name: /Genesis/ }).first().click();
+  // Clicking a book opens the chapter/verse picker for that book (it no longer
+  // deep-links straight to chapter 1).
+  await page.getByRole('button', { name: /Genesis/ }).first().click();
+  await expect(page.getByRole('dialog')).toContainText('Choose a Chapter');
+  await page.getByRole('link', { name: 'Open chapter' }).click();
   await expect(page.getByText('The Creation')).toBeVisible();
   await page.getByLabel('Verse 1', { exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText('Genesis 1:1');

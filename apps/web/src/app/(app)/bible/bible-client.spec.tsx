@@ -23,12 +23,21 @@ jest.mock('../../../lib/hooks/use-bible-books', () => ({
   useBibleBooks: jest.fn(),
 }));
 
+jest.mock('../../../lib/bible/api', () => ({
+  getChapter: jest.fn().mockResolvedValue({ numberOfVerses: 31 }),
+}));
+
 const books: TranslationBook[] = [
   { id: 'GEN', name: 'Genesis', commonName: 'Genesis', title: null, order: 1, numberOfChapters: 50, firstChapterNumber: 1, lastChapterNumber: 50, totalNumberOfVerses: 1533 },
   { id: 'MAT', name: 'Matthew', commonName: 'Matthew', title: null, order: 40, numberOfChapters: 28, firstChapterNumber: 1, lastChapterNumber: 28, totalNumberOfVerses: 1071 },
 ];
 
 describe('BibleClient', () => {
+  beforeAll(() => {
+    // jsdom lacks scrollIntoView; the chapter picker scrolls a book into view.
+    Element.prototype.scrollIntoView = jest.fn();
+  });
+
   beforeEach(() => {
     searchParams = new URLSearchParams();
     (booksHook.useBibleBooks as jest.Mock).mockReturnValue({
@@ -85,6 +94,38 @@ describe('BibleClient', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     expect(screen.getByLabelText('Search the Bible')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Browse' }));
-    await waitFor(() => expect(screen.getByRole('link', { name: /Genesis/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: /Genesis/ })).toBeInTheDocument());
+  });
+
+  it('keeps the chapter/verse picker closed on mount', async () => {
+    render(<BibleClient />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Genesis/ })).toBeInTheDocument());
+    expect(screen.queryByText('Choose a Chapter')).not.toBeInTheDocument();
+
+    // A later render (mode toggle) must not pop the picker open either.
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    expect(screen.queryByText('Choose a Chapter')).not.toBeInTheDocument();
+  });
+
+  it('opens the chapter/verse picker for the clicked book', async () => {
+    render(<BibleClient />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Matthew/ })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Matthew/ }));
+    expect(screen.getByText('Choose a Chapter')).toBeInTheDocument();
+    // The right pane is pre-selected to the clicked book, not the last position.
+    expect(screen.getByText('Chapter 1')).toBeInTheDocument();
+
+    const chapterGrid = await screen.findByTestId('chapter-grid');
+    // Only Matthew's 28 chapters render, not Genesis's 50.
+    expect(chapterGrid).toHaveTextContent('28');
+    expect(chapterGrid).not.toHaveTextContent('50');
+  });
+
+  it('does not open the chapter/verse picker on mount when ?view=search is set', async () => {
+    searchParams = new URLSearchParams('view=search');
+    render(<BibleClient />);
+    await waitFor(() => expect(screen.getByLabelText('Search the Bible')).toBeInTheDocument());
+    expect(screen.queryByText('Choose a Chapter')).not.toBeInTheDocument();
   });
 });

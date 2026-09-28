@@ -100,27 +100,37 @@ export function refreshTokens(): Promise<boolean> {
  * as signed out (no hard redirect — callers decide).
  */
 export async function bootstrapAuth(): Promise<boolean> {
-  if (getAccessToken()) return true;
+  const hadTokenAtStart = getAccessToken() !== null;
+  if (hadTokenAtStart) return true;
   try {
     const payload = await callRestRefresh();
     setAccessToken(payload.accessToken);
     useAuthStore.getState().setAuth(payload.user, payload.accessToken);
     return true;
   } catch {
-    clearAuth();
-    useAuthStore.getState().clearAuth();
+    // A concurrent manual login (or another refresh) may have established a
+    // session while this bootstrap call was in flight. Never clear a session
+    // that did not exist when we began — otherwise a slow failing refresh can
+    // wipe a freshly logged-in user and bounce them back to /login.
+    if (useAuthStore.getState().user === null) {
+      clearAuth();
+      useAuthStore.getState().clearAuth();
+    }
     return false;
   }
 }
 
+/**
+ * True only for a genuine authentication failure: the GraphQL
+ * `UNAUTHENTICATED` error code, or an HTTP 401. Deliberately does NOT match on
+ * message substrings — a business error such as "Unauthorized action" must not
+ * trigger a token refresh + retry (and, on failure, a forced logout).
+ */
 function isUnauthorizedError(error: unknown): boolean {
   if (CombinedGraphQLErrors.is(error)) {
     return error.errors.some((err) => {
       const code = (err as { extensions?: { code?: string } }).extensions?.code;
-      return (
-        code === 'UNAUTHENTICATED' ||
-        err.message?.toLowerCase().includes('unauthorized') === true
-      );
+      return code === 'UNAUTHENTICATED';
     });
   }
   if (
@@ -128,14 +138,6 @@ function isUnauthorizedError(error: unknown): boolean {
     typeof error === 'object' &&
     'statusCode' in error &&
     (error as { statusCode?: number }).statusCode === 401
-  ) {
-    return true;
-  }
-  if (
-    error &&
-    typeof error === 'object' &&
-    'message' in error &&
-    String((error as { message?: unknown }).message).toLowerCase().includes('unauthorized')
   ) {
     return true;
   }

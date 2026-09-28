@@ -89,6 +89,7 @@ describe('UsersService', () => {
     displayName: true,
     avatarUrl: true,
     bio: true,
+    role: true,
     createdAt: true,
   };
 

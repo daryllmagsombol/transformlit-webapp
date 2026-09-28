@@ -2,38 +2,47 @@
 
 ## Structure
 
-- `src/app/` — Next.js App Router
-  - `layout.tsx` — root layout
-  - `page.tsx` — landing/home page
-  - `login/` — login page
-  - `register/` — registration page
-  - `auth-redirect.tsx` — handles OAuth token callback from API
-  - `(app)/` — route group for authenticated pages
-  - `error.tsx`, `loading.tsx`, `not-found.tsx` — Next.js error/loading/not-found boundaries
-- `src/components/` — shared React components
-- `src/lib/` — utilities, Apollo client setup, API helpers
-- `src/store/` — Zustand stores (client state)
-- `src/styles/` — global styles
-- `public/` — static assets
+- `src/app/` — Next.js App Router (route → component map in `mem:web/routes`)
+  - `layout.tsx` (root), `page.tsx` (landing), `login/`, `register/`
+  - `auth-redirect.tsx` — **guard** that bounces signed-in users from public pages to `/feed`.
+    It does NOT parse tokens (an older flow put tokens in the URL; that is gone).
+  - `(app)/` — authenticated group, wrapped by `AppShell` (TopBar + Sidebar + BottomNav)
+  - `(reader)/` — immersive book reader, deliberately OUTSIDE the app shell
+  - `error.tsx`, `loading.tsx`, `not-found.tsx` boundaries
+- `src/components/` — `ui/` (design system) + feature dirs `bible/ chat/ friends/ groups/ home/ layout/ notifications/ providers/ reader/`
+- `src/lib/` — non-React logic: `apollo-client.ts` (10k), `auth.ts`, `groups.ts`, `chat-queries.ts`, `constants.ts`, `motion.ts`, `time.ts`, plus dirs `bible/`, `reader/`, `hooks/`
+- `src/store/` — Zustand stores (`auth-store`, `chat-store`, `ui-store`, `bible-store`, `reader-store`)
+- `src/styles/globals.css` — the ONLY stylesheet (Tailwind v4 `@theme`; no `tailwind.config.js`)
 
-## Tech Details
+## Non-obvious details
 
-- **Apollo Client 4** — configured in `src/lib/`, connects to API at `NEXT_PUBLIC_API_URL` (default `http://localhost:3005/graphql`)
-- **GraphQL-WS** — subscriptions via `graphql-ws` client, auth token passed in connection params
-- **Tailwind CSS v4** — CSS-first config via `@tailwindcss/postcss` (no `tailwind.config.js`)
-- **Zustand 5** — lightweight client state (auth state, UI state)
-- **React Hook Form + Zod** — form handling with schema validation
-- **Motion** — animations (Framer Motion successor)
+- **No `middleware.ts`.** Auth gating is entirely client-side (`useRequireAuth`,
+  `auth-redirect.tsx`). Do not assume server-side route protection.
+- **No GraphQL hooks.** Data access is imperative `apolloClient.query/mutate` + `useState`
+  (19 files). Match this; see `mem:web/data-fetching`.
+- **`app/(app)/layout.tsx`** is a thin wrapper: `AuthenticatedLayout` → `ApolloProvider` + `AppShell`.
+- **API base**: `NEXT_PUBLIC_API_URL` (default `http://localhost:3005/graphql`); `API_BASE` in
+  `lib/constants.ts` is that value with `/graphql` stripped, for REST calls.
 
 ## Testing
 
-- **Unit**: Jest + React Testing Library (`test/` directory). Jest config in `jest.config.ts`, setup in `jest.setup.ts`.
-- **E2E**: Playwright (`e2e/` directory). Config in `playwright.config.ts`. Requires API running on port 3005.
-- Test files: `*.spec.tsx` / `*.spec.ts` co-located or in `test/` directory.
+- Unit: Jest 30 + React Testing Library; `testRegex .*\.spec\.(ts|tsx)$`, setup `jest.setup.ts`
+  (mocks `matchMedia` + `IntersectionObserver`). Specs are **co-located**; `test/` holds only
+  `helpers/render-with-providers.tsx` and `__mocks__/`.
+- E2E: Playwright in `apps/web/e2e/` (`playwright.config.ts`); requires API + web running.
+  Note `next lint` no longer exists in Next 16 — see `mem:suggested_commands`.
 
 ## Key Gotchas
 
-- **No `.js` extension needed** in imports (bundler module resolution)
-- **`pnpm dev` runs on port 3000** (Next.js), API on port 3005 — CORS configured in API to allow frontend origin
-- **Auth tokens live in URL params** after OAuth redirect — `auth-redirect.tsx` parses them and stores in Apollo/localStorage
-- **No `tailwind.config.js`** — Tailwind v4 uses CSS-first config via PostCSS plugin
+- No `.js` extension in imports (bundler resolution)
+- CORS: API allows the web origin; dev is cross-origin (`:3000` → `:3005`)
+- CSP is set in `next.config.ts` and is environment-aware; dev needs `'unsafe-eval'`,
+  prod is strict. Adding a new external host (image/font/media) requires editing those directives
+- Animating? Read `mem:web/motion` first — transform on a wrapper breaks fixed-position FABs
+
+## Related
+
+- `mem:web/routes` — which component renders each route
+- `mem:web/data-fetching` — Apollo/REST/external patterns + auth wiring
+- `mem:web/components` — UI inventory
+- `mem:build/startup` — build graph and the `packages/shared` dist trap

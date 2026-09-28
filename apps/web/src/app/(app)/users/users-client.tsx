@@ -7,6 +7,7 @@ import type { GraphQLUser } from '@transformlit/shared';
 import { apolloClient } from '../../../lib/apollo-client';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
 import { useToast, UserAvatar, LoadingSpinner } from '../../../components/ui';
+import { Stagger, StaggerItem } from '../../../components/ui/stagger';
 
 // ── GraphQL ─────────────────────────────────────────────────────────────────
 
@@ -100,13 +101,16 @@ export default function UsersClient() {
 
       {/* Directory grid */}
       {!error && users.length > 0 && (
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <Stagger
+          as="section"
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
+        >
           {users.map((user) => (
-            <Link
-              key={user.id}
-              href={`/users/${user.id}`}
-              className="group flex items-center gap-4 p-4 bg-surface border border-outline-variant rounded-xl shadow-sm hover:shadow-md transition-shadow"
-            >
+            <StaggerItem key={user.id}>
+              <Link
+                href={`/users/${user.id}`}
+                className="group flex items-center gap-4 p-4 bg-surface border border-outline-variant rounded-xl shadow-sm hover:shadow-md transition-shadow"
+              >
               <div className="ring-4 ring-white rounded-full shadow-inner shrink-0">
                 <UserAvatar
                   avatarUrl={user.avatarUrl}
@@ -135,9 +139,10 @@ export default function UsersClient() {
                   </p>
                 )}
               </div>
-            </Link>
+              </Link>
+            </StaggerItem>
           ))}
-        </section>
+        </Stagger>
       )}
     </div>
   );

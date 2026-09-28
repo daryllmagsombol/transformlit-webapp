@@ -2,12 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { UpdateProfileInput } from './models/user.model.js';
 
-// Public projection excludes PII (email) and moderation-sensitive fields.
+// Public projection excludes PII (email, status) while exposing the fields the
+// UI actually renders. `role` is required: the GraphQL `User` type declares it
+// non-null (`role: UserRole!`), so omitting it made every public user query fail
+// with "Cannot return null for non-nullable field User.role".
 const PUBLIC_USER_SELECT = {
   id: true,
   displayName: true,
   avatarUrl: true,
   bio: true,
+  role: true,
   createdAt: true,
 } as const;
 

@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apolloClient } from '../../lib/apollo-client';
 import { resolveImageUrl, JOIN_GROUP_MUTATION, LEAVE_GROUP_MUTATION } from '../../lib/groups';
-import { useToast } from '../ui';
+import { useToast, ConfirmDialog } from '../ui';
 import type { GraphQLGroup } from '@transformlit/shared';
 
 const VISIBILITY_ICONS: Record<string, string> = {
@@ -26,10 +26,12 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
   const router = useRouter();
   const [acting, setActing] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [showJoinConfirm, setShowJoinConfirm] = useState(false);
 
   const isOwner = group.myRole === 'OWNER';
   const isActiveMember = group.myStatus === 'ACTIVE';
   const isPending = group.myStatus === 'PENDING';
+  const joinRequestsApproval = group.visibility === 'PRIVATE' || isPending;
 
   const handleJoin = useCallback(async () => {
     setActing(true);
@@ -38,14 +40,15 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
         mutation: JOIN_GROUP_MUTATION,
         variables: { groupId: group.id },
       });
-      addToast(isPending ? 'Request sent.' : 'Joined group! Welcome aboard.', 'success');
+      addToast(joinRequestsApproval ? 'Request sent.' : 'Joined group! Welcome aboard.', 'success');
+      setShowJoinConfirm(false);
       onChanged();
     } catch {
       addToast('Failed to join group. Please try again.', 'error');
     } finally {
       setActing(false);
     }
-  }, [group.id, isPending, onChanged, addToast]);
+  }, [group.id, joinRequestsApproval, onChanged, addToast]);
 
   const handleLeave = useCallback(async () => {
     setShowLeaveConfirm(false);
@@ -155,7 +158,7 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
           ) : (
             <button
               type="button"
-              onClick={handleJoin}
+              onClick={() => setShowJoinConfirm(true)}
               disabled={acting || isPending}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary-container text-on-primary-container font-small text-small font-semibold hover:bg-inverse-primary transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
@@ -195,6 +198,20 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
           );
         })}
       </div>
+
+      <ConfirmDialog
+        open={showJoinConfirm}
+        onClose={() => setShowJoinConfirm(false)}
+        onConfirm={handleJoin}
+        title={joinRequestsApproval ? 'Request to join?' : 'Join this group?'}
+        message={
+          joinRequestsApproval
+            ? `This is a private group. Send a request to join “${group.name}”? An admin will review it.`
+            : `Join “${group.name}”? You'll be added as a member right away.`
+        }
+        confirmLabel={joinRequestsApproval ? 'Send Request' : 'Join Group'}
+        pending={acting}
+      />
     </section>
   );
 }

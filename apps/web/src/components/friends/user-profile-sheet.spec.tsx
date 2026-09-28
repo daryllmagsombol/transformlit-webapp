@@ -22,6 +22,26 @@ jest.mock('../ui', () => ({
   UserAvatar: () => null,
   Modal: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? <div>{children}</div> : null,
+  ConfirmDialog: ({
+    open,
+    onClose,
+    onConfirm,
+    title,
+    confirmLabel = 'Confirm',
+  }: {
+    open: boolean;
+    onClose: () => void;
+    onConfirm: () => void;
+    title: string;
+    confirmLabel?: string;
+  }) =>
+    open ? (
+      <div role="dialog" aria-label={title}>
+        <p>{title}</p>
+        <button onClick={onClose}>Cancel</button>
+        <button onClick={onConfirm}>{confirmLabel}</button>
+      </div>
+    ) : null,
 }));
 
 import { UserProfileSheet } from './user-profile-sheet';
@@ -45,6 +65,12 @@ const pendingFriendship = {
   friendshipStatus: { id: 'f2', requesterId: 'u1', addresseeId: 'u2', status: 'PENDING' },
 };
 
+const noFriendship = { friendshipStatus: null };
+
+const incomingFriendship = {
+  friendshipStatus: { id: 'f3', requesterId: 'u2', addresseeId: 'u1', status: 'PENDING' },
+};
+
 describe('UserProfileSheet', () => {
   beforeEach(() => {
     mockQuery.mockReset();
@@ -54,7 +80,7 @@ describe('UserProfileSheet', () => {
     mockAddToast.mockClear();
   });
 
-  const renderSheet = (friendshipData: typeof acceptedFriendship) => {
+  const renderSheet = (friendshipData: { friendshipStatus: unknown }) => {
     mockQuery
       .mockResolvedValueOnce({ data: profileFixture })
       .mockResolvedValueOnce({ data: friendshipData });
@@ -109,5 +135,58 @@ describe('UserProfileSheet', () => {
     });
     expect(mockPush).not.toHaveBeenCalled();
     expect(mockOnClose).not.toHaveBeenCalled();
+  });
+
+  it('asks for confirmation before sending a friend request', async () => {
+    renderSheet(noFriendship);
+
+    await waitFor(() => expect(screen.getByText('Emily')).toBeInTheDocument());
+
+    mockMutate.mockResolvedValueOnce({
+      data: { sendFriendRequest: { id: 'f1', status: 'PENDING' } },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /add friend/i }));
+
+    expect(screen.getByText('Send friend request?')).toBeInTheDocument();
+    expect(mockMutate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send Request' }));
+
+    await waitFor(() => {
+      expect(mockMutate).toHaveBeenCalledWith(
+        expect.objectContaining({ variables: { addresseeId: 'u2' } }),
+      );
+      expect(mockAddToast).toHaveBeenCalledWith('Friend request sent!', 'success');
+    });
+  });
+
+  it('does not send the request when the add-friend confirmation is cancelled', async () => {
+    renderSheet(noFriendship);
+
+    await waitFor(() => expect(screen.getByText('Emily')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /add friend/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(mockMutate).not.toHaveBeenCalled();
+  });
+
+  it('accepts an incoming request without a confirmation step', async () => {
+    renderSheet(incomingFriendship);
+
+    await waitFor(() => expect(screen.getByText('Emily')).toBeInTheDocument());
+
+    mockMutate.mockResolvedValueOnce({
+      data: { acceptFriendRequest: { id: 'f3', status: 'ACCEPTED' } },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /accept request/i }));
+
+    await waitFor(() => {
+      expect(mockMutate).toHaveBeenCalledWith(
+        expect.objectContaining({ variables: { friendshipId: 'f3' } }),
+      );
+    });
   });
 });

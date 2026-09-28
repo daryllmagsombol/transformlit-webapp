@@ -1,79 +1,75 @@
 # Task Completion
 
-## Verification Checklist
+## Verification Checklist (ordered, cheapest first)
 
-Before considering any coding task complete, run these in order:
-
-### 1. Type Check
+### 1. Type check / build
 
 ```bash
-pnpm build          # turbo builds all apps; catches TS errors
+pnpm build                                   # turbo; builds workspace deps first
+pnpm --filter @transformlit/web build        # web only
+pnpm --filter @transformlit/api build        # api only
 ```
 
-If only one app changed, scope it:
+Or scoped typecheck: `pnpm --filter <pkg> exec tsc --noEmit`.
+
+### 2. Unit tests (the real gate)
 
 ```bash
-pnpm --filter @transformlit/api build    # API only
-pnpm --filter @transformlit/web build    # Web only
+pnpm test                                    # all packages via turbo
+pnpm --filter @transformlit/web exec jest <path>
+pnpm --filter @transformlit/api test -- <pattern>
+pnpm --filter @transformlit/shared test
 ```
 
-### 2. Lint
+### 3. Lint — ⚠️ BROKEN, do not rely on it
+
+`pnpm lint` fails for pre-existing reasons (no flat `eslint.config.js` in API; `next lint`
+removed in Next 16). See `mem:suggested_commands`. Do not report lint as passing.
+
+### 4. Integration tests (DB/API logic changed)
 
 ```bash
-pnpm lint
-```
-
-### 3. Unit Tests
-
-```bash
-pnpm test
-```
-
-Scope to affected app if only one changed.
-
-### 4. Integration Tests (if DB schema or API logic changed)
-
-```bash
-# Ensure source .env is loaded for DATABASE_URL
 set -a; source apps/api/.env; set +a
 pnpm test:integration
 ```
 
-### 5. E2E Tests (if web UI flows changed)
+### 5. E2E (web UI flows changed)
 
 ```bash
-pnpm test:e2e
+pnpm test:e2e    # needs API + web up
 ```
 
-### 6. Formatting
+### 6. Browser verification — REQUIRED for UI/style/scroll/focus/event work
+
+jsdom does not catch computed-style, layout, scroll, or real browser-event bugs. Two
+confirmed false positives exist in this repo. Recipe + triage:
+`mem:verification/browser-and-blindspots`.
+
+### 7. Housekeeping
 
 ```bash
-pnpm format
+pnpm format                                   # Prettier (works)
+pnpm graphql:codegen                          # if GraphQL types/queries changed
 ```
 
-### 7. GraphQL Codegen (if GraphQL types or queries changed)
+## Failure modes
 
-```bash
-pnpm graphql:codegen
-```
+- **`packages/shared` must be built** before API/web typecheck or tests can resolve
+  `@transformlit/shared`. `dist/` is gitignored — see `mem:build/startup`.
+- **Prisma client must be generated** after a schema change (`db:generate`).
+- **Filtered commands bypass turbo** and therefore skip `^build` dependency builds.
+- **Integration tests self-provision Postgres** via Testcontainers — no seed/migrate needed.
+- **Web e2e requires both servers running.**
+- **`EADDRINUSE`** on startup usually means a stale/orphaned server from a previous run
+  (orphans survive SIGTERM) — see `mem:build/startup`.
 
-### 8. Prisma (if schema changed)
+## Before claiming a failure is yours
 
-```bash
-# Regenerate client
-set -a; source apps/api/.env; set +a
-pnpm --filter @transformlit/api db:generate
+Stash only your files, re-run, then pop. This repo has multiple pre-existing failures
+(API lint, `tsc` rootDir error in `pdf.converter.spec.ts`, `next lint`). Distinguish
+pre-existing from introduced. Details: `mem:verification/browser-and-blindspots`.
 
-# If new migration needed (dev):
-pnpm --filter @transformlit/api db:migrate
+## Related
 
-# Verify migration status
-pnpm --filter @transformlit/api db:migrate:deploy  # dry-run-safe; shows pending count
-```
-
-## Failure Modes
-
-- **Prisma generate must run before tests** if schema changed — tests import `@prisma/client` which needs the generated code.
-- **Seeding requires `db:generate` first** — `tsx prisma/seed.ts` imports the generated client.
-- **Integration tests create their own DB** via Testcontainers — no need to seed or migrate the test DB.
-- **Web e2e tests require API to be running** — Playwright hits the live server.
+- `mem:verification/browser-and-blindspots` — false positives + authenticated GraphQL smoke test
+- `mem:build/startup` — startup traps

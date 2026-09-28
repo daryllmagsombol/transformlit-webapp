@@ -1,6 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+/** Mask an email address for logging: keeps one leading char + the domain. */
+function redactAddress(address: string): string {
+  const at = address.indexOf('@');
+  if (at <= 0) return '***';
+  return `${address.slice(0, 1)}***${address.slice(at)}`;
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -55,6 +62,8 @@ export class EmailService {
     subject: string,
     _body: string,
   ): Promise<void> {
-    this.logger.log(`[DEV] Email to ${to}: ${subject}`);
+    // Recipient addresses are PII — log a redacted form only, matching the
+    // privacy rule used by sendVerificationEmail / sendPasswordReset.
+    this.logger.log(`[DEV] Email to ${redactAddress(to)}: ${subject}`);
   }
 }
