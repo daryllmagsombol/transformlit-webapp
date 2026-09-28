@@ -3,46 +3,59 @@
 ## Entry & Config
 
 - `src/main.ts` — NestJS bootstrap (Express 5 adapter, CORS, GraphQL subscriptions)
-- `src/app.module.ts` — root module importing all domain modules + ConfigModule + GraphQLModule
-- `.env` / `.env.example` — local secrets (DATABASE_URL, JWT_SECRET, OAuth creds, Azure creds)
-- `nest-cli.json` — NestJS CLI config
+- `src/app.module.ts` — root module (domain modules + ConfigModule + GraphQLModule)
+- `nest-cli.json` — `builder: swc`, `typeCheck: true`, `deleteOutDir: true`
+- `.env` / `.env.example` — DATABASE_URL, JWT_SECRET, OAuth creds, Azure creds
+
+## Modules (`src/`)
+
+`auth`, `users`, `groups`, `friends`, `chat`, `books`, `feed`, `notifications`, `azure`,
+`storage`, `uploads`, `worker`, `health`, `prisma`, `common`.
 
 ## Architecture
 
-- **Driver adapter pattern**: Prisma 7 uses `PrismaPg` adapter with a `pg.Pool` instead of the built-in query engine. See `src/prisma/prisma.service.ts`.
-- **Dual Postgres connections**: Prisma for ORM queries + raw `pg.Pool` for LISTEN/NOTIFY pub/sub (see `src/chat/pubsub.service.ts`).
-- **GraphQL code-first**: schema auto-generated from NestJS decorators (`autoSchemaFile`). No manual `.gql` files.
-- **Subscriptions**: GraphQL-WS protocol on `/graphql` path. WebSocket context extracts auth from `connectionParams`.
-- **REST only for OAuth**: `auth.controller.ts` handles Google/Facebook/Microsoft callback redirects (Passport REST routes), returns tokens via URL params to frontend.
-
-## Module Pattern
-
-Each domain module (`auth`, `users`, `groups`, `friends`, `chat`, `books`, `feed`, `notifications`) follows:
-
-- `*.module.ts` — declares imports, providers, controllers
-- `*.resolver.ts` — GraphQL queries/mutations, guarded with `@UseGuards(JwtAuthGuard)`
-- `*.service.ts` — business logic, injects `PrismaService`
-- `models/` — GraphQL ObjectType/InputType definitions
-- Guards in `guards/`, Passport strategies in `strategies/`
-
-Shared modules: `prisma/` (global PrismaService), `azure/` (Blob Storage + Email), `health/` (health check endpoint), `common/` (decorators like `@CurrentUser`, `@Public`).
+- **Driver adapter pattern**: Prisma 7 uses `PrismaPg` + `pg.Pool` (not the built-in engine).
+  See `src/prisma/prisma.service.ts`.
+- **Dual Postgres connections**: Prisma for ORM + raw `pg.Pool` for LISTEN/NOTIFY pub/sub
+  (`src/chat/pubsub.service.ts`).
+- **GraphQL code-first**: `schema.gql` is auto-generated from decorators (`autoSchemaFile`).
+  Never edit `schema.gql` manually; regenerate via `graphql:schema`.
+- **Subscriptions**: GraphQL-WS on `/graphql`; auth from `connectionParams`.
+- **Background worker**: separate entry `src/worker/main.ts` + `worker.module.ts`
+  (`pnpm --filter @transformlit/api worker:dev`).
 
 ## Auth Flow
 
-- Local: email + argon2 password hash → JWT access token + refresh token (rotated, family-tracked)
-- OAuth: Passport strategies for Google, Facebook, Microsoft → `findOrCreateOAuthUser` (cross-provider email linking) → JWT tokens
-- Frontend receives tokens via URL redirect: `/login?token=<access>&refresh=<refresh>`
+- **REST** (`auth.controller.ts`) — local `POST /auth/login|register|refresh|logout`, plus
+  OAuth start/callback routes. Refresh token is set as an **httpOnly cookie**
+  (`transformlit_refresh`); access token returns in the JSON body (local login) — it is
+  NEVER put in a URL.
+- **OAuth callbacks redirect with NO tokens**: `finishOAuthCallback()` sets the refresh
+  cookie then redirects to `${FRONTEND_URL}/login` (or `?error=oauth_failed`). The web then
+  bootstraps via `POST /auth/refresh`. An older "tokens in URL params" flow is gone —
+  do not document or reintroduce it.
+- OAuth account linking goes through `findOrCreateOAuthUser` (cross-provider email linking).
+- GraphQL: `@UseGuards(JwtAuthGuard)` + `@CurrentUser()`; public routes via `@Public()`.
+- Refresh tokens: rotated on use, family reuse-detection, SHA-256 hashed in DB.
 
 ## Testing
 
-- Unit: Jest with `@nestjs/testing` `Test.createTestingModule()`. Mock PrismaService.
-- Integration: `@testcontainers/postgresql` spins up `postgres:15-alpine`. DB name `transformlit_test`.
-- Test files: `*.spec.ts` co-located with source files.
+- Unit: Jest + `Test.createTestingModule()`, PrismaService mocked. `*.spec.ts` co-located in `src/`.
+- Integration: `apps/api/test/*.integration.spec.ts` + Testcontainers (`postgres:15-alpine`).
+  Helpers/fixtures in `apps/api/test/helpers` + `test/fixtures`.
 
 ## Key Gotchas
 
-- **`.js` extension required** in all imports (NodeNext module resolution)
-- **Prisma client not auto-generated** after fresh clone — run `db:generate` before anything
-- **Soft deletes**: all core entities have `deletedAt` — always filter `deletedAt: null` in queries
-- **Refresh token reuse detection**: reuse of a consumed refresh token revokes the entire family
-- **Pub/sub is NOT Prisma subscriptions** — it's raw pg LISTEN/NOTIFY, separate connection pool
+- **`.js` extension required** on all imports (NodeNext)
+- **Prisma client not auto-generated** after a clean checkout — run `db:generate` first
+- **Soft deletes**: filter `deletedAt: null` on core entities
+- **GraphQL non-null fields**: `@Field()` is non-nullable by default — a `select` that omits one
+  breaks the whole query. This caused a real outage; see `mem:conventions` and
+  `mem:verification/browser-and-blindspots`
+- **Pub/sub is NOT Prisma subscriptions** — raw pg LISTEN/NOTIFY on a separate pool
+
+## Related
+
+- Build/startup traps: `mem:build/startup`
+- Conventions incl. GraphQL non-null discipline: `mem:conventions`
+- Commands incl. known-broken lint: `mem:suggested_commands`
