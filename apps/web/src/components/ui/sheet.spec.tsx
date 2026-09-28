@@ -31,4 +31,18 @@ describe('Sheet', () => {
     fireEvent.click(screen.getByTestId('sheet-backdrop'));
     expect(onClose).toHaveBeenCalled();
   });
+
+  // Regression guard: a native <dialog> without the `open` attribute computes to
+  // display:none in a real browser, hiding the whole sheet. jsdom does not apply
+  // UA dialog styles, so assert the attribute directly instead of visibility.
+  it('marks the native dialog as open when open is true', () => {
+    const { container } = render(
+      <Sheet open onClose={() => {}} title="Study">
+        <p>Body</p>
+      </Sheet>,
+    );
+    const dialog = container.querySelector('dialog');
+    expect(dialog).not.toBeNull();
+    expect(dialog).toHaveAttribute('open');
+  });
 });

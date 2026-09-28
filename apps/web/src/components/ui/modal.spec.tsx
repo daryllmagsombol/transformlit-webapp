@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Modal } from './modal';
 
 describe('Modal', () => {
@@ -7,6 +7,19 @@ describe('Modal', () => {
       <Modal open={false} onClose={jest.fn()}>Content</Modal>,
     );
     expect(container.firstChild).toBeNull();
+  });
+
+  // AnimatePresence keeps the exiting node mounted until its exit transition
+  // finishes, so removal must be awaited rather than asserted synchronously.
+  it('unmounts the dialog after closing', async () => {
+    const { rerender } = render(
+      <Modal open={true} onClose={jest.fn()}>Content</Modal>,
+    );
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    rerender(<Modal open={false} onClose={jest.fn()}>Content</Modal>);
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
   it('renders dialog with role="dialog" and aria-modal="true" when open=true', () => {

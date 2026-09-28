@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { motion, useReducedMotion } from 'motion/react';
+import { springSnappy } from '../../lib/motion';
 
 type NavItemProps = {
   readonly label: string;
@@ -14,17 +16,26 @@ type NavItemProps = {
 
 export function NavItem({ label, href, icon, active = false, variant = 'sidebar', badge, className = '' }: NavItemProps) {
   const isSidebar = variant === 'sidebar';
+  const reduce = useReducedMotion();
+
+  // The active background lives on a shared-`layoutId` layer so it slides
+  // between destinations instead of jumping. Reduced motion keeps the same
+  // element but renders it without animating.
+  const indicatorId = isSidebar ? 'sidebar-nav-indicator' : 'bottom-nav-indicator';
+  const indicatorClass = isSidebar
+    ? 'absolute inset-0 rounded-md bg-primary-container dark:bg-primary-fixed-variant'
+    : 'absolute inset-x-1 inset-y-0.5 rounded-full bg-secondary-container';
 
   const activeClass = isSidebar
-    ? 'bg-primary-container dark:bg-primary-fixed-variant text-on-primary-container border-l-4 border-primary font-bold active:translate-x-1'
-    : 'bg-secondary-container text-on-secondary-container rounded-full px-4 py-1';
+    ? 'text-on-primary-container font-bold border-l-4 border-primary'
+    : 'text-on-secondary-container rounded-full';
 
   const inactiveClass = isSidebar
     ? 'text-on-surface-variant hover:bg-surface-container-highest'
     : 'text-on-surface-variant';
 
   const baseClass = isSidebar
-    ? 'px-4 py-3 flex items-center gap-3 transition-all cursor-pointer'
+    ? 'px-4 py-3 flex items-center gap-3 transition-colors cursor-pointer'
     : 'flex-1 flex flex-col items-center justify-center py-2';
 
   const labelClass = isSidebar
@@ -36,15 +47,23 @@ export function NavItem({ label, href, icon, active = false, variant = 'sidebar'
       href={href}
       className={`${baseClass} relative ${active ? activeClass : inactiveClass} ${className}`}
     >
-      <span className={`material-symbols-outlined ${active ? 'filled' : ''}`}>
+      {active && (
+        <motion.span
+          layoutId={indicatorId}
+          className={indicatorClass}
+          transition={reduce === true ? { duration: 0 } : springSnappy}
+          aria-hidden="true"
+        />
+      )}
+      <span className={`material-symbols-outlined relative z-10 ${active ? 'filled' : ''}`}>
         {icon}
       </span>
-      <span className={labelClass}>
+      <span className={`${labelClass} relative z-10`}>
         {label}
       </span>
       {badge !== undefined && badge > 0 && (
         <span
-          className={`absolute flex items-center justify-center rounded-full bg-brand-orange-dark text-white font-bold ${
+          className={`absolute z-10 flex items-center justify-center rounded-full bg-brand-orange-dark text-white font-bold ${
             isSidebar
               ? 'right-3 top-1/2 -translate-y-1/2 h-5 min-w-5 px-1 text-[10px]'
               : 'top-0.5 right-3 h-4 min-w-4 px-1 text-[9px]'

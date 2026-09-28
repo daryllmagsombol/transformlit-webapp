@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { backdrop, sheetFrom } from '../../lib/motion';
+import { useOverlayDismiss } from '../../lib/hooks/use-overlay-dismiss';
 
 interface SheetProps {
   readonly open: boolean;
@@ -12,29 +13,27 @@ interface SheetProps {
 }
 
 export function Sheet({ open, onClose, side = 'bottom', title, children }: SheetProps) {
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handler);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', handler);
-      document.body.style.overflow = '';
-    };
-  }, [open, onClose]);
+  const reduce = useReducedMotion();
+  const skip = reduce === true;
+  // Stack-aware: Escape only closes the topmost overlay, and body scroll stays
+  // locked until the last one closes.
+  useOverlayDismiss(open, onClose);
 
+  // NOTE: the `open` attribute is required on the native <dialog>. Without it a
+  // <dialog> computes to display:none, hiding the entire sheet. jsdom does not
+  // apply UA dialog styles, so unit tests cannot catch this — keep it in sync
+  // with the `open` prop and guard it in sheet.spec.tsx.
   return (
     <AnimatePresence>
       {open && (
-        <dialog className="fixed inset-0 z-[80]" aria-modal="true" aria-label={title}>
+        <dialog open className="fixed inset-0 z-[80]" aria-modal="true" aria-label={title}>
           <motion.div
             data-testid="sheet-backdrop"
             className="absolute inset-0 bg-black/50 dark:bg-black/70"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            variants={backdrop}
+            initial={skip ? false : 'hidden'}
+            animate="visible"
+            exit="exit"
             onClick={onClose}
           />
           <motion.div
@@ -43,10 +42,10 @@ export function Sheet({ open, onClose, side = 'bottom', title, children }: Sheet
                 ? 'inset-y-0 right-0 w-full max-w-[420px] rounded-l-2xl'
                 : 'inset-x-0 bottom-0 rounded-t-2xl max-h-[85dvh]'
             }`}
-            initial={side === 'right' ? { x: '100%' } : { y: '100%' }}
-            animate={side === 'right' ? { x: 0 } : { y: 0 }}
-            exit={side === 'right' ? { x: '100%' } : { y: '100%' }}
-            transition={{ type: 'tween', duration: 0.25, ease: 'easeOut' }}
+            variants={sheetFrom(side)}
+            initial={skip ? false : 'hidden'}
+            animate="visible"
+            exit="exit"
           >
             {side === 'bottom' && (
               <div className="w-10 h-1 rounded-full bg-outline-variant mx-auto mt-3 shrink-0" aria-hidden />

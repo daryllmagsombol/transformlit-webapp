@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { ToastProvider, useToast } from './toast';
 
 let idCounter = 0;
@@ -123,7 +123,7 @@ describe('useToast', () => {
     expect(screen.getByLabelText('Dismiss')).toBeInTheDocument();
   });
 
-  it('removes toast when dismiss button is clicked', () => {
+  it('removes toast when dismiss button is clicked', async () => {
     render(
       <ToastProvider>
         <ToastTrigger message="Dismiss me" />
@@ -132,10 +132,12 @@ describe('useToast', () => {
     fireEvent.click(screen.getByText('Add Toast'));
     expect(screen.getByText('Dismiss me')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Dismiss'));
-    expect(screen.queryByText('Dismiss me')).not.toBeInTheDocument();
+    // AnimatePresence runs an exit animation before unmounting, so the removal
+    // is async — assert with waitFor rather than synchronously.
+    await waitFor(() => expect(screen.queryByText('Dismiss me')).not.toBeInTheDocument());
   });
 
-  it('auto-dismisses toast after 4000ms', () => {
+  it('auto-dismisses toast after 4000ms', async () => {
     jest.useFakeTimers();
     render(
       <ToastProvider>
@@ -147,8 +149,11 @@ describe('useToast', () => {
     act(() => {
       jest.advanceTimersByTime(4000);
     });
-    expect(screen.queryByText('Auto dismiss')).not.toBeInTheDocument();
+    // Motion drives the exit animation with rAF/performance.now, which fake
+    // timers do not advance. Switch back to real timers so the exit can finish,
+    // then await the unmount.
     jest.useRealTimers();
+    await waitFor(() => expect(screen.queryByText('Auto dismiss')).not.toBeInTheDocument());
   });
 
   it('does not auto-dismiss before 4000ms', () => {
