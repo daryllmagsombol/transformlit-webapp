@@ -11,6 +11,8 @@ build
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
 
 # IDE
 .DS_Store
@@ -42,6 +44,8 @@ apps/api/prisma/migrations/*/generated/
 
 # Testing
 coverage/
+playwright-report/
+test-results/
 
 # Docker
 *.log
