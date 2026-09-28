@@ -13,6 +13,7 @@ import {
   UserSearchInput,
   LoadingSpinner,
   Modal,
+  ConfirmDialog,
 } from '../../../components/ui';
 import { UserProfileSheet } from '../../../components/friends/user-profile-sheet';
 
@@ -106,6 +107,8 @@ export default function FriendsClient() {
   const [requestsOpen, setRequestsOpen] = useState(true);
   const [profileSheetUserId, setProfileSheetUserId] = useState<string | null>(null);
   const [declineConfirmId, setDeclineConfirmId] = useState<string | null>(null);
+  const [suggestConfirmId, setSuggestConfirmId] = useState<string | null>(null);
+  const [sendingRequest, setSendingRequest] = useState(false);
 
   const suggestedSkeletonKeys = useMemo(
     () => Array.from({ length: 3 }, () => crypto.randomUUID()),
@@ -167,6 +170,7 @@ export default function FriendsClient() {
   };
 
   const handleSuggest = async (userId: string) => {
+    setSendingRequest(true);
     try {
       await apolloClient.mutate({
         mutation: SEND_REQUEST,
@@ -174,8 +178,11 @@ export default function FriendsClient() {
       });
       addToast('Friend request sent!', 'success');
       setSuggestions((prev) => prev.filter((s) => s.id !== userId));
+      setSuggestConfirmId(null);
     } catch {
       addToast('Failed to send friend request.', 'error');
+    } finally {
+      setSendingRequest(false);
     }
   };
 
@@ -205,7 +212,7 @@ export default function FriendsClient() {
             name={s.displayName}
             tag={s.bio || 'Community member'}
             avatarUrl={s.avatarUrl}
-            onAdd={() => handleSuggest(s.id)}
+            onAdd={() => setSuggestConfirmId(s.id)}
           />
         ))}
       </div>
@@ -215,6 +222,11 @@ export default function FriendsClient() {
   const onlineFriendIds = useMemo(
     () => new Set(friends.slice(0, 2).map((f) => f.id)),
     [friends],
+  );
+
+  const suggestedName = useMemo(
+    () => suggestions.find((s) => s.id === suggestConfirmId)?.displayName,
+    [suggestions, suggestConfirmId],
   );
 
   const friendItems = useMemo(
@@ -370,6 +382,23 @@ export default function FriendsClient() {
           </button>
         </div>
       </Modal>
+      {/* Send Friend Request Confirmation */}
+      <ConfirmDialog
+        open={!!suggestConfirmId}
+        onClose={() => setSuggestConfirmId(null)}
+        onConfirm={() => {
+          if (suggestConfirmId) return handleSuggest(suggestConfirmId);
+          return undefined;
+        }}
+        title="Send friend request?"
+        message={
+          suggestedName
+            ? `Send a friend request to ${suggestedName}?`
+            : 'Send a friend request to this reader?'
+        }
+        confirmLabel="Send Request"
+        pending={sendingRequest}
+      />
     </div>
   );
 }

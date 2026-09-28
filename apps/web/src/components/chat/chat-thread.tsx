@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useChatStore } from '../../store/chat-store';
 import { useAuthStore } from '../../store';
@@ -26,8 +26,13 @@ export function ChatThread({ conversationId }: { readonly conversationId: string
   const hasMore = useChatStore((s) => s.hasMoreByConversation[conversationId] ?? false);
   const cursor = useChatStore((s) => s.cursorByConversation[conversationId]);
 
+  const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [draft, setDraft] = useState('');
+  const skeletonKeys = useMemo(
+    () => Array.from({ length: 4 }, () => crypto.randomUUID()),
+    [],
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
   const initialLoadRef = useRef(false);
@@ -68,6 +73,7 @@ export function ChatThread({ conversationId }: { readonly conversationId: string
     useChatStore.getState().setViewingConversationId(conversationId);
 
     let active = true;
+    setLoading(true);
     fetchMessages(conversationId)
       .then(({ messages, hasMore: more, cursor: next }) => {
         if (!active) return;
@@ -78,7 +84,10 @@ export function ChatThread({ conversationId }: { readonly conversationId: string
           if (el) el.scrollTop = el.scrollHeight;
         });
       })
-      .catch(() => addToast('Failed to load messages.', 'error'));
+      .catch(() => addToast('Failed to load messages.', 'error'))
+      .finally(() => {
+        if (active) setLoading(false);
+      });
 
     // Mark read on open (optimistic clear + background mutation)
     const openConversation = useChatStore
@@ -223,7 +232,19 @@ export function ChatThread({ conversationId }: { readonly conversationId: string
             </div>
           );
         })}
-        {messages.length === 0 && (
+        {messages.length === 0 && loading && (
+          <div className="space-y-3" aria-hidden="true">
+            {skeletonKeys.map((key, index) => (
+              <div
+                key={key}
+                className={`flex ${index % 2 === 0 ? 'justify-start' : 'justify-end'}`}
+              >
+                <div className="h-12 w-48 max-w-[75%] rounded-2xl bg-surface-container-high animate-pulse" />
+              </div>
+            ))}
+          </div>
+        )}
+        {messages.length === 0 && !loading && (
           <div className="py-16 text-center">
             <p className="font-body text-on-surface-variant">
               No messages yet — say hello!

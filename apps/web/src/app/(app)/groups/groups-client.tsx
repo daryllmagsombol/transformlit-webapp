@@ -6,6 +6,7 @@ import { apolloClient } from '../../../lib/apollo-client';
 import { useRouter } from 'next/navigation';
 import type { GraphQLGroup } from '@transformlit/shared';
 import { useToast, GroupCard, CategoryChip, FeaturedGroupCard, CompactGroupCard, LoadingSpinner } from '../../../components/ui';
+import { Stagger, StaggerItem } from '../../../components/ui/stagger';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
 import { GROUP_CATEGORIES } from '../../../lib/constants';
 
@@ -115,19 +116,20 @@ export default function GroupsClient() {
       );
     }
     return (
-      <div className="bento-grid">
+      <Stagger className="bento-grid">
         {myGroups.map((g) => (
-          <GroupCard
-            key={g.id}
-            name={g.name}
-            slug={g.slug}
-            description={g.description}
-            coverImageUrl={g.coverImageUrl}
-            memberCount={g.memberCount}
-            category={g.category}
-          />
+          <StaggerItem key={g.id}>
+            <GroupCard
+              name={g.name}
+              slug={g.slug}
+              description={g.description}
+              coverImageUrl={g.coverImageUrl}
+              memberCount={g.memberCount}
+              category={g.category}
+            />
+          </StaggerItem>
         ))}
-      </div>
+      </Stagger>
     );
   };
 
