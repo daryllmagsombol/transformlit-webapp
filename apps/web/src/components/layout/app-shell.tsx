@@ -1,5 +1,6 @@
 'use client';
 
+import { usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { TopBar } from './topbar';
 import { BottomNav } from './bottom-nav';
@@ -10,6 +11,12 @@ import { ChatProvider } from '../chat/chat-provider';
 
 export function AppShell({ children }: { readonly children: React.ReactNode }) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
+  const pathname = usePathname();
+  // Chat is full-bleed: it escapes the centered reading column and fills the
+  // space between the fixed TopBar (h-16 / 64px) and the mobile BottomNav
+  // (~68px) with its own internal scroll. Every other route keeps the default
+  // padded, centered layout.
+  const isChat = pathname === '/chat' || pathname.startsWith('/chat/');
 
   return (
     <ProfileSheetProvider>
@@ -19,15 +26,31 @@ export function AppShell({ children }: { readonly children: React.ReactNode }) {
         <TopBar />
         <Sidebar />
         <BottomNav />
-        <main
-          className={`pt-20 pb-24 md:pb-8 min-h-screen transition-all duration-200 ease-out ${
-            sidebarOpen ? 'md:pl-[240px]' : 'md:pl-0'
-          }`}
-        >
-          <div className="max-w-[1200px] mx-auto px-4 md:px-5">
-            {children}
-          </div>
-        </main>
+        {isChat ? (
+          <main
+            className={`h-dvh overflow-hidden pt-16 pb-[68px] md:pb-0 transition-all duration-200 ease-out ${
+              sidebarOpen ? 'md:pl-[240px]' : 'md:pl-0'
+            }`}
+          >
+            {/*
+              `minmax(0,1fr)` gives the row a zero minimum so the panes' content
+              can never stretch it — it stays at the definite viewport-derived
+              height. `min-h-0` on the wrapper does the same for the grid box.
+              Without the zero minimum the desktop list would grow the page.
+            */}
+            <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)]">{children}</div>
+          </main>
+        ) : (
+          <main
+            className={`pt-20 pb-24 md:pb-8 min-h-screen transition-all duration-200 ease-out ${
+              sidebarOpen ? 'md:pl-[240px]' : 'md:pl-0'
+            }`}
+          >
+            <div className="max-w-[1200px] mx-auto px-4 md:px-5">
+              {children}
+            </div>
+          </main>
+        )}
       </div>
     </ProfileSheetProvider>
   );

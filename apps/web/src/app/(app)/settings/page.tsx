@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Settings — Transformlit',
+  title: 'Settings — TransformLit',
 };
 
 const SETTINGS_SECTIONS = [

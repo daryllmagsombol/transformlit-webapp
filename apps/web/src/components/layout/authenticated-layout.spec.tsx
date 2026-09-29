@@ -42,7 +42,7 @@ describe('AuthenticatedLayout', () => {
 
   it('renders the AppShell with TopBar', () => {
     render(<AuthenticatedLayout><div>Content</div></AuthenticatedLayout>);
-    expect(screen.getByText('Transformlit')).toBeInTheDocument();
+    expect(screen.getByText('TransformLit')).toBeInTheDocument();
   });
 
   it('renders the AppShell with Sidebar nav items', () => {

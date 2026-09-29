@@ -14,6 +14,47 @@ import {
 import { UserAvatar, useToast, LoadingSpinner } from '../ui';
 import { relativeTime } from '../../lib/time';
 
+const MAX_COMPOSER_HEIGHT = 120;
+
+function MessageBubble({
+  mine,
+  body,
+  createdAt,
+}: {
+  readonly mine: boolean;
+  readonly body: string;
+  readonly createdAt: string;
+}) {
+  const bubbleClass = mine
+    ? 'bg-primary-container text-on-primary-container rounded-br-sm'
+    : 'bg-surface-bright text-on-surface border border-outline-variant/30 rounded-bl-sm';
+
+  return (
+    <div className={`flex flex-col gap-1 w-fit max-w-[75%] ${mine ? 'ml-auto items-end' : 'mr-auto items-start'}`}>
+      <div
+        className={`px-5 py-3 rounded-2xl shadow-sm font-small text-small whitespace-pre-wrap break-words ${bubbleClass}`}
+      >
+        {body}
+      </div>
+      <span className={`font-micro text-micro text-on-surface-variant ${mine ? 'mr-1' : 'ml-1'}`}>
+        {relativeTime(createdAt)}
+      </span>
+    </div>
+  );
+}
+
+function NewDivider() {
+  return (
+    <div className="relative flex items-center py-4" aria-hidden="true">
+      <div className="flex-grow border-t border-outline-variant opacity-50" />
+      <span className="shrink-0 px-4 py-1 bg-paper font-micro text-micro text-brand-orange-dark font-medium rounded-full border border-outline-variant/30 shadow-sm">
+        New
+      </span>
+      <div className="flex-grow border-t border-outline-variant opacity-50" />
+    </div>
+  );
+}
+
 export function ChatThread({ conversationId }: { readonly conversationId: string }) {
   const { isReady } = useRequireAuth();
   const router = useRouter();
@@ -34,6 +75,7 @@ export function ChatThread({ conversationId }: { readonly conversationId: string
     [],
   );
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const atBottomRef = useRef(true);
   const initialLoadRef = useRef(false);
   // Snapshot of unread at open — the optimistic clearUnread below would
@@ -118,6 +160,14 @@ export function ChatThread({ conversationId }: { readonly conversationId: string
     if (initialLoadRef.current && atBottomRef.current) scrollToBottom();
   }, [messages.length, scrollToBottom]);
 
+  // Auto-grow the composer up to a capped height (mirrors the reference script).
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
+  }, [draft]);
+
   const handleSend = async () => {
     const body = draft.trim();
     if (!body) return;
@@ -144,7 +194,13 @@ export function ChatThread({ conversationId }: { readonly conversationId: string
     }
   };
 
-  if (!isReady) return <LoadingSpinner />;
+  if (!isReady) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <LoadingSpinner fullScreen={false} />
+      </div>
+    );
+  }
 
   const otherUser = conversation?.otherUser;
   const title = conversation?.type === 'GROUP' ? conversation.group?.name : otherUser?.displayName;
@@ -160,12 +216,12 @@ export function ChatThread({ conversationId }: { readonly conversationId: string
       : -1;
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-13rem)] md:h-[calc(100dvh-11rem)]">
+    <div className="flex h-full min-h-0 flex-col bg-paper">
       {/* Header */}
-      <div className="flex items-center gap-3 pb-3 border-b border-outline-variant mb-3">
+      <header className="flex h-16 shrink-0 items-center gap-3 border-b border-outline-variant bg-surface-bright px-4 md:px-6">
         <button
           onClick={() => router.back()}
-          className="md:hidden w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-high transition-colors"
+          className="md:hidden -ml-1 w-11 h-11 flex items-center justify-center rounded-full hover:bg-surface-container-high transition-colors shrink-0"
           aria-label="Back"
         >
           <span className="material-symbols-outlined text-on-surface">arrow_back</span>
@@ -175,65 +231,33 @@ export function ChatThread({ conversationId }: { readonly conversationId: string
           displayName={otherUser?.displayName}
           size="md"
         />
-        <h1 className="font-display font-headline-h3 text-on-surface truncate">
+        <h1 className="font-body text-headline-h4 font-bold text-on-surface truncate">
           {title ?? 'Chat'}
         </h1>
-      </div>
+      </header>
 
       {/* Messages */}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto pr-2 space-y-3"
+        className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 flex flex-col gap-6"
       >
         {loadingOlder && (
           <div className="flex justify-center py-2">
-            <LoadingSpinner />
+            <LoadingSpinner fullScreen={false} showLabel={false} />
           </div>
         )}
         {messages.map((m, i) => {
           const mine = m.senderId === currentUserId;
           return (
             <div key={m.id}>
-              {i === newStartIndex && (
-                <div className="flex items-center gap-3 my-3" aria-hidden="true">
-                  <div className="flex-1 h-px bg-primary/40" />
-                  <span className="font-micro text-[10px] uppercase tracking-widest text-primary font-bold">
-                    New
-                  </span>
-                  <div className="flex-1 h-px bg-primary/40" />
-                </div>
-              )}
-              <div className={`flex ${mine ? 'justify-end' : 'justify-start'} gap-2`}>
-                {!mine && (
-                  <UserAvatar
-                    avatarUrl={otherUser?.avatarUrl}
-                    displayName={otherUser?.displayName}
-                    size="sm"
-                  />
-                )}
-                <div
-                  className={`max-w-[75%] px-4 py-2 rounded-2xl shadow-sm ${
-                    mine
-                      ? 'bg-brand-orange-dark text-on-primary rounded-br-sm'
-                      : 'bg-surface-container-high text-on-surface rounded-bl-sm'
-                  }`}
-                >
-                  <p className="font-body text-body whitespace-pre-wrap break-words">{m.body}</p>
-                  <p
-                    className={`font-micro text-[10px] mt-1 ${
-                      mine ? 'text-on-primary/70' : 'text-on-surface-variant'
-                    }`}
-                  >
-                    {relativeTime(m.createdAt)}
-                  </p>
-                </div>
-              </div>
+              {i === newStartIndex && <NewDivider />}
+              <MessageBubble mine={mine} body={m.body} createdAt={m.createdAt} />
             </div>
           );
         })}
         {messages.length === 0 && loading && (
-          <div className="space-y-3" aria-hidden="true">
+          <div className="flex flex-col gap-4" aria-hidden="true">
             {skeletonKeys.map((key, index) => (
               <div
                 key={key}
@@ -245,7 +269,7 @@ export function ChatThread({ conversationId }: { readonly conversationId: string
           </div>
         )}
         {messages.length === 0 && !loading && (
-          <div className="py-16 text-center">
+          <div className="flex-1 flex items-center justify-center py-16 text-center">
             <p className="font-body text-on-surface-variant">
               No messages yet — say hello!
             </p>
@@ -254,28 +278,39 @@ export function ChatThread({ conversationId }: { readonly conversationId: string
       </div>
 
       {/* Composer */}
-      <div className="pt-3 border-t border-outline-variant mt-3 flex items-end gap-2">
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void handleSend();
-            }
-          }}
-          placeholder="Type a message…"
-          rows={1}
-          className="flex-1 resize-none bg-surface-container-lowest border border-outline-variant rounded-xl px-4 py-3 font-body text-body text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-primary transition-colors min-h-[48px]"
-        />
-        <button
-          onClick={() => void handleSend()}
-          disabled={!draft.trim()}
-          className="h-11 w-11 flex items-center justify-center rounded-full bg-brand-orange-dark text-on-primary disabled:opacity-40 hover:brightness-110 active:scale-95 transition-all shrink-0"
-          aria-label="Send message"
-        >
-          <span className="material-symbols-outlined text-[20px]">send</span>
-        </button>
+      <div className="shrink-0 border-t border-outline-variant bg-surface-bright p-4">
+        <div className="flex items-end gap-2 max-w-4xl mx-auto bg-surface-container-lowest rounded-2xl border border-outline-variant p-2 shadow-sm focus-within:ring-2 focus-within:ring-primary-container transition-all">
+          <button
+            type="button"
+            disabled
+            aria-label="Attachments unavailable"
+            className="p-2 mb-1 shrink-0 rounded-full text-on-surface-variant opacity-40 cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined">add_circle</span>
+          </button>
+          <textarea
+            ref={composerRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void handleSend();
+              }
+            }}
+            placeholder="Type a message…"
+            rows={1}
+            className="flex-1 resize-none bg-transparent border-none focus:ring-0 focus:outline-none font-small text-small text-on-surface placeholder:text-on-surface-variant py-3 min-h-[44px] max-h-[120px]"
+          />
+          <button
+            onClick={() => void handleSend()}
+            disabled={!draft.trim()}
+            className="w-11 h-11 min-h-11 min-w-11 mb-1 flex items-center justify-center rounded-full bg-primary-container text-on-primary-container hover:bg-brand-orange-dark disabled:opacity-40 active:scale-95 transition-all shrink-0"
+            aria-label="Send message"
+          >
+            <span className="material-symbols-outlined filled text-[20px]">send</span>
+          </button>
+        </div>
       </div>
     </div>
   );

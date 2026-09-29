@@ -89,7 +89,7 @@ export default function RegisterForm() {
         const data = (await res.json()) as { accessToken: string; user: GraphQLUser };
         setAuth(data.user, data.accessToken);
 
-        addToast('Account created! Welcome to Transformlit.', 'success');
+        addToast('Account created! Welcome to TransformLit.', 'success');
         router.push('/feed');
       } catch (err: any) {
         const message = err?.message ?? 'Registration failed. Please try again.';
@@ -133,7 +133,7 @@ export default function RegisterForm() {
         {/* ---- Brand header above card ---- */}
         <div className="text-center mb-8">
           <h1 className="font-sans text-2xl sm:text-3xl text-brand tracking-tight font-bold mb-1">
-            Transformlit
+            TransformLit
           </h1>
           <p className="text-sm text-ink-soft italic">
             Where every word finds its purpose.
@@ -279,7 +279,7 @@ export default function RegisterForm() {
 
           {/* ---------- Terms footnote ---------- */}
           <p className="mt-5 text-center text-xs text-ink-soft leading-relaxed">
-            By clicking Sign Up, you agree to Transformlit&rsquo;s{' '}
+            By clicking Sign Up, you agree to TransformLit&rsquo;s{' '}
             <Link
               href="/terms"
               className="underline hover:text-brand transition-colors"

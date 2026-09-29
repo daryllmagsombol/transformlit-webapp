@@ -30,7 +30,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const resolved = await resolveRoute(await params);
   if (!resolved) return {};
   return {
-    title: `${resolved.bookName} ${resolved.chapter} — ${resolved.translationLabel} — Transformlit`,
+    title: `${resolved.bookName} ${resolved.chapter} — ${resolved.translationLabel} — TransformLit`,
   };
 }
 

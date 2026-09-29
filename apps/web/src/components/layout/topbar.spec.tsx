@@ -39,7 +39,7 @@ describe('TopBar', () => {
   describe('brand', () => {
     it('renders the brand name as a heading', () => {
       render(<TopBar />);
-      const brand = screen.getByText('Transformlit');
+      const brand = screen.getByText('TransformLit');
       expect(brand).toBeInTheDocument();
       expect(brand.tagName).toBe('H1');
     });

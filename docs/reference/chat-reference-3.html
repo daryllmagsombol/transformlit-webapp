@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Transformlit - Chat (reference #3 — compact shell-integrated)</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&amp;family=Newsreader:opsz,wght@6..72,400;6..72,600&amp;family=Manrope:wght@400;600&amp;family=JetBrains+Mono&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "surface-bright": "#fff8f4",
+                        "primary-fixed-dim": "#ffb95c",
+                        "on-primary": "#ffffff",
+                        "ink-white": "#F5F5F5",
+                        "error-container": "#ffdad6",
+                        "surface-container-high": "#f5e6d8",
+                        "surface-container-low": "#fff1e5",
+                        "ink-soft": "#2A2A2A",
+                        "surface-container": "#fbebdd",
+                        "inverse-on-surface": "#feeee0",
+                        "on-surface-variant": "#524434",
+                        "on-secondary-fixed-variant": "#005047",
+                        "accent-teal-dark": "#165E55",
+                        "on-tertiary-container": "#004a67",
+                        "on-primary-container": "#623d00",
+                        "on-tertiary-fixed": "#001e2d",
+                        "surface-raised": "#2C2C2C",
+                        "surface-dark": "#1A1A1A",
+                        "info": "#2E6FAD",
+                        "secondary-fixed": "#9ff2e2",
+                        "on-surface": "#221a12",
+                        "secondary-fixed-dim": "#83d5c6",
+                        "surface-tint": "#845400",
+                        "tertiary": "#00658b",
+                        "surface-container-highest": "#efe0d2",
+                        "success": "#1F7A6D",
+                        "on-secondary": "#ffffff",
+                        "inverse-primary": "#ffb95c",
+                        "on-tertiary": "#ffffff",
+                        "on-primary-fixed": "#2a1700",
+                        "tertiary-fixed-dim": "#7ed0ff",
+                        "on-secondary-container": "#0a6f62",
+                        "brand-orange-dark": "#D88710",
+                        "secondary": "#006b5e",
+                        "tertiary-container": "#2abfff",
+                        "primary-fixed": "#ffddb7",
+                        "on-tertiary-fixed-variant": "#004c6a",
+                        "surface-dim": "#e6d8ca",
+                        "surface-container-lowest": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "paper-warm": "#FFE8C7",
+                        "on-error": "#ffffff",
+                        "error": "#B9382D",
+                        "accent-teal-light": "#3AAD99",
+                        "warning": "#D88710",
+                        "on-secondary-fixed": "#00201b",
+                        "surface": "#fff8f4",
+                        "inverse-surface": "#372f26",
+                        "primary": "#845400",
+                        "ink-dim": "#B0B0B0",
+                        "ink-black": "#111111",
+                        "paper": "#FFF6E8",
+                        "outline-variant": "#d8c3ae",
+                        "primary-container": "#f4a11c",
+                        "on-primary-fixed-variant": "#643e00",
+                        "secondary-container": "#9cefdf",
+                        "outline": "#857462",
+                        "surface-high": "#3E3E3E",
+                        "surface-variant": "#efe0d2",
+                        "on-background": "#221a12",
+                        "tertiary-fixed": "#c5e7ff",
+                        "background": "#fff8f4"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    spacing: {
+                        "xl": "24px",
+                        "base": "16px",
+                        "max-content-width": "1200px",
+                        "xs": "4px",
+                        "sidebar-width": "240px",
+                        "touch-target-min": "44px",
+                        "sm": "8px",
+                        "3xl": "40px",
+                        "lg": "20px",
+                        "5xl": "64px",
+                        "md": "12px",
+                        "2xl": "32px",
+                        "4xl": "48px"
+                    },
+                    fontFamily: {
+                        "headline-h4": ["Space Grotesk"],
+                        "headline-h1": ["Space Grotesk"],
+                        "display-mobile": ["Space Grotesk"],
+                        "small": ["Manrope"],
+                        "mono": ["JetBrains Mono"],
+                        "headline-h3": ["Space Grotesk"],
+                        "body": ["Newsreader"],
+                        "micro": ["Manrope"],
+                        "body-mobile": ["Newsreader"],
+                        "headline-h2": ["Space Grotesk"],
+                        "display": ["Space Grotesk"]
+                    },
+                    fontSize: {
+                        "headline-h4": ["18px", { lineHeight: "1.4", fontWeight: "600" }],
+                        "headline-h1": ["32px", { lineHeight: "1.2", fontWeight: "700" }],
+                        "display-mobile": ["32px", { lineHeight: "1.1", fontWeight: "700" }],
+                        "small": ["14px", { lineHeight: "1.5", fontWeight: "400" }],
+                        "mono": ["14px", { lineHeight: "1.5", fontWeight: "400" }],
+                        "headline-h3": ["22px", { lineHeight: "1.3", fontWeight: "600" }],
+                        "body": ["16px", { lineHeight: "1.5", fontWeight: "400" }],
+                        "micro": ["12px", { lineHeight: "1.4", fontWeight: "400" }],
+                        "body-mobile": ["15px", { lineHeight: "1.5", fontWeight: "400" }],
+                        "headline-h2": ["26px", { lineHeight: "1.3", fontWeight: "600" }],
+                        "display": ["40px", { lineHeight: "1.1", fontWeight: "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-paper text-on-surface font-body h-screen flex overflow-hidden">
+<!-- Top Navigation (Mobile only, hidden on desktop per SideNav config) -->
+<header class="flex justify-between items-center h-16 px-4 md:px-lg w-full fixed top-0 bg-surface dark:bg-surface-dark z-50 shadow-sm md:hidden">
+<div class="font-display text-headline-h3 font-bold text-primary dark:text-primary-fixed">Transformlit</div>
+<div class="flex gap-4">
+<span class="material-symbols-outlined cursor-pointer hover:text-primary transition-colors duration-220">notifications</span>
+<span class="material-symbols-outlined cursor-pointer hover:text-primary transition-colors duration-220">search</span>
+<img class="w-8 h-8 rounded-full object-cover" alt="" src=""/>
+</div>
+</header>
+<!-- Sidebar (Desktop) -->
+<nav class="fixed left-0 top-0 h-full w-sidebar-width hidden md:flex flex-col bg-surface-container-low border-r border-outline-variant pt-16 pb-base z-40">
+<div class="px-4 mb-6">
+<h1 class="font-display text-headline-h4 font-bold text-brand-orange-dark">Transformlit</h1>
+<p class="font-micro text-micro uppercase tracking-wider text-on-surface-variant">Community Reading</p>
+</div>
+<div class="flex-1 overflow-y-auto">
+<div class="flex flex-col gap-1 px-2">
+<a class="text-on-surface-variant hover:bg-surface-container-highest px-4 py-3 flex items-center gap-3 transition-all rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="dynamic_feed">dynamic_feed</span>
+<span class="font-small text-small">Feed</span>
+</a>
+<a class="bg-primary-container text-on-primary-container border-l-4 border-primary px-4 py-3 flex items-center gap-3 font-bold rounded-r-lg" href="#">
+<span class="material-symbols-outlined" data-icon="group">group</span>
+<span class="font-small text-small">Friends</span>
+</a>
+<a class="text-on-surface-variant hover:bg-surface-container-highest px-4 py-3 flex items-center gap-3 transition-all rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="diversity_3">diversity_3</span>
+<span class="font-small text-small">Groups</span>
+</a>
+<a class="text-on-surface-variant hover:bg-surface-container-highest px-4 py-3 flex items-center gap-3 transition-all rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="menu_book">menu_book</span>
+<span class="font-small text-small">Books</span>
+</a>
+</div>
+<div class="px-4 mt-6">
+<button class="w-full bg-primary text-on-primary font-small text-small py-2 px-4 rounded-md border-2 border-ink-soft min-h-[44px] hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
+<span class="material-symbols-outlined">monitoring</span>
+                    Track Progress
+                </button>
+</div>
+</div>
+<div class="mt-auto flex flex-col gap-1 px-2 pt-4 border-t border-outline-variant">
+<a class="text-on-surface-variant hover:bg-surface-container-highest px-4 py-3 flex items-center gap-3 transition-all rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-small text-small">Settings</span>
+</a>
+<a class="text-on-surface-variant hover:bg-surface-container-highest px-4 py-3 flex items-center gap-3 transition-all rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="help">help</span>
+<span class="font-small text-small">Help</span>
+</a>
+</div>
+</nav>
+<!-- Main Content Area -->
+<main class="flex-1 flex md:ml-[240px] pt-16 md:pt-0 h-full bg-paper">
+<!-- Conversation List (Left Pane) -->
+<aside class="w-full md:w-[320px] h-full border-r border-outline-variant bg-surface flex flex-col flex-shrink-0">
+<div class="p-4 border-b border-outline-variant">
+<h2 class="font-headline-h3 text-headline-h3 text-on-surface mb-4">Messages</h2>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+<input class="w-full pl-10 pr-4 py-2 bg-surface-container rounded-full border-none focus:ring-2 focus:ring-brand-orange-dark font-small text-small placeholder:text-on-surface-variant" placeholder="Search friends..." type="text"/>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto">
+<!-- Active Chat -->
+<div class="flex items-center gap-3 p-4 bg-primary-container bg-opacity-20 cursor-pointer hover:bg-surface-container-highest transition-colors">
+<div class="relative">
+<img class="w-12 h-12 rounded-full object-cover shadow-sm" alt="" src=""/>
+<div class="absolute bottom-0 right-0 w-3 h-3 bg-success rounded-full border-2 border-surface"></div>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-baseline mb-1">
+<h3 class="font-body text-body font-semibold truncate text-on-surface">Mia Chen</h3>
+<span class="font-micro text-micro text-brand-orange-dark">10:42 AM</span>
+</div>
+<p class="font-small text-small text-on-surface-variant truncate">I know right? Let's discuss it in the group</p>
+</div>
+</div>
+<!-- Inactive Chats -->
+<div class="flex items-center gap-3 p-4 cursor-pointer hover:bg-surface-container-highest transition-colors">
+<img class="w-12 h-12 rounded-full object-cover shadow-sm opacity-90" alt="" src=""/>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-baseline mb-1">
+<h3 class="font-body text-body font-semibold truncate text-on-surface">Julian R.</h3>
+<span class="font-micro text-micro text-on-surface-variant">Yesterday</span>
+</div>
+<p class="font-small text-small text-on-surface-variant truncate">Did you finish chapter 4?</p>
+</div>
+</div>
+<div class="flex items-center gap-3 p-4 cursor-pointer hover:bg-surface-container-highest transition-colors">
+<div class="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface font-headline-h4 text-headline-h4 shadow-sm">
+                        PA
+                    </div>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-baseline mb-1">
+<h3 class="font-body text-body font-semibold truncate text-on-surface">Prof. Ao</h3>
+<span class="font-micro text-micro text-on-surface-variant">Mon</span>
+</div>
+<p class="font-small text-small text-on-surface-variant truncate">The analysis is quite solid.</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Chat Area (Right Pane) -->
+<section class="hidden md:flex flex-1 flex-col h-full bg-paper relative">
+<!-- Chat Header -->
+<header class="h-16 flex items-center justify-between px-6 border-b border-outline-variant bg-surface-bright shadow-sm z-10 shrink-0">
+<div class="flex items-center gap-4">
+<button class="md:hidden text-on-surface hover:text-primary">
+<span class="material-symbols-outlined">arrow_back</span>
+</button>
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center font-headline-h4 text-headline-h4 shadow-sm">
+                            MC
+                        </div>
+<div>
+<h2 class="font-body text-headline-h4 font-bold text-on-surface">Mia Chen</h2>
+<div class="flex items-center gap-1.5">
+<span class="w-2 h-2 rounded-full bg-success"></span>
+<span class="font-micro text-micro text-on-surface-variant">Online</span>
+</div>
+</div>
+</div>
+</div>
+<div class="flex gap-3 text-on-surface-variant">
+<button class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined">call</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined">more_vert</span>
+</button>
+</div>
+</header>
+<!-- Messages Stream -->
+<div class="flex-1 overflow-y-auto p-6 flex flex-col gap-6" style="background-image: radial-gradient(circle at center, rgba(216, 135, 16, 0.03) 0%, transparent 100%);">
+<!-- Incoming Message 1 -->
+<div class="flex flex-col items-start max-w-[75%]">
+<div class="bg-surface-bright text-on-surface px-5 py-3 rounded-2xl rounded-bl-sm shadow-sm border border-outline-variant/30 font-small text-small">
+                        When do we meet for Bible study?
+                    </div>
+<span class="font-micro text-micro text-on-surface-variant mt-1 ml-1">Mia Chen • 10:30 AM</span>
+</div>
+<!-- Outgoing Message 1 -->
+<div class="flex flex-col items-end max-w-[75%] self-end">
+<div class="bg-primary-container text-on-primary px-5 py-3 rounded-2xl rounded-br-sm shadow-sm font-small text-small">
+                        How about Saturday at 10?
+                    </div>
+<span class="font-micro text-micro text-on-surface-variant mt-1 mr-1">10:32 AM</span>
+</div>
+<!-- Incoming Message 2 -->
+<div class="flex flex-col items-start max-w-[75%]">
+<div class="bg-surface-bright text-on-surface px-5 py-3 rounded-2xl rounded-bl-sm shadow-sm border border-outline-variant/30 font-small text-small">
+                        Perfect, see you then!
+                    </div>
+<span class="font-micro text-micro text-on-surface-variant mt-1 ml-1">Mia Chen • 10:33 AM</span>
+</div>
+<!-- Divider -->
+<div class="relative flex items-center py-4">
+<div class="flex-grow border-t border-outline-variant opacity-50"></div>
+<span class="shrink-0 px-4 bg-paper font-micro text-micro text-brand-orange-dark font-medium rounded-full py-1 border border-outline-variant/30 shadow-sm">
+                        New Messages
+                    </span>
+<div class="flex-grow border-t border-outline-variant opacity-50"></div>
+</div>
+<!-- Incoming Message 3 -->
+<div class="flex flex-col items-start max-w-[75%]">
+<div class="bg-surface-bright text-on-surface px-5 py-3 rounded-2xl rounded-bl-sm shadow-sm border border-outline-variant/30 font-small text-small">
+                        Chapter 5 was incredible — the parallels are unreal
+                    </div>
+<span class="font-micro text-micro text-on-surface-variant mt-1 ml-1">Mia Chen • 10:40 AM</span>
+</div>
+<!-- Outgoing Message 2 -->
+<div class="flex flex-col items-end max-w-[75%] self-end">
+<div class="bg-primary-container text-on-primary px-5 py-3 rounded-2xl rounded-br-sm shadow-sm font-small text-small">
+                        I know right? Let's discuss it in the group
+                    </div>
+<span class="font-micro text-micro text-on-surface-variant mt-1 mr-1">10:42 AM</span>
+</div>
+</div>
+<!-- Composer -->
+<div class="p-4 bg-surface-bright border-t border-outline-variant shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+<div class="flex items-end gap-3 max-w-4xl mx-auto bg-surface-container-lowest rounded-2xl border border-outline-variant p-2 shadow-sm focus-within:ring-2 focus-within:ring-primary-container transition-all">
+<button class="p-2 text-on-surface-variant hover:text-primary transition-colors shrink-0 rounded-full hover:bg-surface-container-low mb-1">
+<span class="material-symbols-outlined">add_circle</span>
+</button>
+<textarea class="flex-1 bg-transparent border-none focus:ring-0 resize-none font-small text-small text-on-surface py-3 min-h-[44px] max-h-[120px]" placeholder="Type a message..." rows="1" style="scrollbar-width: thin;"></textarea>
+<button class="w-10 h-10 bg-primary-container text-on-primary rounded-full flex items-center justify-center shrink-0 hover:bg-brand-orange-dark transition-colors shadow-sm mb-1 self-end min-h-[44px] min-w-[44px]">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">send</span>
+</button>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Navigation (Mobile only) -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-2 py-1 pb-safe md:hidden bg-paper-warm shadow-lg border-t border-outline-variant rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-on-surface-variant py-2 hover:text-primary" href="#">
+<span class="material-symbols-outlined" data-icon="dynamic_feed">dynamic_feed</span>
+<span class="font-micro text-micro">Feed</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-secondary-container text-on-secondary-container rounded-full px-4 py-1" href="#">
+<span class="material-symbols-outlined" data-icon="group" style="font-variation-settings: 'FILL' 1;">group</span>
+<span class="font-micro text-micro font-bold">Friends</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant py-2 hover:text-primary" href="#">
+<span class="material-symbols-outlined" data-icon="diversity_3">diversity_3</span>
+<span class="font-micro text-micro">Groups</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant py-2 hover:text-primary" href="#">
+<span class="material-symbols-outlined" data-icon="menu_book">menu_book</span>
+<span class="font-micro text-micro">Books</span>
+</a>
+</nav>
+</body></html>

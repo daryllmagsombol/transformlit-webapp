@@ -31,7 +31,7 @@ describe('AppShell', () => {
 
   it('renders the TopBar with brand name', () => {
     render(<AppShell><div>Content</div></AppShell>);
-    expect(screen.getByText('Transformlit')).toBeInTheDocument();
+    expect(screen.getByText('TransformLit')).toBeInTheDocument();
   });
 
   it('renders the Sidebar navigation items', () => {

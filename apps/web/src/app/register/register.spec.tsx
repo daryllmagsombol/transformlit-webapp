@@ -291,7 +291,7 @@ describe('RegisterForm', () => {
 
       await waitFor(() => {
         expect(mockAddToast).toHaveBeenCalledWith(
-          'Account created! Welcome to Transformlit.',
+          'Account created! Welcome to TransformLit.',
           'success',
         );
       });
