@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import UsersClient from './users-client';
 
 export const metadata: Metadata = {
-  title: 'Members — Transformlit',
+  title: 'Members — TransformLit',
 };
 
 export default function Route() {

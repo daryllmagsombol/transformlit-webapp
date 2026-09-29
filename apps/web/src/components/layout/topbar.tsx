@@ -27,10 +27,17 @@ export function TopBar() {
   return (
     <>
       <header className="flex justify-between items-center h-16 px-4 md:px-5 w-full fixed top-0 bg-surface dark:bg-surface-dark z-50 shadow-sm">
-      {/* Left: brand */}
-      <div className="flex items-center">
+      {/* Left: hamburger + brand */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={toggleSidebar}
+          className="btn-ghost min-w-11 min-h-11 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors"
+          aria-label="Toggle sidebar"
+        >
+          <span className="material-symbols-outlined">menu</span>
+        </button>
         <h1 className="font-display text-headline-h3 font-bold text-primary dark:text-primary-fixed">
-          Transformlit
+          TransformLit
         </h1>
       </div>
 
@@ -56,13 +63,13 @@ export function TopBar() {
         </nav>
       </div>
 
-      {/* Right: search + theme toggle + notifications + avatar + hamburger */}
+      {/* Right: search + theme toggle + notifications + avatar */}
       <div className="flex items-center gap-2">
         {/* Search pill */}
         <div className="hidden sm:flex bg-surface-container-high px-4 py-1.5 rounded-full items-center gap-2 border border-outline-variant">
           <span className="material-symbols-outlined text-on-surface-variant text-[20px]">search</span>
           <input
-            className="bg-transparent border-none focus:ring-0 text-small font-small p-0 w-48 placeholder-on-surface-variant/60"
+            className="bg-transparent border-none focus:ring-0 text-small font-small p-0 w-36 xl:w-48 placeholder-on-surface-variant/60"
             placeholder="Search scripture, books..."
             type="text"
           />
@@ -76,15 +83,6 @@ export function TopBar() {
 
         {/* User menu */}
         <UserMenu user={user} />
-
-        {/* Hamburger (rightmost) */}
-        <button
-          onClick={toggleSidebar}
-          className="btn-ghost min-w-11 min-h-11 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors"
-          aria-label="Toggle sidebar"
-        >
-          <span className="material-symbols-outlined">menu</span>
-        </button>
       </div>
       </header>
 

@@ -4,7 +4,7 @@ import { LoadingSpinner } from '../../../components/ui';
 import BibleClient from './bible-client';
 
 export const metadata: Metadata = {
-  title: 'Bible — Transformlit',
+  title: 'Bible — TransformLit',
 };
 
 export default function BibleRoute() {

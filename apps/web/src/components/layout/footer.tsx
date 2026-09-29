@@ -11,10 +11,10 @@ export function Footer() {
         {/* Left: brand + copyright */}
         <div className="flex flex-col md:flex-row items-center gap-2 md:gap-4">
           <span className="font-sans text-lg font-bold text-brand tracking-tight">
-            Transformlit
+            TransformLit
           </span>
           <span className="text-sm text-ink-soft">
-            &copy; 2025 Transformlit. All rights reserved.
+            &copy; 2025 TransformLit. All rights reserved.
           </span>
         </div>
 

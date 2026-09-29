@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Help — Transformlit',
+  title: 'Help — TransformLit',
 };
 
 const FAQ_ITEMS = [

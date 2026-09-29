@@ -183,7 +183,7 @@ export default function LoginForm() {
       <header className="fixed top-0 inset-x-0 z-50 bg-paper/80 backdrop-blur-md">
         <div className="flex items-center justify-center h-14 px-4">
           <span className="font-sans text-2xl sm:text-3xl text-brand tracking-tight font-bold">
-            Transformlit
+            TransformLit
           </span>
         </div>
       </header>

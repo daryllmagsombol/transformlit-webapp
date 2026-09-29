@@ -9,16 +9,16 @@ jest.mock('next/link', () => {
 
 describe('Footer', () => {
   describe('brand', () => {
-    it('renders the Transformlit brand name', () => {
+    it('renders the TransformLit brand name', () => {
       render(<Footer />);
-      expect(screen.getByText('Transformlit')).toBeInTheDocument();
+      expect(screen.getByText('TransformLit')).toBeInTheDocument();
     });
   });
 
   describe('copyright', () => {
     it('renders copyright text', () => {
       render(<Footer />);
-      expect(screen.getByText(/2025 Transformlit. All rights reserved./)).toBeInTheDocument();
+      expect(screen.getByText(/2025 TransformLit. All rights reserved./)).toBeInTheDocument();
     });
   });
 
