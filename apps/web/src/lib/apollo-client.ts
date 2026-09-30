@@ -187,7 +187,7 @@ const authLink = new SetContextLink((prevContext, _operation) => {
   const token = isServer ? null : getAccessToken();
   return {
     headers: {
-      ...((prevContext as { headers?: Record<string, string> })?.headers ?? {}),
+      ...(prevContext as { headers?: Record<string, string> })?.headers,
       authorization: token ? `Bearer ${token}` : '',
     },
   };

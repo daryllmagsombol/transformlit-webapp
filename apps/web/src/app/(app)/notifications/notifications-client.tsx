@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { apolloClient } from '../../../lib/apollo-client';
 import { useRouter } from 'next/navigation';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
@@ -9,7 +9,10 @@ import { relativeTime } from '../../../lib/time';
 import { useToast, NotificationItem } from '../../../components/ui';
 import { Stagger, StaggerItem } from '../../../components/ui/stagger';
 
-const NOTIFICATIONS_QUERY = gql`
+const NOTIFICATIONS_QUERY: TypedDocumentNode<
+  { notifications: Notification[] },
+  { limit: number }
+> = gql`
   query AllNotifications($limit: Int!) {
     notifications(limit: $limit) {
       id
@@ -110,7 +113,7 @@ export default function NotificationsClient() {
 
   const fetchNotifications = useCallback(async () => {
     try {
-      const { data } = await apolloClient.query<{ notifications: Notification[] }>({
+      const { data } = await apolloClient.query({
         query: NOTIFICATIONS_QUERY,
         variables: { limit: 50 },
       });

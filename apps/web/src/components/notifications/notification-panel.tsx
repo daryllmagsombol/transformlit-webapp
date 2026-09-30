@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { useRouter } from 'next/navigation';
 import { apolloClient } from '../../lib/apollo-client';
 import { relativeTime } from '../../lib/time';
 import { NotificationItem } from '../ui/notification-item';
 import { useToast } from '../ui/toast';
 
-const NOTIFICATIONS_QUERY = gql`
+const NOTIFICATIONS_QUERY: TypedDocumentNode<{ notifications: Notification[] }, { limit: number }> = gql`
   query Notifications($limit: Int!) {
     notifications(limit: $limit) {
       id
@@ -88,7 +88,7 @@ export function NotificationPanel({ open, onClose, userId }: NotificationPanelPr
   const fetchNotifications = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await apolloClient.query<{ notifications: Notification[] }>({
+      const { data } = await apolloClient.query({
         query: NOTIFICATIONS_QUERY,
         variables: { limit: 5 },
       });

@@ -1,9 +1,12 @@
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { apolloClient, refreshTokens } from '../apollo-client';
 import { API_BASE } from '../constants';
 import { getAccessToken } from '../auth';
 
-export const READ_PROGRESS_QUERY = gql`
+export const READ_PROGRESS_QUERY: TypedDocumentNode<
+  { readProgress: { currentPage: number } | null },
+  { bookId: string }
+> = gql`
   query ReadProgress($bookId: String!) {
     readProgress(bookId: $bookId) {
       currentPage
@@ -73,7 +76,7 @@ export async function fetchPageText(bookId: string, page: number): Promise<PdfPa
 
 /** Server-side reading position, used to resume when the URL has no `?page`. */
 export async function fetchReadProgress(bookId: string): Promise<{ currentPage: number } | null> {
-  const result = await apolloClient.query<{ readProgress: { currentPage: number } | null }>({
+  const result = await apolloClient.query({
     query: READ_PROGRESS_QUERY,
     variables: { bookId },
     fetchPolicy: 'no-cache',

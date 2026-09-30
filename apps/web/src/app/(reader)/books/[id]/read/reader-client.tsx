@@ -1,12 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apolloClient } from '../../../../../lib/apollo-client';
 import {
   openReadingSession,
-  pageFrameUrl,
   fetchPageText,
   fetchReadProgress,
   saveReaderProgress,
@@ -16,7 +15,7 @@ import { useReaderStore } from '../../../../../store';
 import { PageCanvas } from '../../../../../components/reader/page-canvas';
 import { ReaderToolbar } from '../../../../../components/reader/reader-toolbar';
 
-const BOOK_MANIFEST_QUERY = gql`
+const BOOK_MANIFEST_QUERY: TypedDocumentNode<{ book: Manifest }, { id: string }> = gql`
   query ReaderBook($id: String!) {
     book(id: $id) {
       id
@@ -71,7 +70,7 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
   useEffect(() => {
     let cancelled = false;
     apolloClient
-      .query<{ book: Manifest }>({ query: BOOK_MANIFEST_QUERY, variables: { id: bookId } })
+      .query({ query: BOOK_MANIFEST_QUERY, variables: { id: bookId } })
       .then((result) => {
         const book = result.data?.book;
         if (!cancelled && book) setManifest(book);
@@ -124,7 +123,9 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
   }, [bookId, initialPage]);
 
   useEffect(() => {
-    if (!manifest || manifest.conversionStatus !== 'READY' || !sessionReady) return;
+    if (!manifest) return;
+    if (manifest.conversionStatus !== 'READY') return;
+    if (!sessionReady) return;
     let cancelled = false;
     setItems(null);
 

@@ -1,4 +1,4 @@
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { apolloClient } from './apollo-client';
 
 export interface ChatMessage {
@@ -27,7 +27,7 @@ export interface ChatConversation {
   myLastReadAt?: string | null;
 }
 
-export const CONVERSATIONS_QUERY = gql`
+export const CONVERSATIONS_QUERY: TypedDocumentNode<{ conversations: ChatConversation[] }> = gql`
   query Conversations {
     conversations {
       id
@@ -42,7 +42,10 @@ export const CONVERSATIONS_QUERY = gql`
   }
 `;
 
-export const MESSAGES_QUERY = gql`
+export const MESSAGES_QUERY: TypedDocumentNode<
+  { messages: { edges: Array<{ node: ChatMessage; cursor: string }>; hasNextPage: boolean } },
+  { conversationId: string; cursor?: string | null; limit: number }
+> = gql`
   query Messages($conversationId: String!, $cursor: String, $limit: Int!) {
     messages(conversationId: $conversationId, cursor: $cursor, limit: $limit) {
       edges { node { id conversationId senderId body createdAt } cursor }
@@ -51,7 +54,10 @@ export const MESSAGES_QUERY = gql`
   }
 `;
 
-export const SEND_MESSAGE = gql`
+export const SEND_MESSAGE: TypedDocumentNode<
+  { sendMessage: ChatMessage },
+  { input: { conversationId: string; body: string } }
+> = gql`
   mutation SendMessage($input: SendMessageInput!) {
     sendMessage(input: $input) {
       id conversationId senderId body createdAt
@@ -59,13 +65,19 @@ export const SEND_MESSAGE = gql`
   }
 `;
 
-export const MARK_CONVERSATION_READ = gql`
+export const MARK_CONVERSATION_READ: TypedDocumentNode<
+  { markConversationRead: boolean },
+  { conversationId: string }
+> = gql`
   mutation MarkConversationRead($conversationId: String!) {
     markConversationRead(conversationId: $conversationId)
   }
 `;
 
-export const START_DIRECT_CONVERSATION = gql`
+export const START_DIRECT_CONVERSATION: TypedDocumentNode<
+  { startDirectConversation: { id: string } },
+  { otherUserId: string }
+> = gql`
   mutation StartDirectConversation($otherUserId: String!) {
     startDirectConversation(otherUserId: $otherUserId) { id }
   }
@@ -80,7 +92,7 @@ export const MESSAGE_ADDED = gql`
 `;
 
 export async function fetchConversations(): Promise<ChatConversation[]> {
-  const { data } = await apolloClient.query<{ conversations: ChatConversation[] }>({
+  const { data } = await apolloClient.query({
     query: CONVERSATIONS_QUERY,
   });
   return data?.conversations ?? [];
@@ -91,9 +103,7 @@ export async function fetchMessages(
   cursor?: string,
   limit = 25,
 ): Promise<{ messages: ChatMessage[]; hasMore: boolean; cursor?: string }> {
-  const { data } = await apolloClient.query<{
-    messages: { edges: Array<{ node: ChatMessage; cursor: string }>; hasNextPage: boolean };
-  }>({
+  const { data } = await apolloClient.query({
     query: MESSAGES_QUERY,
     variables: { conversationId, cursor, limit },
   });
@@ -108,7 +118,7 @@ export async function fetchMessages(
 }
 
 export async function sendChatMessage(conversationId: string, body: string): Promise<ChatMessage> {
-  const { data } = await apolloClient.mutate<{ sendMessage: ChatMessage }>({
+  const { data } = await apolloClient.mutate({
     mutation: SEND_MESSAGE,
     variables: { input: { conversationId, body } },
   });
@@ -124,7 +134,7 @@ export async function markConversationRead(conversationId: string): Promise<void
 }
 
 export async function startDirectConversation(otherUserId: string): Promise<string> {
-  const { data } = await apolloClient.mutate<{ startDirectConversation: { id: string } }>({
+  const { data } = await apolloClient.mutate({
     mutation: START_DIRECT_CONVERSATION,
     variables: { otherUserId },
   });

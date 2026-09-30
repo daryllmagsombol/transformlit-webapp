@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import type { GraphQLAnnouncement, GraphQLVerseOfDay, GraphQLGroup } from '@transformlit/shared';
 import { useToast, SkeletonCard, LoadingSpinner } from '../../../components/ui';
 import { apolloClient } from '../../../lib/apollo-client';
@@ -11,14 +11,17 @@ import { getCategoryConfig, getGroupMeta, QUICK_TRACK_CHAPTERS } from '../../../
 
 // ── GraphQL Queries ──────────────────────────────────────────────────────────
 
-const FEED_QUERY = gql`
+const FEED_QUERY: TypedDocumentNode<{
+  announcements: GraphQLAnnouncement[];
+  verseOfDay: GraphQLVerseOfDay | null;
+}> = gql`
   query Feed {
     announcements { id title body status category publishedAt createdAt }
     verseOfDay { date text reference version }
   }
 `;
 
-const GROUPS_QUERY = gql`
+const GROUPS_QUERY: TypedDocumentNode<{ groups: GraphQLGroup[] }> = gql`
   query Groups {
     groups { id name slug description memberCount visibility createdAt }
   }
@@ -38,8 +41,8 @@ export default function FeedClient() {
   const loadData = useCallback(async () => {
     try {
       const [feedResult, groupsResult] = await Promise.all([
-        apolloClient.query<{ announcements: GraphQLAnnouncement[]; verseOfDay: GraphQLVerseOfDay | null }>({ query: FEED_QUERY }),
-        apolloClient.query<{ groups: GraphQLGroup[] }>({ query: GROUPS_QUERY }),
+        apolloClient.query({ query: FEED_QUERY }),
+        apolloClient.query({ query: GROUPS_QUERY }),
       ]);
       setAnnouncements(feedResult.data!.announcements ?? []);
       setVerse(feedResult.data!.verseOfDay ?? null);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import Link from 'next/link';
 import type { GraphQLUser } from '@transformlit/shared';
 import { apolloClient } from '../../../lib/apollo-client';
@@ -11,7 +11,7 @@ import { Stagger, StaggerItem } from '../../../components/ui/stagger';
 
 // ── GraphQL ─────────────────────────────────────────────────────────────────
 
-const USERS_QUERY = gql`
+const USERS_QUERY: TypedDocumentNode<{ users: GraphQLUser[] }> = gql`
   query Users {
     users {
       id
@@ -37,7 +37,7 @@ export default function UsersClient() {
     setLoading(true);
     setError(false);
     try {
-      const { data } = await apolloClient.query<{ users: GraphQLUser[] }>({
+      const { data } = await apolloClient.query({
         query: USERS_QUERY,
       });
       setUsers(data?.users ?? []);

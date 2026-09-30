@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { apolloClient } from '../../../../lib/apollo-client';
 import { useParams, useRouter } from 'next/navigation';
 import { startDirectConversation } from '../../../../lib/chat-queries';
@@ -10,7 +10,7 @@ import { useAuthStore } from '../../../../store';
 import { useToast, UserAvatar, BookCard, LoadingSpinner } from '../../../../components/ui';
 import type { GraphQLBook } from '@transformlit/shared';
 
-const USER_PROFILE_QUERY = gql`
+const USER_PROFILE_QUERY: TypedDocumentNode<ProfileData, { id: string }> = gql`
   query UserProfile($id: String!) {
     userProfile(id: $id) {
       user { id displayName avatarUrl bio role }
@@ -25,7 +25,10 @@ const USER_PROFILE_QUERY = gql`
   }
 `;
 
-const FRIENDSHIP_STATUS_QUERY = gql`
+const FRIENDSHIP_STATUS_QUERY: TypedDocumentNode<
+  { friendshipStatus: { id: string; requesterId: string; addresseeId: string; status: string } | null },
+  { otherUserId: string }
+> = gql`
   query FriendshipStatus($otherUserId: String!) {
     friendshipStatus(otherUserId: $otherUserId) {
       id
@@ -70,11 +73,11 @@ export default function UserProfileClient() {
   const fetchProfile = useCallback(async () => {
     try {
       const [{ data }, { data: fsData }] = await Promise.all([
-        apolloClient.query<ProfileData>({
+        apolloClient.query({
           query: USER_PROFILE_QUERY,
           variables: { id: userId },
         }),
-        apolloClient.query<{ friendshipStatus: typeof friendship }>({
+        apolloClient.query({
           query: FRIENDSHIP_STATUS_QUERY,
           variables: { otherUserId: userId },
         }),

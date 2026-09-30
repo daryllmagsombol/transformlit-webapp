@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { useRouter } from 'next/navigation';
 import type { GraphQLBook } from '@transformlit/shared';
 import {
@@ -16,7 +16,7 @@ import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
 
 // ── GraphQL Queries ──────────────────────────────────────────────────────────
 
-const BOOKS_QUERY = gql`
+const BOOKS_QUERY: TypedDocumentNode<{ books: GraphQLBook[] }> = gql`
   query Books {
     books {
       id
@@ -95,7 +95,7 @@ export default function BooksClient() {
 
   const loadData = useCallback(async () => {
     try {
-      const result = await apolloClient.query<{ books: GraphQLBook[] }>({ query: BOOKS_QUERY });
+      const result = await apolloClient.query({ query: BOOKS_QUERY });
       setBooks(result.data?.books ?? []);
     } catch {
       addToast('Failed to load books. Please try again.', 'error');

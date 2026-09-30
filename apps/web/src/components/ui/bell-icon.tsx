@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { apolloClient } from '../../lib/apollo-client';
 
-const UNREAD_COUNT_QUERY = gql`
+const UNREAD_COUNT_QUERY: TypedDocumentNode<{ unreadNotificationCount: number }> = gql`
   query UnreadNotificationCount {
     unreadNotificationCount
   }
@@ -32,7 +32,7 @@ export function BellIcon({ userId, onClick }: BellIconProps) {
 
   const fetchCount = useCallback(async () => {
     try {
-      const { data } = await apolloClient.query<{ unreadNotificationCount: number }>({ query: UNREAD_COUNT_QUERY });
+      const { data } = await apolloClient.query({ query: UNREAD_COUNT_QUERY });
       setCount(data!.unreadNotificationCount ?? 0);
     } catch {
       // Silently fail - badge just won't show

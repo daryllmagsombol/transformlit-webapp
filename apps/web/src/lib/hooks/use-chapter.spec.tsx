@@ -33,6 +33,35 @@ describe('useChapter', () => {
     expect(api.getWords).toHaveBeenCalledWith('ENGWEBP', 'JHN', 1);
   });
 
+  it('clears loading as soon as the chapter resolves, without waiting for word annotations', async () => {
+    // Regression: the reader renders its verse DOM only when `loading` is false,
+    // and the deep-link scroll is driven off the chapter payload. Gating `loading`
+    // on the optional words.json fetch leaves the spinner (and no verse nodes) up
+    // on a cold/slow words request, so a "#v{n}" deep link burns its retry budget
+    // against a DOM that does not exist yet and never scrolls.
+    let releaseWords: (value: unknown) => void = () => {};
+    (api.getChapter as jest.Mock).mockResolvedValue({
+      thisChapterWordsLink: '/api/ENGWEBP/JHN/1.words.json',
+      chapter: { number: 1, content: [{ type: 'verse', number: 1, content: ['x'] }], footnotes: [] },
+    });
+    (api.getWords as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        releaseWords = resolve;
+      }),
+    );
+
+    render(<Probe translation="ENGWEBP" book="JHN" chapter={1} />);
+
+    // The chapter is renderable and the spinner must be gone while words are pending.
+    await waitFor(() => expect(screen.getByTestId('verses').textContent).toBe('1'));
+    expect(screen.getByTestId('loading').textContent).toBe('false');
+    expect(screen.getByTestId('words').textContent).toBe('no');
+
+    // Word annotations still arrive later as non-blocking enrichment.
+    releaseWords({ verses: { '1': [] } });
+    await waitFor(() => expect(screen.getByTestId('words').textContent).toBe('yes'));
+  });
+
   it('skips words when the translation lacks annotations', async () => {
     (api.getChapter as jest.Mock).mockResolvedValue({
       chapter: { number: 1, content: [{ type: 'verse', number: 1, content: ['x'] }], footnotes: [] },

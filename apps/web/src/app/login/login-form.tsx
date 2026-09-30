@@ -36,7 +36,8 @@ type LoginFormValues = z.infer<typeof loginSchema>;
  * `?redirect=` can never turn login into an open redirect.
  */
 function safeRedirectTarget(raw: string | null): string {
-  if (!raw || !raw.startsWith('/')) return '/feed';
+  if (!raw) return '/feed';
+  if (!raw.startsWith('/')) return '/feed';
   if (raw.startsWith('//') || raw.startsWith('/\\')) return '/feed';
   if (raw.includes('://') || raw.includes('\\')) return '/feed';
   return raw;

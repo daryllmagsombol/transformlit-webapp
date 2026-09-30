@@ -34,7 +34,7 @@ function removeOverlay(id: string): void {
 }
 
 function isTopOverlay(id: string): boolean {
-  return overlayStack.length > 0 && overlayStack[overlayStack.length - 1] === id;
+  return overlayStack.at(-1) === id;
 }
 
 function lockBodyScroll(): void {

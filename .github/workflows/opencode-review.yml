@@ -1,0 +1,104 @@
+name: PR Checks
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      # The API typecheck needs the generated Prisma client. It is not committed
+      # (it lands in node_modules), and `pnpm install` does not run `prisma
+      # generate` — the `prepare` hook was removed in 875f469 because it broke
+      # Docker builds. Generate it explicitly before typechecking.
+      - name: Generate Prisma client
+        run: pnpm --filter @transformlit/api run db:generate
+      - run: pnpm typecheck
+
+  review:
+    if: github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Non-blocking by design. This action is a write-capable agent: on a
+      # `pull_request` event it treats the PR as a work target and, when its
+      # worktree is dirty, runs `git commit` + `git push`. It never sets a git
+      # identity when `use_github_token: true` (configureGit is gated on
+      # `!useGithubToken`), so any dirt makes the commit fail with "Author
+      # identity unknown", and the catch block posts that error as the PR
+      # comment instead of the review.
+      #
+      # The dirt was self-inflicted, not caused by the agent. On startup
+      # opencode runs an npm install (arborist reify with save:true) for every
+      # config directory, including the repo's `.opencode/`, and rewrote the
+      # tracked `.opencode/package.json` + `.opencode/package-lock.json` (they
+      # pinned @opencode-ai/plugin 1.18.25 while the action installs the latest
+      # CLI). `.opencode/.gitignore` now ignores those generated files and they
+      # are no longer tracked, so the worktree stays clean and the action takes
+      # its clean path: post the review as a PR issue comment.
+      #
+      # typecheck is the real blocking gate; the review is informational.
+      - name: AI Code Review
+        continue-on-error: true
+        uses: anomalyco/opencode/github@v1.17.8
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: opencode/muse-spark-1.3-contributor-free
+          use_github_token: true
+          prompt: |
+            Review this pull request.
+
+            Read the diff and changed files. Check for:
+            - Bugs and logic errors
+            - Security vulnerabilities
+            - Missing error handling
+
+            Be conservative — only flag things you're 90%+ sure about.
+            Skip style, formatting, and naming nits.
+            If the code looks good, say LGTM.
+            Write findings as a PR review with file:line references.
+            Add the model's name at the end of your review for traceability.
+
+  gate:
+    needs: [typecheck, review]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Typecheck must pass
+        if: needs.typecheck.result != 'success' && needs.typecheck.result != 'skipped'
+        run: |
+          echo "❌ TypeScript compilation failed"
+          exit 1
+
+      # Informational only — the AI review is deliberately non-blocking (see the
+      # note on the AI Code Review step). Surface its outcome, never fail on it.
+      - name: Report review outcome
+        if: needs.review.result == 'failure'
+        run: |
+          echo "::warning::AI review job did not complete — see its logs. Not blocking."
+
+      - name: All clear
+        run: echo "✅ All checks passed"

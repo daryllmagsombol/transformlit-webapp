@@ -1,4 +1,4 @@
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { apolloClient } from './apollo-client';
 import { API_BASE } from './constants';
 import { getAccessToken } from './auth';
@@ -9,7 +9,10 @@ import type {
   GraphQLGroupPostComment,
 } from '@transformlit/shared';
 
-export const GROUP_BY_SLUG_QUERY = gql`
+export const GROUP_BY_SLUG_QUERY: TypedDocumentNode<
+  { groupBySlug: GraphQLGroup | null },
+  { slug: string }
+> = gql`
   query GroupBySlug($slug: String!) {
     groupBySlug(slug: $slug) {
       id
@@ -26,7 +29,10 @@ export const GROUP_BY_SLUG_QUERY = gql`
   }
 `;
 
-export const JOIN_GROUP_MUTATION = gql`
+export const JOIN_GROUP_MUTATION: TypedDocumentNode<
+  { joinGroup: { id: string; status: string } },
+  { groupId: string }
+> = gql`
   mutation JoinGroup($groupId: String!) {
     joinGroup(groupId: $groupId) {
       id
@@ -35,14 +41,17 @@ export const JOIN_GROUP_MUTATION = gql`
   }
 `;
 
-export const LEAVE_GROUP_MUTATION = gql`
+export const LEAVE_GROUP_MUTATION: TypedDocumentNode<
+  { leaveGroup: boolean },
+  { groupId: string }
+> = gql`
   mutation LeaveGroup($groupId: String!) {
     leaveGroup(groupId: $groupId)
   }
 `;
 
 export async function fetchGroupBySlug(slug: string): Promise<GraphQLGroup | null> {
-  const { data } = await apolloClient.query<{ groupBySlug: GraphQLGroup | null }>({
+  const { data } = await apolloClient.query({
     query: GROUP_BY_SLUG_QUERY,
     variables: { slug },
     fetchPolicy: 'network-only',
@@ -57,7 +66,7 @@ export async function fetchGroupBySlug(slug: string): Promise<GraphQLGroup | nul
  * dropped rather than passed through verbatim (prevents arbitrary external
  * tracking pixels and keeps <img src> inside the configured allowlist).
  */
-const ALLOWED_REMOTE_IMAGE_HOSTS = ['lh3.googleusercontent.com'];
+const ALLOWED_REMOTE_IMAGE_HOSTS = new Set(['lh3.googleusercontent.com']);
 const BLOB_HOST_SUFFIX = '.blob.core.windows.net';
 const API_ORIGIN = (() => {
   try {
@@ -70,7 +79,7 @@ const API_ORIGIN = (() => {
 function isAllowedRemoteImage(url: URL): boolean {
   if (API_ORIGIN && url.origin === API_ORIGIN) return true;
   if (url.protocol !== 'https:') return false;
-  if (ALLOWED_REMOTE_IMAGE_HOSTS.includes(url.hostname)) return true;
+  if (ALLOWED_REMOTE_IMAGE_HOSTS.has(url.hostname)) return true;
   return url.hostname === 'blob.core.windows.net' || url.hostname.endsWith(BLOB_HOST_SUFFIX);
 }
 
@@ -103,7 +112,10 @@ export async function uploadImage(file: File): Promise<string> {
   return key;
 }
 
-export const GROUP_POSTS_QUERY = gql`
+export const GROUP_POSTS_QUERY: TypedDocumentNode<
+  { groupPosts: GraphQLGroupPost[] },
+  { groupId: string; offset: number; limit: number }
+> = gql`
   query GroupPosts($groupId: String!, $offset: Int!, $limit: Int!) {
     groupPosts(groupId: $groupId, offset: $offset, limit: $limit) {
       id
@@ -118,7 +130,10 @@ export const GROUP_POSTS_QUERY = gql`
   }
 `;
 
-export const GROUP_POST_COMMENTS_QUERY = gql`
+export const GROUP_POST_COMMENTS_QUERY: TypedDocumentNode<
+  { groupPostComments: GraphQLGroupPostComment[] },
+  { postId: string }
+> = gql`
   query GroupPostComments($postId: String!) {
     groupPostComments(postId: $postId) {
       id
@@ -129,7 +144,10 @@ export const GROUP_POST_COMMENTS_QUERY = gql`
   }
 `;
 
-export const CREATE_GROUP_POST_MUTATION = gql`
+export const CREATE_GROUP_POST_MUTATION: TypedDocumentNode<
+  { createGroupPost: GraphQLGroupPost },
+  { groupId: string; input: { body: string; imageKey?: string | null } }
+> = gql`
   mutation CreateGroupPost($groupId: String!, $input: CreateGroupPostInput!) {
     createGroupPost(groupId: $groupId, input: $input) {
       id
@@ -144,19 +162,28 @@ export const CREATE_GROUP_POST_MUTATION = gql`
   }
 `;
 
-export const DELETE_GROUP_POST_MUTATION = gql`
+export const DELETE_GROUP_POST_MUTATION: TypedDocumentNode<
+  { deleteGroupPost: boolean },
+  { postId: string }
+> = gql`
   mutation DeleteGroupPost($postId: String!) {
     deleteGroupPost(postId: $postId)
   }
 `;
 
-export const TOGGLE_GROUP_POST_LIKE_MUTATION = gql`
+export const TOGGLE_GROUP_POST_LIKE_MUTATION: TypedDocumentNode<
+  { toggleGroupPostLike: boolean },
+  { postId: string }
+> = gql`
   mutation ToggleGroupPostLike($postId: String!) {
     toggleGroupPostLike(postId: $postId)
   }
 `;
 
-export const CREATE_GROUP_POST_COMMENT_MUTATION = gql`
+export const CREATE_GROUP_POST_COMMENT_MUTATION: TypedDocumentNode<
+  { createGroupPostComment: GraphQLGroupPostComment },
+  { postId: string; body: string }
+> = gql`
   mutation CreateGroupPostComment($postId: String!, $body: String!) {
     createGroupPostComment(postId: $postId, body: $body) {
       id
@@ -167,14 +194,17 @@ export const CREATE_GROUP_POST_COMMENT_MUTATION = gql`
   }
 `;
 
-export const DELETE_GROUP_POST_COMMENT_MUTATION = gql`
+export const DELETE_GROUP_POST_COMMENT_MUTATION: TypedDocumentNode<
+  { deleteGroupPostComment: boolean },
+  { commentId: string }
+> = gql`
   mutation DeleteGroupPostComment($commentId: String!) {
     deleteGroupPostComment(commentId: $commentId)
   }
 `;
 
 export async function fetchGroupPosts(groupId: string, offset = 0, limit = 20): Promise<GraphQLGroupPost[]> {
-  const { data } = await apolloClient.query<{ groupPosts: GraphQLGroupPost[] }>({
+  const { data } = await apolloClient.query({
     query: GROUP_POSTS_QUERY,
     variables: { groupId, offset, limit },
     fetchPolicy: 'network-only',
@@ -183,7 +213,7 @@ export async function fetchGroupPosts(groupId: string, offset = 0, limit = 20): 
 }
 
 export async function fetchGroupPostComments(postId: string): Promise<GraphQLGroupPostComment[]> {
-  const { data } = await apolloClient.query<{ groupPostComments: GraphQLGroupPostComment[] }>({
+  const { data } = await apolloClient.query({
     query: GROUP_POST_COMMENTS_QUERY,
     variables: { postId },
     fetchPolicy: 'network-only',
@@ -192,7 +222,7 @@ export async function fetchGroupPostComments(postId: string): Promise<GraphQLGro
 }
 
 export async function createGroupPost(groupId: string, body: string, imageKey?: string): Promise<GraphQLGroupPost> {
-  const { data } = await apolloClient.mutate<{ createGroupPost: GraphQLGroupPost }>({
+  const { data } = await apolloClient.mutate({
     mutation: CREATE_GROUP_POST_MUTATION,
     variables: { groupId, input: { body, imageKey } },
   });
@@ -201,7 +231,7 @@ export async function createGroupPost(groupId: string, body: string, imageKey?: 
 }
 
 export async function deleteGroupPost(postId: string): Promise<boolean> {
-  const { data } = await apolloClient.mutate<{ deleteGroupPost: boolean }>({
+  const { data } = await apolloClient.mutate({
     mutation: DELETE_GROUP_POST_MUTATION,
     variables: { postId },
   });
@@ -209,7 +239,7 @@ export async function deleteGroupPost(postId: string): Promise<boolean> {
 }
 
 export async function toggleGroupPostLike(postId: string): Promise<boolean> {
-  const { data } = await apolloClient.mutate<{ toggleGroupPostLike: boolean }>({
+  const { data } = await apolloClient.mutate({
     mutation: TOGGLE_GROUP_POST_LIKE_MUTATION,
     variables: { postId },
   });
@@ -217,7 +247,7 @@ export async function toggleGroupPostLike(postId: string): Promise<boolean> {
 }
 
 export async function createGroupPostComment(postId: string, body: string): Promise<GraphQLGroupPostComment> {
-  const { data } = await apolloClient.mutate<{ createGroupPostComment: GraphQLGroupPostComment }>({
+  const { data } = await apolloClient.mutate({
     mutation: CREATE_GROUP_POST_COMMENT_MUTATION,
     variables: { postId, body },
   });
@@ -226,14 +256,17 @@ export async function createGroupPostComment(postId: string, body: string): Prom
 }
 
 export async function deleteGroupPostComment(commentId: string): Promise<boolean> {
-  const { data } = await apolloClient.mutate<{ deleteGroupPostComment: boolean }>({
+  const { data } = await apolloClient.mutate({
     mutation: DELETE_GROUP_POST_COMMENT_MUTATION,
     variables: { commentId },
   });
   return data?.deleteGroupPostComment ?? false;
 }
 
-export const GROUP_MEMBERS_QUERY = gql`
+export const GROUP_MEMBERS_QUERY: TypedDocumentNode<
+  { groupMembers: GraphQLGroupMember[] },
+  { groupId: string }
+> = gql`
   query GroupMembers($groupId: String!) {
     groupMembers(groupId: $groupId) {
       id
@@ -246,37 +279,55 @@ export const GROUP_MEMBERS_QUERY = gql`
   }
 `;
 
-export const APPROVE_GROUP_MEMBER_MUTATION = gql`
+export const APPROVE_GROUP_MEMBER_MUTATION: TypedDocumentNode<
+  { approveGroupMember: { id: string; status: string } },
+  { groupId: string; userId: string }
+> = gql`
   mutation ApproveGroupMember($groupId: String!, $userId: String!) {
     approveGroupMember(groupId: $groupId, userId: $userId) { id status }
   }
 `;
 
-export const REMOVE_GROUP_MEMBER_MUTATION = gql`
+export const REMOVE_GROUP_MEMBER_MUTATION: TypedDocumentNode<
+  { removeGroupMember: boolean },
+  { groupId: string; userId: string }
+> = gql`
   mutation RemoveGroupMember($groupId: String!, $userId: String!) {
     removeGroupMember(groupId: $groupId, userId: $userId)
   }
 `;
 
-export const BAN_GROUP_MEMBER_MUTATION = gql`
+export const BAN_GROUP_MEMBER_MUTATION: TypedDocumentNode<
+  { banGroupMember: { id: string; status: string } },
+  { groupId: string; userId: string }
+> = gql`
   mutation BanGroupMember($groupId: String!, $userId: String!) {
     banGroupMember(groupId: $groupId, userId: $userId) { id status }
   }
 `;
 
-export const UNBAN_GROUP_MEMBER_MUTATION = gql`
+export const UNBAN_GROUP_MEMBER_MUTATION: TypedDocumentNode<
+  { unbanGroupMember: { id: string; status: string } },
+  { groupId: string; userId: string }
+> = gql`
   mutation UnbanGroupMember($groupId: String!, $userId: String!) {
     unbanGroupMember(groupId: $groupId, userId: $userId) { id status }
   }
 `;
 
-export const UPDATE_GROUP_MEMBER_ROLE_MUTATION = gql`
+export const UPDATE_GROUP_MEMBER_ROLE_MUTATION: TypedDocumentNode<
+  { updateGroupMemberRole: { id: string; role: string } },
+  { groupId: string; userId: string; role: 'MEMBER' | 'MODERATOR' }
+> = gql`
   mutation UpdateGroupMemberRole($groupId: String!, $userId: String!, $role: GroupMemberRole!) {
     updateGroupMemberRole(groupId: $groupId, userId: $userId, role: $role) { id role }
   }
 `;
 
-export const UPDATE_GROUP_MUTATION = gql`
+export const UPDATE_GROUP_MUTATION: TypedDocumentNode<
+  { updateGroup: GraphQLGroup },
+  { groupId: string; input: UpdateGroupInput }
+> = gql`
   mutation UpdateGroup($groupId: String!, $input: UpdateGroupInput!) {
     updateGroup(groupId: $groupId, input: $input) {
       id name slug description visibility category coverImageUrl
@@ -284,14 +335,17 @@ export const UPDATE_GROUP_MUTATION = gql`
   }
 `;
 
-export const DELETE_GROUP_MUTATION = gql`
+export const DELETE_GROUP_MUTATION: TypedDocumentNode<
+  { deleteGroup: { id: string } },
+  { groupId: string }
+> = gql`
   mutation DeleteGroup($groupId: String!) {
     deleteGroup(groupId: $groupId) { id }
   }
 `;
 
 export async function fetchGroupMembers(groupId: string): Promise<GraphQLGroupMember[]> {
-  const { data } = await apolloClient.query<{ groupMembers: GraphQLGroupMember[] }>({
+  const { data } = await apolloClient.query({
     query: GROUP_MEMBERS_QUERY,
     variables: { groupId },
     fetchPolicy: 'network-only',
@@ -347,7 +401,7 @@ export interface UpdateGroupInput {
 }
 
 export async function updateGroup(groupId: string, input: UpdateGroupInput): Promise<GraphQLGroup> {
-  const { data } = await apolloClient.mutate<{ updateGroup: GraphQLGroup }>({
+  const { data } = await apolloClient.mutate({
     mutation: UPDATE_GROUP_MUTATION,
     variables: { groupId, input },
   });
