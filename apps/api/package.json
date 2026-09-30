@@ -25,7 +25,8 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
-    "graphql:schema": "tsx src/generate-schema.ts"
+    "graphql:schema:check": "tsx test/graphql-schema.ts check",
+    "graphql:schema:export": "tsx test/graphql-schema.ts export"
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",

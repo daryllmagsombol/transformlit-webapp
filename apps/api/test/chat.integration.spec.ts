@@ -10,6 +10,7 @@ import { Pool } from 'pg';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
+import { assertOwnedDisposableDatabaseUrl } from './helpers/pwa-disposable-db.js';
 
 function isDockerAvailable(): boolean {
   try {
@@ -78,6 +79,7 @@ describe('Chat Integration', () => {
         'postgresql://localhost:5432/transformlit_test';
     }
 
+    assertOwnedDisposableDatabaseUrl(databaseUrl, container);
     process.env.DATABASE_URL = databaseUrl;
     process.env.JWT_SECRET = 'test-jwt-secret';
     process.env.GOOGLE_CLIENT_ID = 'test';

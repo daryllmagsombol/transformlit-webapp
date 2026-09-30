@@ -34,8 +34,8 @@
       "cache": false
     },
     "graphql:codegen": {
-      "cache": false,
-      "outputs": ["__generated__/**"]
+      "inputs": ["codegen.ts", "operations/**/*.graphql", "../../apps/api/src/schema.gql"],
+      "outputs": ["src/__generated__/**"]
     },
     "db:generate": {
       "cache": false,

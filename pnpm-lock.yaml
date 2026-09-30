@@ -330,6 +330,10 @@ importers:
         version: 6.0.3
 
   packages/graphql:
+    dependencies:
+      '@graphql-typed-document-node/core':
+        specifier: ^3.2.0
+        version: 3.2.0(graphql@16.14.2)
     devDependencies:
       '@graphql-codegen/cli':
         specifier: ^7.2.0

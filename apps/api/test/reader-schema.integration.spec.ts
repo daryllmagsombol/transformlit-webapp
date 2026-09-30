@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { assertOwnedDisposableDatabaseUrl, startOwnedDisposableDatabase } from './helpers/pwa-disposable-db.js';
 
 describe('Reader schema', () => {
   let app: INestApplication;
@@ -12,17 +13,12 @@ describe('Reader schema', () => {
   beforeAll(async () => {
     let databaseUrl: string;
     try {
-      const { execSync } = await import('node:child_process');
-      execSync('docker info', { stdio: 'ignore' });
-      container = await new PostgreSqlContainer('postgres:15-alpine')
-        .withDatabase('testdb')
-        .withUsername('test')
-        .withPassword('test')
-        .start();
+      container = await startOwnedDisposableDatabase();
       databaseUrl = container.getConnectionUri();
-    } catch {
-      databaseUrl = process.env.TEST_DATABASE_URL || 'postgresql://localhost:5432/transformlit_test';
+    } catch (error) {
+      throw new Error('Could not start owned disposable database for reader schema integration test', { cause: error });
     }
+    assertOwnedDisposableDatabaseUrl(databaseUrl, container);
     process.env.DATABASE_URL = databaseUrl;
     process.env.JWT_SECRET = 'test-jwt-secret';
     process.env.AZURE_STORAGE_CONNECTION_STRING = '';
@@ -54,9 +50,13 @@ describe('Reader schema', () => {
     }
     await pool.end();
 
+    const canonicalSchemaPath = join(__dirname, '../src/schema.gql');
+    const canonicalSchema = readFileSync(canonicalSchemaPath);
+
     const moduleFixture: TestingModule = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleFixture.createNestApplication();
     await app.init();
+    expect(readFileSync(canonicalSchemaPath)).toEqual(canonicalSchema);
     prisma = moduleFixture.get<PrismaService>(PrismaService);
   }, 120000);
 

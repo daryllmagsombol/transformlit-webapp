@@ -5,7 +5,6 @@ import { GraphQLModule } from '@nestjs/graphql';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { GraphQLError, GraphQLScalarType, Kind } from 'graphql';
-import { join } from 'node:path';
 import type { ValidationContext } from 'graphql';
 import depthLimit from 'graphql-depth-limit';
 
@@ -96,7 +95,7 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
 
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: join(__dirname, 'schema.gql'),
+      autoSchemaFile: true,
       sortSchema: true,
       introspection: process.env.NODE_ENV !== 'production',
       // BISECT: depthLimit only

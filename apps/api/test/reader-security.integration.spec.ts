@@ -11,6 +11,7 @@ import { AuthService } from '../src/auth/auth.service';
 import { BooksService } from '../src/books/books.service';
 import { ConversionRunner } from '../src/books/conversion/conversion.runner';
 import { buildTestPdf } from './fixtures/build-pdf';
+import { assertOwnedDisposableDatabaseUrl } from './helpers/pwa-disposable-db.js';
 
 const STORAGE_DIR = `${process.cwd()}/.book-storage-test`;
 
@@ -35,6 +36,7 @@ describe('Reader security', () => {
     } catch {
       databaseUrl = process.env.TEST_DATABASE_URL || 'postgresql://localhost:5432/transformlit_test';
     }
+    assertOwnedDisposableDatabaseUrl(databaseUrl, container);
     process.env.DATABASE_URL = databaseUrl;
     process.env.JWT_SECRET = 'test-jwt-secret';
     process.env.AZURE_STORAGE_CONNECTION_STRING = '';
