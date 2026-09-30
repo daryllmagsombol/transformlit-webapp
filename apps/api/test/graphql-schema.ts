@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { AppModule } from '../src/app.module.js';
 import { startOwnedDisposableDatabase, assertOwnedDisposableDatabaseUrl } from './helpers/pwa-disposable-db.js';
 import { assertCanonicalSchemaMatches, deterministicSchemaBytes, exportCanonicalSchema } from './helpers/schema-drift.js';
+import { schemaPathForAction } from './helpers/schema-check-path.js';
 
 async function applyMigrations(databaseUrl: string): Promise<void> {
   const pool = new Pool({ connectionString: databaseUrl });
@@ -26,6 +27,13 @@ async function main(): Promise<void> {
   if (action !== 'check' && action !== 'export') {
     throw new Error('Usage: tsx test/graphql-schema.ts <check|export>');
   }
+  const canonicalPath = resolve('src/schema.gql');
+  const expectedSchemaPath = schemaPathForAction(
+    action,
+    canonicalPath,
+    process.env.PWA_SCHEMA_CHECK_EXPECTED_PATH,
+    resolve('test/fixtures/schema'),
+  );
   const container = await startOwnedDisposableDatabase();
   const databaseUrl = container.getConnectionUri();
   let app: INestApplication | undefined;
@@ -40,9 +48,8 @@ async function main(): Promise<void> {
     await app.init();
     const schema = app.get(GraphQLSchemaHost).schema;
     const runtimeBytes = deterministicSchemaBytes(schema);
-    const canonicalPath = resolve('src/schema.gql');
     if (action === 'check') {
-      assertCanonicalSchemaMatches(runtimeBytes, readFileSync(canonicalPath));
+      assertCanonicalSchemaMatches(runtimeBytes, readFileSync(expectedSchemaPath));
       process.stdout.write('Canonical GraphQL SDL is current.\n');
     } else {
       exportCanonicalSchema(runtimeBytes, canonicalPath, databaseUrl, container);

@@ -58,9 +58,23 @@ describe('guarded runtime GraphQL schema commands', () => {
   it.each(['stale.gql', 'malformed.gql'])('rejects %s and preserves the canonical SDL', (fixture) => {
     const canonicalPath = join(__dirname, '../src/schema.gql');
     const canonicalBefore = readFileSync(canonicalPath);
-    const fixtureBytes = readFileSync(join(__dirname, 'fixtures/schema', fixture));
-    const runtimeBytes = deterministicSchemaBytes(app.get(GraphQLSchemaHost).schema);
-    expect(() => assertCanonicalSchemaMatches(runtimeBytes, fixtureBytes)).toThrow();
+    const fixturePath = join(__dirname, 'fixtures/schema', fixture);
+    const fixtureBefore = readFileSync(fixturePath);
+    let exitStatus: number | undefined;
+    let stderr = '';
+    try {
+      execFileSync('pnpm', ['graphql:schema:check'], {
+        cwd: resolve(__dirname, '..'),
+        env: { ...process.env, PWA_SCHEMA_CHECK_EXPECTED_PATH: fixturePath },
+        encoding: 'utf8',
+      });
+    } catch (error) {
+      exitStatus = (error as NodeJS.ErrnoException & { status?: number }).status;
+      stderr = (error as NodeJS.ErrnoException & { stderr?: Buffer }).stderr?.toString('utf8') ?? '';
+    }
+    expect(exitStatus).toBeGreaterThan(0);
+    expect(stderr).toContain(fixture === 'malformed.gql' ? 'Canonical GraphQL SDL is malformed' : 'Canonical GraphQL SDL is stale');
+    expect(readFileSync(fixturePath)).toEqual(fixtureBefore);
     expect(readFileSync(canonicalPath)).toEqual(canonicalBefore);
   });
 

@@ -15,7 +15,8 @@
     "test/command-runner-metadata.ts",
     "test/schema-runtime-probe.ts",
     "test/helpers/pwa-disposable-db.ts",
-    "test/helpers/schema-drift.ts"
+    "test/helpers/schema-drift.ts",
+    "test/helpers/schema-check-path.ts"
   ],
   "exclude": ["node_modules", "dist", "dist-schema"]
 }
