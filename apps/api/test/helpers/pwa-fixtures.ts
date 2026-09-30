@@ -41,6 +41,28 @@ export function createPwaFixturePlan(ownerId: string): PwaFixturePlan {
 
 const fixturePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5S8AAAAASUVORK5CYII=', 'base64');
 
+function checksum(bytes: Buffer): number {
+  let value = 0xffffffff;
+  for (const byte of bytes) {
+    value ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (-(value & 1) & 0xedb88320);
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+export function createPwaFramePayload(version: 1 | 2): Buffer {
+  if (version === 1) return Buffer.from(fixturePng);
+  const type = Buffer.from('tEXt');
+  const text = Buffer.from('Comment\0PWA publication version 2');
+  const chunkData = Buffer.concat([type, text]);
+  const chunk = Buffer.alloc(text.length + 12);
+  chunk.writeUInt32BE(text.length, 0);
+  type.copy(chunk, 4);
+  text.copy(chunk, 8);
+  chunk.writeUInt32BE(checksum(chunkData), text.length + 8);
+  return Buffer.concat([fixturePng.subarray(0, fixturePng.length - 12), chunk, fixturePng.subarray(fixturePng.length - 12)]);
+}
+
 /** Database and asset writes require Task 1A's live container and this invocation's storage root. */
 export async function seedPwaFixtures(
   databaseUrl: string | undefined,
@@ -53,8 +75,9 @@ export async function seedPwaFixtures(
   assertOwned(databaseUrl, container);
   const plan = createPwaFixturePlan(ownerId);
   const storage = new LocalStorageAdapter(storageDir);
+  const frameV1 = createPwaFramePayload(1);
   await Promise.all(plan.books.readable.pages.map(async (page) => {
-    await storage.put(`books/${plan.books.readable.id}/v1/page-${page.index}.png`, fixturePng, 'image/png');
+    await storage.put(`books/${plan.books.readable.id}/v1/page-${page.index}.png`, frameV1, 'image/png');
     await storage.put(`books/${plan.books.readable.id}/v1/page-${page.index}.txt`, Buffer.from(page.text), 'text/plain');
   }));
   const [{ PrismaClient }, { PrismaPg }] = await Promise.all([import('@prisma/client'), import('@prisma/adapter-pg')]);
@@ -121,11 +144,12 @@ export async function publishPwaVersion2(
     const book = await prisma.book.findUnique({ where: { id: bookId }, include: { pages: { orderBy: { index: 'asc' } } } });
     if (!book || book.title !== `PWA multi-page fixture ${ownerId}` || book.contentVersion !== 1) throw new Error('Book is not this owner\'s active v1 fixture');
     const storage = new LocalStorageAdapter(storageDir);
+    const frameV2 = createPwaFramePayload(2);
     for (const page of book.pages) {
       const nextText = Buffer.from(`Version 2 publication content for page ${page.index}`);
       const assetKey = `books/${bookId}/v2/page-${page.index}.png`;
       const textKey = `books/${bookId}/v2/page-${page.index}.txt`;
-      await storage.put(assetKey, fixturePng, 'image/png');
+      await storage.put(assetKey, frameV2, 'image/png');
       await storage.put(textKey, nextText, 'text/plain');
       await prisma.bookPage.update({ where: { id: page.id }, data: { assetKey, textKey, charCount: nextText.length } });
     }

@@ -6,7 +6,7 @@ import { createServer } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { once } from 'node:events';
-import { assertOwnedMetadata, assertOwnedArtifactPath, assertPortAvailable, assertSupervisorNonce, assertSupervisorSocketIdentity, cleanupOwnedResources, waitForHarnessReady, type PwaOwnership } from './pwa-process.js';
+import { assertOwnedMetadata, assertOwnedArtifactPath, assertPortAvailable, assertSupervisorNonce, assertSupervisorSocketIdentity, cleanupAfterStartupFailure, cleanupOwnedResources, waitForHarnessReady, waitForSupervisorExit, type PwaOwnership } from './pwa-process.js';
 import { provisionOwnedDatabase, assertTask1AOwnedDatabaseUrl } from './pwa-db.js';
 import { seedPwaFixtures, publishPwaVersion2 } from '../helpers/pwa-fixtures.js';
 import { createPwaProxy } from './pwa-proxy.js';
@@ -32,7 +32,14 @@ const apiHostPort = 3005;
 const webHostPort = 3000;
 
 function run(command: string, args: string[], cwd = root, env: NodeJS.ProcessEnv = process.env): string {
-  return execFileSync(command, args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  return execFileSync(command, args, {
+    cwd,
+    env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 20 * 60 * 1000,
+    maxBuffer: 64 * 1024 * 1024,
+  }).trim();
 }
 
 async function writeMetadata(metadata: PwaMetadata): Promise<void> {
@@ -41,7 +48,41 @@ async function writeMetadata(metadata: PwaMetadata): Promise<void> {
   await rename(temporaryPath, metadataPath);
 }
 
+async function ensurePrivateDirectory(path: string): Promise<void> {
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  const info = await lstat(path);
+  const currentUid = process.getuid?.();
+  if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o077) !== 0 || (currentUid !== undefined && info.uid !== currentUid)) {
+    throw new Error(`Refusing unsafe owner directory: ${path}`);
+  }
+}
+
+async function initializeOwnerDirectory(owner: PwaMetadata): Promise<void> {
+  const ownerDir = join(stateDir, owner.id);
+  await ensurePrivateDirectory(ownerDir);
+  const marker = join(ownerDir, 'owner.json');
+  await writeFile(marker, `${owner.id}\n${owner.nonce}\n`, { flag: 'wx', mode: 0o600 });
+  owner.artifacts.push(marker);
+}
+
+async function verifyOwnerDirectory(owner: PwaMetadata): Promise<void> {
+  const ownerDir = join(stateDir, owner.id);
+  await ensurePrivateDirectory(ownerDir);
+  const marker = join(ownerDir, 'owner.json');
+  const info = await lstat(marker);
+  const currentUid = process.getuid?.();
+  if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0 || (currentUid !== undefined && info.uid !== currentUid)) {
+    throw new Error('Invalid PWA owner marker file');
+  }
+  if ((await readFile(marker, 'utf8')) !== `${owner.id}\n${owner.nonce}\n`) throw new Error('PWA owner directory marker mismatch');
+}
+
 async function readMetadata(): Promise<PwaMetadata> {
+  const fileInfo = await lstat(metadataPath);
+  const currentUid = process.getuid?.();
+  if (!fileInfo.isFile() || fileInfo.isSymbolicLink() || (fileInfo.mode & 0o077) !== 0 || (currentUid !== undefined && fileInfo.uid !== currentUid)) {
+    throw new Error('PWA ownership metadata must be a private regular file owned by this user');
+  }
   const metadata = JSON.parse(await readFile(metadataPath, 'utf8')) as PwaMetadata;
   assertOwnedMetadata(metadata);
   if (!metadata.nonce || !/^[a-f0-9]{64}$/.test(metadata.nonce) || !['starting', 'ready', 'failed', 'stopping'].includes(metadata.state)) {
@@ -52,6 +93,7 @@ async function readMetadata(): Promise<PwaMetadata> {
   if (metadata.socketPath !== join('/tmp', `pwa-${metadata.id}.sock`) || metadata.artifacts.some((artifact) => assertOwnedArtifactPath(stateDir, metadata.id, artifact) !== artifact)) {
     throw new Error('Invalid owner artifact or supervisor socket path');
   }
+  await verifyOwnerDirectory(metadata);
   return metadata;
 }
 
@@ -93,8 +135,12 @@ function dockerRuntime() {
 }
 
 function discoverLabeledContainers(ownerId: string): string[] {
-  const output = run('docker', ['ps', '-aq', '--filter', `label=transformlit.owner=${ownerId}`]);
+  const output = run('docker', ['ps', '-aq', '--no-trunc', '--filter', `label=transformlit.owner=${ownerId}`]);
   return output.split('\n').filter(Boolean);
+}
+
+function containerCleanupOrder(owner: PwaMetadata): string[] {
+  return [...owner.containers.slice(1), ...owner.containers.slice(0, 1)];
 }
 
 async function request(url: string, ca?: Buffer): Promise<{ status: number; body: string }> {
@@ -114,7 +160,10 @@ async function request(url: string, ca?: Buffer): Promise<{ status: number; body
 async function waitForEndpoints(cert: Buffer): Promise<void> {
   await waitForHarnessReady({
     api: async () => (await request('http://127.0.0.1:3005/health')).status === 200,
-    web: async () => (await request('http://127.0.0.1:3000/offline')).status === 200,
+    web: async () => {
+      const status = (await request('http://127.0.0.1:3000/login')).status;
+      return status >= 200 && status < 400;
+    },
     proxy: async () => (await request('https://localhost:3443/', cert)).status === 200,
   }, 60, 1000);
 }
@@ -133,7 +182,7 @@ async function supervise(id: string, nonce: string): Promise<void> {
   let proxy: ReturnType<typeof createPwaProxy> | undefined;
   let control: ReturnType<typeof createServer> | undefined;
   try {
-    await mkdir(ownedDir, { recursive: true, mode: 0o700 });
+    await verifyOwnerDirectory(owner);
     await writeMetadata(owner);
     db = await provisionOwnedDatabase(id);
     assertTask1AOwnedDatabaseUrl(db.databaseUrl, db.container);
@@ -142,13 +191,17 @@ async function supervise(id: string, nonce: string): Promise<void> {
     await writeMetadata(owner);
 
     const storageDir = join(ownedDir, 'storage');
-    await mkdir(storageDir, { recursive: true, mode: 0o700 });
+    await ensurePrivateDirectory(storageDir);
     owner.artifacts.push(storageDir);
     await writeMetadata(owner);
     const apiImage = `transformlit-api:pwa-${id}`;
     const webImage = `transformlit-web:pwa-${id}`;
     owner.images = [];
     run('pnpm', ['exec', 'prisma', 'migrate', 'deploy', '--schema', 'prisma/schema.prisma'], join(root, 'apps/api'), { ...process.env, DATABASE_URL: db.databaseUrl });
+    run('docker', ['build', '-f', 'apps/api/Dockerfile', '-t', apiImage, '.']);
+    run('docker', ['build', '-f', 'apps/web/Dockerfile', '-t', webImage,
+      '--build-arg', 'NEXT_PUBLIC_API_URL=https://localhost:3443/api/graphql',
+      '--build-arg', 'NEXT_PUBLIC_WS_URL=wss://localhost:3443/api/graphql', '.']);
     const fixture = await seedPwaFixtures(db.databaseUrl, db.container, storageDir, id);
     owner.fixtureIds = {
       readerId: fixture.accounts[0].id,
@@ -166,10 +219,6 @@ async function supervise(id: string, nonce: string): Promise<void> {
     owner.artifacts.push(runtimeEnvPath);
     await writeMetadata(owner);
 
-    run('docker', ['build', '-f', 'apps/api/Dockerfile', '-t', apiImage, '.']);
-    run('docker', ['build', '-f', 'apps/web/Dockerfile', '-t', webImage,
-      '--build-arg', 'NEXT_PUBLIC_API_URL=https://localhost:3443/api/graphql',
-      '--build-arg', 'NEXT_PUBLIC_WS_URL=wss://localhost:3443/api/graphql', '.']);
     owner.containers.push(run('docker', ['run', '-d', '--name', `transformlit-pwa-api-${id}`, '--label', `transformlit.owner=${id}`, '-p', '127.0.0.1:3005:3005', '--add-host', 'host.docker.internal:host-gateway', '--env-file', runtimeEnvPath, '-v', `${storageDir}:/pwa-book-storage`, apiImage]));
     await writeMetadata(owner);
     owner.containers.push(run('docker', ['run', '-d', '--name', `transformlit-pwa-web-${id}`, '--label', `transformlit.owner=${id}`, '-p', '127.0.0.1:3000:3000', webImage]));
@@ -210,9 +259,10 @@ async function supervise(id: string, nonce: string): Promise<void> {
             controlServer.close(async () => {
               try {
                 await new Promise<void>((resolveClose) => proxy?.close(() => resolveClose()));
-                await cleanupOwnedResources(owner.containers, id, dockerRuntime());
-                for (const artifact of owner.artifacts) assertOwnedArtifactPath(stateDir, id, artifact);
-                await rm(ownedDir, { recursive: true, force: true });
+                await cleanupOwnedResources(containerCleanupOrder(owner), id, dockerRuntime());
+        for (const artifact of owner.artifacts) assertOwnedArtifactPath(stateDir, id, artifact);
+        await verifyOwnerDirectory(owner);
+        await rm(ownedDir, { recursive: true, force: true });
                 await rm(metadataPath, { force: true });
                 resolveShutdown();
               } catch (error) { rejectShutdown(error); }
@@ -241,19 +291,20 @@ async function supervise(id: string, nonce: string): Promise<void> {
   } catch (error) {
     owner.state = 'failed';
     owner.failure = error instanceof Error ? error.message : 'Unknown startup failure';
-    try {
+    await cleanupAfterStartupFailure(async () => {
       await writeMetadata(owner);
       if (proxy?.listening) await new Promise<void>((resolveClose) => proxy?.close(() => resolveClose()));
       if (control?.listening) await new Promise<void>((resolveClose) => control?.close(() => resolveClose()));
       owner.containers = [...new Set([...owner.containers, ...discoverLabeledContainers(id)])];
       await writeMetadata(owner);
-      await cleanupOwnedResources(owner.containers, id, dockerRuntime());
+      await cleanupOwnedResources(containerCleanupOrder(owner), id, dockerRuntime());
+      await verifyOwnerDirectory(owner);
       await rm(ownedDir, { recursive: true, force: true });
       await rm(metadataPath, { force: true });
-    } catch (cleanupError) {
+    }, async (cleanupError) => {
       owner.failure = `${owner.failure}; cleanup verification failed: ${cleanupError instanceof Error ? cleanupError.message : 'unknown error'}`;
       await writeMetadata(owner);
-    }
+    });
     throw error;
   }
 }
@@ -278,18 +329,28 @@ async function up(): Promise<void> {
   try { await access(metadataPath); throw new Error('Existing PWA owner metadata found; run down first'); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   for (const port of fixedPorts) await assertPortAvailable(port);
-  await mkdir(stateDir, { recursive: true, mode: 0o700 });
+  await ensurePrivateDirectory(stateDir);
   const id = randomUUID();
   const nonce = randomBytes(32).toString('hex');
   const boot = initialMetadata(id, nonce);
-  await mkdir(join(stateDir, id), { mode: 0o700 });
   await writeMetadata(boot);
+  try {
+    await initializeOwnerDirectory(boot);
+    await writeMetadata(boot);
+  } catch (error) {
+    boot.state = 'failed';
+    boot.failure = `Unable to initialize owner directory: ${error instanceof Error ? error.message : 'unknown error'}`;
+    await writeMetadata(boot);
+    throw error;
+  }
   const scriptPath = join(root, 'apps/api/test/scripts/pwa-harness.ts');
-  const child = spawn('pnpm', ['exec', 'tsx', scriptPath, 'supervise', id, nonce], { cwd: join(root, 'apps/api'), detached: true, stdio: 'ignore' });
+  const child = spawn(process.execPath, ['--import', 'tsx', scriptPath, 'supervise', id, nonce], { cwd: join(root, 'apps/api'), detached: true, stdio: 'ignore' });
   let spawnFailure: Error | undefined;
+  let supervisorExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
   child.once('error', (error) => { spawnFailure = error; });
+  child.once('exit', (code, signal) => { supervisorExit = { code, signal }; });
   child.unref();
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  for (let attempt = 0; attempt < 2400; attempt += 1) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
     if (spawnFailure) {
       boot.state = 'failed';
@@ -302,6 +363,12 @@ async function up(): Promise<void> {
     const metadata = await readMetadata();
     if (metadata.state === 'ready') { console.log('PWA harness ready at https://localhost:3443'); return; }
     if (metadata.state === 'failed') throw new Error(`PWA startup failed: ${metadata.failure ?? 'unknown failure'}`);
+    if (supervisorExit) {
+      metadata.state = 'failed';
+      metadata.failure = `Supervisor exited during startup (code ${supervisorExit.code ?? 'null'}, signal ${supervisorExit.signal ?? 'none'})`;
+      await writeMetadata(metadata);
+      throw new Error(metadata.failure);
+    }
   }
   throw new Error('PWA supervisor did not reach readiness; inspect failed owner metadata before cleanup');
 }
@@ -330,8 +397,11 @@ async function down(): Promise<void> {
       await sendSupervisor(owner, 'ping');
       throw new Error('Failed supervisor is still live; refusing external cleanup');
     } catch (error) { if (error instanceof Error && error.message.includes('still live')) throw error; }
-    await cleanupOwnedResources(owner.containers, owner.id, dockerRuntime());
+    owner.containers = [...new Set([...owner.containers, ...discoverLabeledContainers(owner.id)])];
+    await writeMetadata(owner);
+    await cleanupOwnedResources(containerCleanupOrder(owner), owner.id, dockerRuntime());
     for (const artifact of owner.artifacts) assertOwnedArtifactPath(stateDir, owner.id, artifact);
+    await verifyOwnerDirectory(owner);
     await unlinkOwnedStaleSocket(owner);
     await rm(join(stateDir, owner.id), { recursive: true, force: true });
     await rm(metadataPath, { force: true });
@@ -339,11 +409,10 @@ async function down(): Promise<void> {
   }
   const result = await sendSupervisor(owner, 'shutdown') as { ok?: boolean };
   if (!result.ok) throw new Error('Supervisor refused shutdown');
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    try { await access(metadataPath); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
-  }
-  throw new Error('Supervisor acknowledged shutdown but did not finish owned cleanup');
+  await waitForSupervisorExit(async () => {
+    try { await access(metadataPath); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+  });
 }
 
 async function main(): Promise<void> {

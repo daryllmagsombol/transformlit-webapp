@@ -12,8 +12,11 @@ type PwaFixture = {
 };
 
 export const test = base.extend<PwaFixture>({
-  origin: async ({ baseURL }, use) => {
+  origin: async ({ baseURL, page }, use) => {
     if (baseURL !== 'https://localhost:3443') throw new Error('PWA E2E requires the owned HTTPS harness origin');
+    await page.goto(`${baseURL}/login`);
+    const secure = await page.evaluate(() => globalThis.isSecureContext);
+    if (!secure) throw new Error('PWA origin is not a secure browser context');
     await use(baseURL);
   },
   context: async ({}, use) => {
@@ -47,9 +50,12 @@ export const test = base.extend<PwaFixture>({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ email, password }),
         });
-        return { status: response.status };
+        if (!response.ok) return { loginStatus: response.status, refreshStatus: 0 };
+        const refresh = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
+        return { loginStatus: response.status, refreshStatus: refresh.status };
       }, credential);
-      if (result.status !== 200) throw new Error(`Fixture login failed with HTTP ${result.status}`);
+      if (result.loginStatus !== 200) throw new Error(`Fixture login failed with HTTP ${result.loginStatus}`);
+      if (result.refreshStatus !== 200) throw new Error(`Fixture refresh failed with HTTP ${result.refreshStatus}`);
     });
   },
 });

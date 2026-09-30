@@ -14,12 +14,14 @@ export interface PwaOwnership {
   databaseUrl?: string;
 }
 
-export function isSafeDatabaseUrl(databaseUrl: string | undefined): boolean {
+function isLocalDatabaseEndpointMetadata(databaseUrl: string | undefined): boolean {
   if (!databaseUrl) return false;
   try {
     const parsed = new URL(databaseUrl);
     const allowedHost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1' || parsed.hostname === '[::1]';
     const port = Number(parsed.port);
+    // This validates serialized endpoint shape only. Task 1A's live-container
+    // assertion is the sole DB ownership authority before any database access.
     return ['postgres:', 'postgresql:'].includes(parsed.protocol) && allowedHost &&
       port >= 1024 && port <= 65535 && parsed.pathname === '/testdb';
   } catch {
@@ -69,12 +71,31 @@ export interface HarnessProbes {
 export async function waitForHarnessReady(probes: HarnessProbes, attempts = 30, intervalMs = 500): Promise<void> {
   const names = ['api', 'web', 'proxy'] as const;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const results = await Promise.all(names.map(async (name) => [name, await probes[name]()] as const));
+    const results = await Promise.all(names.map(async (name) => {
+      try { return [name, await probes[name]()] as const; }
+      catch { return [name, false] as const; }
+    }));
     const failed = results.filter(([, ready]) => !ready).map(([name]) => name);
     if (failed.length === 0) return;
     if (attempt === attempts - 1) throw new Error(`${failed.join(', ')} not ready after ${attempts} probes`);
     await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
   }
+}
+
+export async function waitForSupervisorExit(isRunning: () => Promise<boolean>, attempts = 60, intervalMs = 100): Promise<void> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (!(await isRunning())) return;
+    if (attempt < attempts - 1) await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
+  }
+  throw new Error(`Supervisor did not exit after ${attempts} checks`);
+}
+
+export async function cleanupAfterStartupFailure(
+  cleanup: () => Promise<void>,
+  preserveFailedOwner: (error: unknown) => Promise<void>,
+): Promise<boolean> {
+  try { await cleanup(); return true; }
+  catch (error) { await preserveFailedOwner(error); return false; }
 }
 
 export async function assertPortAvailable(port: number): Promise<void> {
@@ -91,7 +112,7 @@ export function assertOwnedMetadata(value: unknown): asserts value is PwaOwnersh
   if (metadata.owner !== 'transformlit-pwa' || typeof metadata.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(metadata.id) ||
       !Array.isArray(metadata.ports) || !Array.isArray(metadata.containers) || !Array.isArray(metadata.pids) ||
       !Array.isArray(metadata.artifacts) || !Array.isArray(metadata.images) ||
-      (metadata.databaseUrl !== undefined && !isSafeDatabaseUrl(metadata.databaseUrl))) {
+      (metadata.databaseUrl !== undefined && !isLocalDatabaseEndpointMetadata(metadata.databaseUrl))) {
     throw new Error('Invalid ownership metadata; refusing to manage resources without valid harness ownership');
   }
   if (metadata.ports.some((port) => !Number.isInteger(port) || port < 1024 || port > 65535) ||
