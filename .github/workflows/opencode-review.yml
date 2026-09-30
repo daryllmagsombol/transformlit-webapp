@@ -36,25 +36,30 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    outputs:
-      has_bugs: ${{ steps.check.outputs.has_bugs }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      # Non-blocking by design. This action is a write-capable agent, not a
-      # review-only tool: on a `pull_request` event it treats the PR as a work
-      # target and, when its worktree ends up dirty, runs `git commit` +
-      # `git push` to the PR branch. The job only has `contents: read`, so that
-      # push cannot succeed (403), and the action never sets a git identity when
-      # `use_github_token: true` (see configureGit being gated on
-      # `!useGithubToken`), so the commit fails first with "Author identity
-      # unknown". Its review text is still posted as a PR *comment*, which is
-      # the useful output; the commit failure is not actionable here.
-      # typecheck is the real blocking gate.
+      # Non-blocking by design. This action is a write-capable agent: on a
+      # `pull_request` event it treats the PR as a work target and, when its
+      # worktree is dirty, runs `git commit` + `git push`. It never sets a git
+      # identity when `use_github_token: true` (configureGit is gated on
+      # `!useGithubToken`), so any dirt makes the commit fail with "Author
+      # identity unknown", and the catch block posts that error as the PR
+      # comment instead of the review.
+      #
+      # The dirt was self-inflicted, not caused by the agent. On startup
+      # opencode runs an npm install (arborist reify with save:true) for every
+      # config directory, including the repo's `.opencode/`, and rewrote the
+      # tracked `.opencode/package.json` + `.opencode/package-lock.json` (they
+      # pinned @opencode-ai/plugin 1.18.25 while the action installs the latest
+      # CLI). `.opencode/.gitignore` now ignores those generated files and they
+      # are no longer tracked, so the worktree stays clean and the action takes
+      # its clean path: post the review as a PR issue comment.
+      #
+      # typecheck is the real blocking gate; the review is informational.
       - name: AI Code Review
-        id: ai-review
         continue-on-error: true
         uses: anomalyco/opencode/github@v1.17.8
         env:
@@ -76,56 +81,6 @@ jobs:
             If the code looks good, say LGTM.
             Write findings as a PR review with file:line references.
             Add the model's name at the end of your review for traceability.
-      - name: Check if review found issues
-        id: check
-        if: always()
-        # Non-blocking: this step only surfaces the verdict; it must not fail the
-        # job. Note it polls /pulls/{n}/reviews, which this action never writes
-        # (it posts an issue comment), so BODY is always empty in practice.
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          # Poll for the review — it may take a moment to appear via GitHub API
-          for i in $(seq 1 6); do
-            sleep 5
-            REVIEW=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-              --jq 'sort_by(.submitted_at) | last(.[])' 2>/dev/null || echo '{}')
-            STATE=$(echo "$REVIEW" | jq -r '.state // "PENDING"')
-            BODY=$(echo "$REVIEW" | jq -r '.body // ""')
-
-            # Exit loop once we have a real review (not pending/empty)
-            if [ "$STATE" != "PENDING" ] && [ -n "$BODY" ]; then
-              break
-            fi
-            echo "Waiting for review to post... (attempt ${i}/6)"
-          done
-
-          echo "Review state: ${STATE}"
-
-          if [ "$STATE" = "APPROVED" ]; then
-            echo "Review approved — no bugs"
-            echo "has_bugs=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Check for patterns that indicate actionable problems
-          if echo "$BODY" | grep -qiE '\b(bug|vulnerab|exploit|bypass|incorrect|wrong|broken|memory leak|severity)\b'; then
-            echo "⚠️  Review found bugs/security issues"
-            echo "has_bugs=true" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          if echo "$BODY" | grep -qiE '\b(must fix|needs (work|fix|to be)|should not merge|missing error)\b'; then
-            echo "⚠️  Review flagged items needing fixes"
-            echo "has_bugs=true" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          echo "Review posted — no definitive bugs detected"
-          echo "has_bugs=false" >> "$GITHUB_OUTPUT"
 
   gate:
     needs: [typecheck, review]
