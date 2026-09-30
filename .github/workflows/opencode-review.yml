@@ -43,8 +43,19 @@ jobs:
         with:
           persist-credentials: false
 
+      # Non-blocking by design. This action is a write-capable agent, not a
+      # review-only tool: on a `pull_request` event it treats the PR as a work
+      # target and, when its worktree ends up dirty, runs `git commit` +
+      # `git push` to the PR branch. The job only has `contents: read`, so that
+      # push cannot succeed (403), and the action never sets a git identity when
+      # `use_github_token: true` (see configureGit being gated on
+      # `!useGithubToken`), so the commit fails first with "Author identity
+      # unknown". Its review text is still posted as a PR *comment*, which is
+      # the useful output; the commit failure is not actionable here.
+      # typecheck is the real blocking gate.
       - name: AI Code Review
         id: ai-review
+        continue-on-error: true
         uses: anomalyco/opencode/github@v1.17.8
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
@@ -68,6 +79,10 @@ jobs:
       - name: Check if review found issues
         id: check
         if: always()
+        # Non-blocking: this step only surfaces the verdict; it must not fail the
+        # job. Note it polls /pulls/{n}/reviews, which this action never writes
+        # (it posts an issue comment), so BODY is always empty in practice.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -123,11 +138,12 @@ jobs:
           echo "❌ TypeScript compilation failed"
           exit 1
 
-      - name: Review must complete
+      # Informational only — the AI review is deliberately non-blocking (see the
+      # note on the AI Code Review step). Surface its outcome, never fail on it.
+      - name: Report review outcome
         if: needs.review.result == 'failure'
         run: |
-          echo "❌ AI review job failed — check logs (could be bugs found or API error)"
-          exit 1
+          echo "::warning::AI review job did not complete — see its logs. Not blocking."
 
       - name: All clear
         run: echo "✅ All checks passed"
