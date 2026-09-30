@@ -41,6 +41,12 @@ jobs:
       - name: Generate Prisma client
         run: pnpm --filter @transformlit/api run db:generate
 
+      # The API specs import @transformlit/shared, whose types resolve to its
+      # built dist/*.d.ts. dist is not committed, so build the workspace deps
+      # first or ts-jest fails with "Cannot find module '@transformlit/shared'".
+      - name: Build workspace dependencies
+        run: pnpm --filter @transformlit/shared run build
+
       # Generate LCOV coverage for every workspace. `--coverageThreshold='{}'`
       # overrides the jest config's local thresholds: those are a developer
       # guard-rail, while the real bar in CI is the SonarQube quality gate.
