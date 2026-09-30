@@ -19,23 +19,35 @@ export function useChapter(translation: string, book: string, chapter: number) {
     setWords(null);
 
     (async () => {
+      let ch: BibleChapter;
       try {
-        const ch = await getChapter(translation, book, chapter);
-        if (cancelled) return;
-        setChapterData(ch);
-        if (hasWordAnnotations(ch)) {
-          try {
-            const w = await getWords(translation, book, chapter);
-            if (!cancelled) setWords(w);
-          } catch {
-            // Word annotations are optional enrichment — a words.json failure
-            // degrades to "no word study" without erroring the chapter.
-          }
-        }
+        ch = await getChapter(translation, book, chapter);
       } catch {
-        if (!cancelled) setError('Failed to load chapter.');
-      } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setError('Failed to load chapter.');
+          setLoading(false);
+        }
+        return;
+      }
+      if (cancelled) return;
+
+      // Publish the chapter and clear `loading` immediately. Word annotations are
+      // optional enrichment and MUST NOT gate this: the reader renders its verse
+      // DOM only once `loading` is false, and its `#v{n}` deep-link scroll is keyed
+      // off this chapter payload. Awaiting words.json here kept the spinner over an
+      // empty verse tree, so a cold/slow words request made the deep link exhaust
+      // its retry budget and never scroll (it only worked on a later attempt, once
+      // words.json was cached).
+      setChapterData(ch);
+      setLoading(false);
+
+      if (!hasWordAnnotations(ch)) return;
+      try {
+        const w = await getWords(translation, book, chapter);
+        if (!cancelled) setWords(w);
+      } catch {
+        // Word annotations are optional enrichment — degrade to "no word study"
+        // without erroring the chapter.
       }
     })();
 
