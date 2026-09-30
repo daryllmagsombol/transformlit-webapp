@@ -99,7 +99,7 @@ export class UploadsService {
       await container.createIfNotExists();
       const blob = container.getBlockBlobClient(name);
       await blob.uploadData(buffer, {
-        blobHTTPHeaders: { blobContentType: detected! },
+        blobHTTPHeaders: { blobContentType: detected },
       });
       return blob.url;
     }
