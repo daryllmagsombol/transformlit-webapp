@@ -19,6 +19,12 @@ jobs:
           node-version: 22
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      # The API typecheck needs the generated Prisma client. It is not committed
+      # (it lands in node_modules), and `pnpm install` does not run `prisma
+      # generate` — the `prepare` hook was removed in 875f469 because it broke
+      # Docker builds. Generate it explicitly before typechecking.
+      - name: Generate Prisma client
+        run: pnpm --filter @transformlit/api run db:generate
       - run: pnpm typecheck
 
   review:
@@ -46,8 +52,6 @@ jobs:
         with:
           model: opencode/muse-spark-1.3-contributor-free
           use_github_token: true
-          diff_context: 5
-          max_files: 80
           prompt: |
             Review this pull request.
 
