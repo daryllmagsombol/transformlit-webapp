@@ -2,8 +2,16 @@ import { buildSchema, lexicographicSortSchema, printSchema } from 'graphql';
 import { writeFileSync } from 'node:fs';
 import { assertOwnedDisposableDatabaseUrl } from './pwa-disposable-db.js';
 
+const GENERATED_SCHEMA_HEADER = [
+  '# ------------------------------------------------------',
+  '# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)',
+  '# ------------------------------------------------------',
+  '',
+  '',
+].join('\n');
+
 export function deterministicSchemaBytes(schema: Parameters<typeof printSchema>[0]): Buffer {
-  return Buffer.from(`${printSchema(lexicographicSortSchema(schema))}\n`);
+  return Buffer.from(`${GENERATED_SCHEMA_HEADER}${printSchema(lexicographicSortSchema(schema))}`);
 }
 
 export function assertCanonicalSchemaMatches(runtimeSchema: Buffer, canonicalSchema: Buffer): void {
@@ -13,7 +21,13 @@ export function assertCanonicalSchemaMatches(runtimeSchema: Buffer, canonicalSch
     throw new Error('Canonical GraphQL SDL is malformed', { cause: error });
   }
   if (!runtimeSchema.equals(canonicalSchema)) {
-    throw new Error('Canonical GraphQL SDL is stale; run the explicit graphql:schema:export command');
+    const firstDifferentByte = runtimeSchema.findIndex((byte, index) => byte !== canonicalSchema[index]);
+    const mismatchAt = firstDifferentByte >= 0 ? firstDifferentByte : Math.min(runtimeSchema.length, canonicalSchema.length);
+    const runtimeContext = runtimeSchema.toString('utf8', Math.max(0, mismatchAt - 60), mismatchAt + 100);
+    const canonicalContext = canonicalSchema.toString('utf8', Math.max(0, mismatchAt - 60), mismatchAt + 100);
+    throw new Error(
+      `Canonical GraphQL SDL is stale at byte ${mismatchAt}; runtime=${JSON.stringify(runtimeContext)} canonical=${JSON.stringify(canonicalContext)}; run the explicit graphql:schema:export command`,
+    );
   }
 }
 

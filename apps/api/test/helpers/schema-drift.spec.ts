@@ -8,6 +8,11 @@ describe('canonical SDL drift check', () => {
   const canonicalPath = join(__dirname, '../../src/schema.gql');
   const runtimeSchema = deterministicSchemaBytes(buildSchema('type Query { books: [String!]! }'));
 
+  it('reproduces the checked-in canonical banner and deterministic SDL format', () => {
+    const canonical = readFileSync(canonicalPath);
+    expect(deterministicSchemaBytes(buildSchema(canonical.toString('utf8')))).toEqual(canonical);
+  });
+
   it('accepts canonical bytes when they match runtime SDL', () => {
     expect(() => assertCanonicalSchemaMatches(runtimeSchema, runtimeSchema)).not.toThrow();
   });

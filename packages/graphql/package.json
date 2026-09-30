@@ -13,10 +13,9 @@
   },
   "scripts": {
     "graphql:codegen": "graphql-codegen --config codegen.ts",
-    "build": "pnpm graphql:codegen && tsc -p tsconfig.json",
-    "typecheck": "pnpm graphql:codegen && tsc --noEmit -p tsconfig.json",
-    "test": "pnpm run clean && pnpm graphql:codegen && pnpm build:compiled && node --test test/clean-consumer.spec.cjs",
-    "build:compiled": "tsc -p tsconfig.json --incremental false",
+    "build": "pnpm run clean && pnpm graphql:codegen && tsc -p tsconfig.json --incremental false",
+    "typecheck": "pnpm graphql:codegen && tsc --noEmit -p tsconfig.json --incremental false",
+    "test": "pnpm run build && node --test test/clean-consumer.spec.cjs test/turbo-contract.spec.cjs",
     "clean": "rm -rf src/__generated__ dist tsconfig.tsbuildinfo"
   },
   "dependencies": {
