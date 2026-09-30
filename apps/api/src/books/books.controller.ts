@@ -121,7 +121,7 @@ export class BooksController {
   private async authorizePage(bookId: string, page: number, req: Request) {
     const token = (req.cookies as Record<string, string> | undefined)?.[READER_COOKIE_NAME];
     const session = await this.sessions.resolve(token ?? '');
-    if (!session || session.bookId !== bookId) {
+    if (session?.bookId !== bookId) {
       throw new UnauthorizedException('Reading session is missing or expired');
     }
     const book = await this.books.assertCanRead(bookId, session.userId);

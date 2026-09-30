@@ -35,7 +35,8 @@ function isActiveSpan(
   verseNumber: number,
   activeWord: VerseListProps['activeWord'],
 ): boolean {
-  if (!activeWord || activeWord.verse !== verseNumber) return false;
+  if (!activeWord) return false;
+  if (activeWord.verse !== verseNumber) return false;
   const target = activeWord.word;
   return (
     span.word.contentIndex === target.contentIndex &&

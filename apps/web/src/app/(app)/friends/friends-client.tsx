@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { apolloClient } from '../../../lib/apollo-client';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
 import { useAuthStore } from '../../../store';
@@ -17,7 +17,7 @@ import {
 } from '../../../components/ui';
 import { UserProfileSheet } from '../../../components/friends/user-profile-sheet';
 
-const FRIENDS_QUERY = gql`
+const FRIENDS_QUERY: TypedDocumentNode<{ friends: FriendData[] }> = gql`
   query Friends {
     friends {
       id
@@ -30,7 +30,7 @@ const FRIENDS_QUERY = gql`
   }
 `;
 
-const REQUESTS_QUERY = gql`
+const REQUESTS_QUERY: TypedDocumentNode<{ friendRequests: RequestData[] }> = gql`
   query FriendRequests {
     friendRequests {
       id
@@ -67,7 +67,17 @@ const SEND_REQUEST = gql`
   }
 `;
 
-const SUGGESTED_QUERY = gql`
+const SUGGESTED_QUERY: TypedDocumentNode<
+  {
+    suggestedFriends: Array<{
+      id: string;
+      displayName: string;
+      avatarUrl?: string | null;
+      bio?: string | null;
+    }>;
+  },
+  { limit: number }
+> = gql`
   query SuggestedFriends($limit: Int!) {
     suggestedFriends(limit: $limit) {
       id
@@ -123,9 +133,9 @@ export default function FriendsClient() {
   const loadData = useCallback(async () => {
     try {
       const [friendsResult, requestsResult, suggestionsResult] = await Promise.all([
-        apolloClient.query<{ friends: FriendData[] }>({ query: FRIENDS_QUERY }),
-        apolloClient.query<{ friendRequests: RequestData[] }>({ query: REQUESTS_QUERY }),
-        apolloClient.query<{ suggestedFriends: typeof suggestions }>({
+        apolloClient.query({ query: FRIENDS_QUERY }),
+        apolloClient.query({ query: REQUESTS_QUERY }),
+        apolloClient.query({
           query: SUGGESTED_QUERY,
           variables: { limit: 5 },
         }),

@@ -25,6 +25,12 @@ import { staggerContainer, staggerItem } from '../../lib/motion';
 type StaggerTag = 'div' | 'ul' | 'section';
 type StaggerItemTag = 'div' | 'li';
 
+function resolveMotionTag(as: StaggerTag) {
+  if (as === 'ul') return motion.ul;
+  if (as === 'section') return motion.section;
+  return motion.div;
+}
+
 export function Stagger({
   children,
   className,
@@ -47,7 +53,7 @@ export function Stagger({
     );
   }
 
-  const MotionTag = as === 'ul' ? motion.ul : as === 'section' ? motion.section : motion.div;
+  const MotionTag = resolveMotionTag(as);
 
   return (
     <MotionTag

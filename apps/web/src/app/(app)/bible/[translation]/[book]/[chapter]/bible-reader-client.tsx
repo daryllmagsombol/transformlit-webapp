@@ -184,7 +184,8 @@ export default function BibleReaderClient({ translation, book, chapter }: Reader
     if (!data) return;
     if (data.book.id !== book || data.chapter.number !== chapter) return;
     const pending = pendingVerseRef.current;
-    if (pending === null || pending.book !== book || pending.chapter !== chapter) return;
+    if (pending === null) return;
+    if (pending.book !== book || pending.chapter !== chapter) return;
     pendingVerseRef.current = null;
     scrollToVerse(pending.verse);
   }, [data, book, chapter, scrollToVerse]);

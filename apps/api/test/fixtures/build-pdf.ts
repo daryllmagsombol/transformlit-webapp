@@ -25,7 +25,8 @@ export function buildTestPdf(pages: string[]): Buffer {
     const contentId = nextId + 1;
     nextId += 2;
     pageObjIds.push(pageId);
-    const content = `BT /F1 24 Tf 72 ${PAGE_HEIGHT - 100} Td (${escapePdfText(`${text} - page ${index + 1}`)}) Tj ET`;
+    const label = `${text} - page ${index + 1}`;
+    const content = `BT /F1 24 Tf 72 ${PAGE_HEIGHT - 100} Td (${escapePdfText(label)}) Tj ET`;
     objects.push(
       `${pageId} 0 obj << /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Contents ${contentId} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >> endobj\n`,
       `${contentId} 0 obj << /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`,
@@ -39,10 +40,10 @@ export function buildTestPdf(pages: string[]): Buffer {
     `${fontId} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj\n`,
   );
 
-  const ordered = objects.sort((a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10));
+  objects.sort((a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10));
   let body = '%PDF-1.4\n';
   const offsets = new Map<number, number>();
-  for (const object of ordered) {
+  for (const object of objects) {
     const id = Number.parseInt(object, 10);
     offsets.set(id, Buffer.byteLength(body, 'latin1'));
     body += object;

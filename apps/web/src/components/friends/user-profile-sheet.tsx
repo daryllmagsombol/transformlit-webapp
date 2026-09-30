@@ -1,13 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { apolloClient } from '../../lib/apollo-client';
 import { useRouter } from 'next/navigation';
 import { startDirectConversation } from '../../lib/chat-queries';
 import { useToast, UserAvatar, Modal, ConfirmDialog } from '../ui';
 
-const USER_PROFILE_QUERY = gql`
+const USER_PROFILE_QUERY: TypedDocumentNode<UserProfileData, { id: string }> = gql`
   query UserProfile($id: String!) {
     userProfile(id: $id) {
       user {
@@ -33,7 +33,10 @@ const USER_PROFILE_QUERY = gql`
   }
 `;
 
-const FRIENDSHIP_STATUS_QUERY = gql`
+const FRIENDSHIP_STATUS_QUERY: TypedDocumentNode<
+  { friendshipStatus: { id: string; requesterId: string; addresseeId: string; status: string } | null },
+  { otherUserId: string }
+> = gql`
   query FriendshipStatus($otherUserId: String!) {
     friendshipStatus(otherUserId: $otherUserId) {
       id
@@ -118,11 +121,11 @@ export function UserProfileSheet({ userId, open, onClose, currentUserId }: UserP
     setLoading(true);
     try {
       const [{ data }, { data: fsData }] = await Promise.all([
-        apolloClient.query<UserProfileData>({
+        apolloClient.query({
           query: USER_PROFILE_QUERY,
           variables: { id: userId },
         }),
-        apolloClient.query<{ friendshipStatus: typeof friendship }>({
+        apolloClient.query({
           query: FRIENDSHIP_STATUS_QUERY,
           variables: { otherUserId: userId },
         }),

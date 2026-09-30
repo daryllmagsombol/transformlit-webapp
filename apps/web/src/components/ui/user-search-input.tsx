@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { apolloClient } from '../../lib/apollo-client';
 import { UserAvatar } from './user-avatar';
 
-const SEARCH_USERS_QUERY = gql`
+const SEARCH_USERS_QUERY: TypedDocumentNode<{ searchUsers: SearchUser[] }, { query: string }> = gql`
   query SearchUsers($query: String!) {
     searchUsers(query: $query) {
       id
@@ -44,7 +44,7 @@ export function UserSearchInput({ onSelectUser, currentUserId }: UserSearchInput
     }
     setLoading(true);
     try {
-      const { data } = await apolloClient.query<{ searchUsers: SearchUser[] }>({
+      const { data } = await apolloClient.query({
         query: SEARCH_USERS_QUERY,
         variables: { query: q.trim() },
       });

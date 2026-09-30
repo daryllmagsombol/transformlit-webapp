@@ -31,7 +31,7 @@ export function FriendCard({ name, bio, avatarUrl, mutualGroups, onPress, status
         )}
         {mutualGroups !== undefined && mutualGroups > 0 && (
           <span className="inline-block mt-1 px-2 py-0.5 bg-secondary-container/50 text-on-secondary-container text-[10px] font-bold rounded-full uppercase font-micro">
-            {mutualGroups} mutual group{mutualGroups !== 1 ? 's' : ''}
+            {mutualGroups} mutual group{mutualGroups === 1 ? '' : 's'}
           </span>
         )}
       </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { gql } from '@apollo/client';
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { apolloClient } from '../../../lib/apollo-client';
 import { useRouter } from 'next/navigation';
 import type { GraphQLGroup } from '@transformlit/shared';
@@ -12,13 +12,16 @@ import { GROUP_CATEGORIES } from '../../../lib/constants';
 
 // ── GraphQL ─────────────────────────────────────────────────────────────────
 
-const MY_GROUPS_QUERY = gql`
+const MY_GROUPS_QUERY: TypedDocumentNode<{ myGroups: GraphQLGroup[] }> = gql`
   query MyGroups {
     myGroups { id name slug description category coverImageUrl memberCount featured createdAt }
   }
 `;
 
-const DISCOVER_GROUPS_QUERY = gql`
+const DISCOVER_GROUPS_QUERY: TypedDocumentNode<
+  { discoverGroups: GraphQLGroup[] },
+  { category: string | null }
+> = gql`
   query DiscoverGroups($category: GroupCategory) {
     discoverGroups(category: $category) {
       id name slug description category coverImageUrl featured memberCount createdAt
@@ -56,13 +59,12 @@ export default function GroupsClient() {
   const [discoverGroups, setDiscoverGroups] = useState<GraphQLGroup[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [joining, setJoining] = useState<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     try {
       const [myResult, discoverResult] = await Promise.all([
-        apolloClient.query<{ myGroups: GraphQLGroup[] }>({ query: MY_GROUPS_QUERY }),
-        apolloClient.query<{ discoverGroups: GraphQLGroup[] }>({
+        apolloClient.query({ query: MY_GROUPS_QUERY }),
+        apolloClient.query({
           query: DISCOVER_GROUPS_QUERY,
           variables: { category: selectedCategory || null },
         }),
@@ -82,7 +84,6 @@ export default function GroupsClient() {
 
   const handleJoinGroup = useCallback(
     async (groupId: string) => {
-      setJoining((prev) => new Set(prev).add(groupId));
       try {
         await apolloClient.mutate({
           mutation: JOIN_GROUP_MUTATION,
@@ -92,8 +93,6 @@ export default function GroupsClient() {
         loadData();
       } catch {
         addToast('Failed to join group. Please try again.', 'error');
-      } finally {
-        setJoining((prev) => { const next = new Set(prev); next.delete(groupId); return next; });
       }
     },
     [addToast, loadData],
