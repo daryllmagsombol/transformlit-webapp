@@ -30,7 +30,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          # Node 24: the API's pdf.converter suite loads ESM PDF.js, and Jest's
+          # synchronous require(ESM) needs Node >= 24.9. Dev runs Node 24 and
+          # `engines` allows >= 22.13, so this is the version the tests expect.
+          node-version: 24
           cache: 'pnpm'
 
       - name: Install dependencies
