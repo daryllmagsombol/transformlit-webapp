@@ -84,3 +84,22 @@ jobs:
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      # The scanner only reports the overall gate result on failure. Print the
+      # server-side main-branch conditions to make the remaining cause visible
+      # in Actions logs; this is diagnostic-only and must not affect the scan.
+      - name: Report main SonarQube gate conditions
+        if: always()
+        continue-on-error: true
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          response=$(curl --silent --show-error --fail \
+            --user "${SONAR_TOKEN}:" \
+            "${SONAR_HOST_URL}/api/qualitygates/project_status?projectKey=transformlit-webapp&branch=main")
+          echo "$response" | jq -r '
+            .projectStatus as $project |
+            "Main quality gate: \($project.status)",
+            ($project.conditions[] | "\(.status) \(.metricKey): actual=\(.actualValue // "n/a") comparator=\(.comparator) threshold=\(.errorThreshold // "n/a")")
+          '
