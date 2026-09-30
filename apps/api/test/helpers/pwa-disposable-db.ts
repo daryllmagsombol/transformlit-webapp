@@ -1,10 +1,12 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { randomUUID } from 'node:crypto';
 
-export async function startOwnedDisposableDatabase(): Promise<StartedPostgreSqlContainer> {
+export async function startOwnedDisposableDatabase(ownerId: string = randomUUID()): Promise<StartedPostgreSqlContainer> {
   const container = await new PostgreSqlContainer('postgres:15-alpine')
     .withDatabase('testdb')
     .withUsername('test')
     .withPassword('test')
+    .withLabels({ 'transformlit.owner': ownerId })
     .start();
   return container;
 }

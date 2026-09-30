@@ -10,7 +10,8 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createPwaProxy, stripApiPrefix } from './pwa-proxy.js';
-import { assertOwnedMetadata, assertPortAvailable, isSafeDatabaseUrl } from './pwa-process.js';
+import { assertOwnedMetadata, assertPortAvailable, assertSupervisorNonce, assertSupervisorSocketIdentity, isSafeDatabaseUrl, cleanupOwnedResources, assertOwnedArtifactPath, waitForHarnessReady } from './pwa-process.js';
+import { assertTask1AOwnedDatabaseUrl } from './pwa-db.js';
 import { createPwaFixturePlan } from '../helpers/pwa-fixtures.js';
 
 describe('PWA harness safety contract', () => {
@@ -27,11 +28,29 @@ describe('PWA harness safety contract', () => {
     assert.equal(isSafeDatabaseUrl('postgresql://remote.example/testdb'), false);
   });
 
+  it('accepts Task 1A owned localhost URL and rejects a modified URL', () => {
+    const container = { getConnectionUri: () => 'postgresql://test:test@localhost:49152/testdb' };
+    assert.equal(assertTask1AOwnedDatabaseUrl(container.getConnectionUri(), container as never), container.getConnectionUri());
+    assert.throws(() => assertTask1AOwnedDatabaseUrl('postgresql://test:test@localhost:49153/testdb', container as never), /owned/i);
+  });
+
   it('rejects metadata without this harness ownership marker', () => {
     assert.throws(() => assertOwnedMetadata({ owner: 'not-pwa', id: 'x' }), /ownership/i);
     assert.throws(() => assertOwnedMetadata({ owner: 'transformlit-pwa', id: '' }), /ownership/i);
     assert.doesNotThrow(() => assertOwnedMetadata({ owner: 'transformlit-pwa', id: '11111111-1111-4111-8111-111111111111', ports: [], containers: [], images: [], pids: [], artifacts: [], databaseUrl: 'postgresql://pwa:secret@127.0.0.1:49152/testdb' }));
     assert.throws(() => assertOwnedMetadata({ owner: 'transformlit-pwa', id: '11111111-1111-4111-8111-111111111111', ports: [], containers: ['unowned'], images: [], pids: [], artifacts: [], databaseUrl: 'postgresql://pwa:secret@127.0.0.1:49152/testdb' }), /ownership/i);
+  });
+
+  it('authenticates supervisor control requests with the invocation nonce', () => {
+    assert.doesNotThrow(() => assertSupervisorNonce('a'.repeat(64), 'a'.repeat(64)));
+    assert.throws(() => assertSupervisorNonce('b'.repeat(64), 'a'.repeat(64)), /nonce mismatch/i);
+  });
+
+  it('refuses to unlink a supervisor socket when the recorded process identity was reused', () => {
+    const identity = { dev: 1, ino: 2, uid: 501 };
+    assert.doesNotThrow(() => assertSupervisorSocketIdentity({ ...identity, isSocket: true }, identity));
+    assert.throws(() => assertSupervisorSocketIdentity({ dev: 1, ino: 3, uid: 501, isSocket: true }, identity), /identity mismatch/i);
+    assert.throws(() => assertSupervisorSocketIdentity({ ...identity, isSocket: false }, identity), /identity mismatch/i);
   });
 
   it('refuses occupied loopback ports', async () => {
@@ -43,13 +62,72 @@ describe('PWA harness safety contract', () => {
     finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
   });
 
+  it('never removes an unrelated matching container when owner labels mismatch or inspect fails', async () => {
+    const removals: string[] = [];
+    const mismatch = {
+      inspect: async (id: string) => ({ id, labels: { 'transformlit.owner': 'other-owner' } }),
+      remove: async (id: string) => { removals.push(id); },
+    };
+    await assert.rejects(cleanupOwnedResources(['unrelated-prefix-id'], 'owner-1', mismatch), /owned/i);
+    const inspectionFailure = {
+      inspect: async (id: string) => {
+        if (id === 'verified-owned') return { id, labels: { 'transformlit.owner': 'owner-1' } };
+        throw new Error('daemon unavailable');
+      },
+      remove: async (id: string) => { removals.push(id); },
+    };
+    await assert.rejects(cleanupOwnedResources(['verified-owned', 'unknown-id'], 'owner-1', inspectionFailure), /daemon unavailable/);
+    await cleanupOwnedResources(['confirmed-gone'], 'owner-1', {
+      inspect: async () => { throw Object.assign(new Error('missing'), { code: 'NOT_FOUND' }); },
+      remove: async (id) => { removals.push(id); },
+    });
+    assert.deepEqual(removals, []);
+  });
+
+  it('accepts only artifact paths within the exact owner directory and refuses failed readiness', async () => {
+    assert.equal(assertOwnedArtifactPath('/repo/.pwa-harness', 'owner-1', '/repo/.pwa-harness/owner-1/tls.pem'), '/repo/.pwa-harness/owner-1/tls.pem');
+    assert.throws(() => assertOwnedArtifactPath('/repo/.pwa-harness', 'owner-1', '/repo/.pwa-harness/owner-10/secret'), /owner directory/i);
+    await assert.rejects(waitForHarnessReady({ api: async () => true, web: async () => false, proxy: async () => true }, 1), /web.*not ready/i);
+  });
+
   it('describes two accounts and version/publication fixture setup without database access', () => {
     const plan = createPwaFixturePlan('owner-test');
     assert.equal(plan.accounts.length, 2);
+    assert.equal(plan.credentials.length, 2);
+    assert.ok(plan.credentials.every(({ password }) => password.length >= 32));
     assert.ok(plan.books.readable.pages.length > 1);
     assert.equal(plan.books.restricted.restricted, true);
     assert.deepEqual(plan.books.readable.contentVersions, [1, 2]);
-    assert.equal(plan.books.publicationChangeDuringDownload, true);
+    assert.equal(plan.books.publicationChangeDuringDownload.hook, 'pwa-harness.ts publish-v2');
+  });
+
+  it('keeps private harness state out of Docker contexts and uses pinned TLS profile configuration', () => {
+    const dockerignore = readFileSync('../../.dockerignore', 'utf8');
+    const playwrightConfig = readFileSync('../../apps/web/playwright.pwa.config.ts', 'utf8');
+    const playwrightFixture = readFileSync('../../apps/web/e2e/pwa-fixtures.ts', 'utf8');
+    const smoke = readFileSync('../../apps/web/e2e/pwa-smoke.pwa.spec.ts', 'utf8');
+    assert.match(dockerignore, /^\/\.pwa-harness\/$/m);
+    assert.match(playwrightFixture, /launchPersistentContext/);
+    assert.match(playwrightFixture, /ignore-certificate-errors-spki-list/);
+    assert.doesNotMatch(playwrightFixture, /--ignore-certificate-errors(?!-spki-list)/);
+    assert.doesNotMatch(playwrightFixture, /--user-data-dir/);
+    assert.match(smoke, /globalThis\.isSecureContext/);
+    assert.match(smoke, /page\.evaluate\(async \(\) =>/);
+    const harness = readFileSync('test/scripts/pwa-harness.ts', 'utf8');
+    const disposableDb = readFileSync('test/helpers/pwa-disposable-db.ts', 'utf8');
+    const fixtureSeeder = readFileSync('test/helpers/pwa-fixtures.ts', 'utf8');
+    const webFixtures = readFileSync('../../apps/web/e2e/pwa-fixtures.ts', 'utf8');
+    assert.match(harness, /JWT_SECRET=\$\{jwtSecret\}/);
+    assert.match(harness, /randomBytes\(48\)/);
+    assert.match(disposableDb, /withLabels\(\{ 'transformlit\.owner': ownerId \}\)/);
+    assert.match(harness, /transformlit\.owner=\$\{id\}/);
+    assert.match(harness, /mode: 0o600/);
+    assert.match(fixtureSeeder, /argon2\.hash/);
+    assert.match(fixtureSeeder, /new LocalStorageAdapter\(storageDir\)/);
+    assert.match(fixtureSeeder, /conversionStatus: 'READY'/);
+    assert.match(fixtureSeeder, /publishPwaVersion2/);
+    assert.match(webFixtures, /PWA_FIXTURE_CREDENTIALS/);
+    assert.match(webFixtures, /\/api\/auth\/login/);
   });
 });
 

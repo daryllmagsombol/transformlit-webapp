@@ -1,4 +1,9 @@
 .git
+/.pwa-harness/
+/.worktrees/
+**/pwa-profile/
+**/pwa-artifacts/
+**/*.pem
 node_modules
 dist
 .next

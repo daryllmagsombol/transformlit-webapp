@@ -1,4 +1,1 @@
-import { seedPwaFixtures } from '../helpers/pwa-fixtures.js';
-
-export { createPwaFixturePlan } from '../helpers/pwa-fixtures.js';
-export { seedPwaFixtures };
+export { createPwaFixturePlan, seedPwaFixtures, publishPwaVersion2 } from '../helpers/pwa-fixtures.js';
