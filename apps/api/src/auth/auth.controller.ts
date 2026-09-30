@@ -16,6 +16,21 @@ export const OAUTH_STATE_COOKIE_NAME = 'transformlit_oauth_state';
 export const OAUTH_STATE_COOKIE_MAX_AGE = 10 * 60 * 1000; // 10 minutes
 export const OAUTH_ERROR_PARAM = 'error=oauth_failed';
 
+/**
+ * Strip trailing '/' characters from a URL origin.
+ *
+ * A regex such as `/\/+$/` is vulnerable to super-linear backtracking on long
+ * runs of slashes (Sonar S5852). A reverse scan is linear in the input length
+ * and has no backtracking.
+ */
+export function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 export interface AuthResponse {
   accessToken: string;
   user: {
@@ -190,7 +205,7 @@ export class AuthController {
       // Misdirected deployment — refuse rather than redirect to an unknown host.
       throw new Error('FRONTEND_URL is not in the allowed redirect list');
     }
-    return frontend.replace(/\/+$/, '');
+    return stripTrailingSlashes(frontend);
   }
 
   private clearOAuthStateCookie(res: Response) {
