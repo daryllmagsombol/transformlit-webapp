@@ -48,6 +48,7 @@ apps/api/prisma/migrations/*/generated/
 coverage/
 playwright-report/
 test-results/
+/.pwa-harness/
 
 # Docker
 *.log
