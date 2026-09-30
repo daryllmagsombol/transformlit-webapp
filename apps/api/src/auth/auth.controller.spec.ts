@@ -4,7 +4,7 @@ import {
   UnauthorizedException,
   BadRequestException,
 } from '@nestjs/common';
-import { AuthController, REFRESH_COOKIE_NAME } from './auth.controller';
+import { AuthController, REFRESH_COOKIE_NAME, stripTrailingSlashes } from './auth.controller';
 import { AuthService } from './auth.service';
 import type { Request, Response } from 'express';
 
@@ -169,5 +169,30 @@ describe('AuthController (REST httpOnly cookie flows)', () => {
       );
       expect(result).toEqual({});
     });
+  });
+});
+
+describe('stripTrailingSlashes', () => {
+  it('removes all trailing slashes', () => {
+    expect(stripTrailingSlashes('https://example.com/')).toBe('https://example.com');
+    expect(stripTrailingSlashes('https://example.com///')).toBe('https://example.com');
+  });
+
+  it('leaves values without a trailing slash untouched', () => {
+    expect(stripTrailingSlashes('https://example.com')).toBe('https://example.com');
+    expect(stripTrailingSlashes('')).toBe('');
+  });
+
+  it('does not remove slashes from the middle of the value', () => {
+    expect(stripTrailingSlashes('https://example.com/path//')).toBe('https://example.com/path');
+  });
+
+  it('is linear on a long run of slashes (no catastrophic backtracking)', () => {
+    // Pathological input for a backtracking /\/+$/: a long slash run that is NOT
+    // at the end, so the anchors force a re-scan from every start position.
+    const input = `https://example.com${'/'.repeat(100_000)}x`;
+    const start = Date.now();
+    expect(stripTrailingSlashes(input)).toBe(input);
+    expect(Date.now() - start).toBeLessThan(1000);
   });
 });
