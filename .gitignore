@@ -54,5 +54,6 @@ test-results/
 Thumbs.db
 *.tsbuildinfo
 
-# Local Uploads
-uploads/
+# Local Uploads (repo-root only; `uploads/` would also match
+# apps/api/src/uploads/ and hide real source from tools that honor .gitignore)
+/uploads/

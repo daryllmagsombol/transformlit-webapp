@@ -30,11 +30,48 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          # Node 24: the API's pdf.converter suite loads ESM PDF.js, and Jest's
+          # synchronous require(ESM) needs Node >= 24.9. Dev runs Node 24 and
+          # `engines` allows >= 22.13, so this is the version the tests expect.
+          node-version: 24
           cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # The API tests import the generated Prisma client; it is not committed and
+      # `pnpm install` does not run `prisma generate`.
+      - name: Generate Prisma client
+        run: pnpm --filter @transformlit/api run db:generate
+
+      # The API specs import @transformlit/shared, whose types resolve to its
+      # built dist/*.d.ts. dist is not committed, so build the workspace deps
+      # first or ts-jest fails with "Cannot find module '@transformlit/shared'".
+      - name: Build workspace dependencies
+        run: pnpm --filter @transformlit/shared run build
+
+      # Generate LCOV coverage for every workspace. `--coverageThreshold='{}'`
+      # overrides the jest config's local thresholds: those are a developer
+      # guard-rail, while the real bar in CI is the SonarQube quality gate.
+      - name: Generate coverage
+        run: |
+          pnpm --filter web exec jest --coverage --coverageReporters=lcov --coverageThreshold='{}'
+          NODE_OPTIONS=--experimental-vm-modules pnpm --filter @transformlit/api exec jest --coverage --coverageReporters=lcov --coverageThreshold='{}'
+          pnpm --filter @transformlit/shared exec jest --coverage --coverageReporters=lcov --coverageThreshold='{}' --passWithNoTests
+
+      # Jest writes `SF:` entries relative to each project's rootDir. Rewrite
+      # them to repository-relative paths so SonarQube can resolve them against
+      # sonar.projectBaseDir (otherwise every path is unresolved -> 0% coverage).
+      - name: Rewrite LCOV paths to repository-relative
+        run: |
+          sed -i 's|^SF:src/|SF:apps/web/src/|' apps/web/coverage/lcov.info
+          sed -i 's|^SF:src/|SF:apps/api/src/|' apps/api/coverage/lcov.info
+          if [ -f packages/shared/coverage/lcov.info ]; then
+            sed -i 's|^SF:src/|SF:packages/shared/src/|' packages/shared/coverage/lcov.info
+          fi
+          echo "Sample rewritten paths:"
+          grep '^SF:' apps/web/coverage/lcov.info | head -3
+          grep '^SF:' apps/api/coverage/lcov.info | head -3
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # v7
