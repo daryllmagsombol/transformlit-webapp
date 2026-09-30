@@ -1,0 +1,129 @@
+name: PR Checks
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  review:
+    if: github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+      issues: write
+    outputs:
+      has_bugs: ${{ steps.check.outputs.has_bugs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: AI Code Review
+        id: ai-review
+        uses: anomalyco/opencode/github@v1.17.8
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: opencode/muse-spark-1.3-contributor-free
+          use_github_token: true
+          diff_context: 5
+          max_files: 80
+          prompt: |
+            Review this pull request.
+
+            Read the diff and changed files. Check for:
+            - Bugs and logic errors
+            - Security vulnerabilities
+            - Missing error handling
+
+            Be conservative — only flag things you're 90%+ sure about.
+            Skip style, formatting, and naming nits.
+            If the code looks good, say LGTM.
+            Write findings as a PR review with file:line references.
+            Add the model's name at the end of your review for traceability.
+      - name: Check if review found issues
+        id: check
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Poll for the review — it may take a moment to appear via GitHub API
+          for i in $(seq 1 6); do
+            sleep 5
+            REVIEW=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+              --jq 'sort_by(.submitted_at) | last(.[])' 2>/dev/null || echo '{}')
+            STATE=$(echo "$REVIEW" | jq -r '.state // "PENDING"')
+            BODY=$(echo "$REVIEW" | jq -r '.body // ""')
+
+            # Exit loop once we have a real review (not pending/empty)
+            if [ "$STATE" != "PENDING" ] && [ -n "$BODY" ]; then
+              break
+            fi
+            echo "Waiting for review to post... (attempt ${i}/6)"
+          done
+
+          echo "Review state: ${STATE}"
+
+          if [ "$STATE" = "APPROVED" ]; then
+            echo "Review approved — no bugs"
+            echo "has_bugs=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Check for patterns that indicate actionable problems
+          if echo "$BODY" | grep -qiE '\b(bug|vulnerab|exploit|bypass|incorrect|wrong|broken|memory leak|severity)\b'; then
+            echo "⚠️  Review found bugs/security issues"
+            echo "has_bugs=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          if echo "$BODY" | grep -qiE '\b(must fix|needs (work|fix|to be)|should not merge|missing error)\b'; then
+            echo "⚠️  Review flagged items needing fixes"
+            echo "has_bugs=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "Review posted — no definitive bugs detected"
+          echo "has_bugs=false" >> "$GITHUB_OUTPUT"
+
+  gate:
+    needs: [typecheck, review]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Typecheck must pass
+        if: needs.typecheck.result != 'success' && needs.typecheck.result != 'skipped'
+        run: |
+          echo "❌ TypeScript compilation failed"
+          exit 1
+
+      - name: Review must complete
+        if: needs.review.result == 'failure'
+        run: |
+          echo "❌ AI review job failed — check logs (could be bugs found or API error)"
+          exit 1
+
+      - name: All clear
+        run: echo "✅ All checks passed"

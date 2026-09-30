@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "graphql:codegen": "graphql-codegen --config codegen.ts",
+    "typecheck": "tsc --noEmit",
     "clean": "rm -rf __generated__"
   },
   "devDependencies": {
