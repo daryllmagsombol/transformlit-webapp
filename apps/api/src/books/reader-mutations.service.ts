@@ -1,9 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { BooksService } from './books.service.js';
-import { UpgradeRequiredError } from './reader-mutation.errors.js';
 import {
   ConflictReason,
   OperationKind,
@@ -73,6 +72,10 @@ const ENVELOPE_FIELDS = [
   'note',
 ] as const;
 
+/** Extra attempts to observe a concurrently-committed winner receipt. */
+const REPLAY_READ_ATTEMPTS = 3;
+const REPLAY_BACKOFF_MS = 5;
+
 interface NormalizedAnchor {
   version: number;
   page: number;
@@ -99,6 +102,14 @@ interface NormalizedOperation {
   note: string | null;
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
+function toJsonOrDbNull(value: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  return value === null || value === undefined ? Prisma.DbNull : (value as Prisma.InputJsonValue);
+}
+
 @Injectable()
 export class ReaderMutationsService {
   constructor(
@@ -107,57 +118,100 @@ export class ReaderMutationsService {
   ) {}
 
   /**
-   * Legacy reader writes can never carry a trustworthy revision/anchor/version,
-   * so they are rejected instead of being guessed onto current content. This is
-   * the single choke point routed through by the legacy BooksService methods;
-   * it never mutates and never records a receipt.
+   * Replay-safe entry point for every queued reader operation.
+   *
+   * The mutation, any conflict copy, and the dedup receipt commit in one
+   * transaction. If a concurrent transaction already claimed the receipt (or the
+   * entity's unique client identity), our transaction is aborted by the unique
+   * violation, and we re-read the winner's durable receipt and return its stored
+   * logical result instead of committing a divergent mutation.
    */
-  rejectLegacyMutation(kind: string): never {
-    throw new UpgradeRequiredError(kind);
-  }
-
-  /** Replay-safe entry point for every queued reader operation. */
   async applyOperation(subject: string, rawInput: ReaderOperationInput): Promise<ReaderOperationOutcome> {
     const input = this.validateOperation(rawInput);
     const payloadHash = this.hashPayload(input);
 
-    return this.prisma.$transaction(async (tx) => {
-      const prior = await tx.readerOperationReceipt.findUnique({
+    try {
+      return await this.prisma.$transaction((tx) => this.execute(tx, subject, input, payloadHash));
+    } catch (error) {
+      const replay = await this.replayAfterConflict(subject, input, payloadHash, error);
+      if (replay) return replay;
+      throw error;
+    }
+  }
+
+  private async execute(
+    tx: Prisma.TransactionClient,
+    subject: string,
+    input: NormalizedOperation,
+    payloadHash: string,
+  ): Promise<ReaderOperationOutcome> {
+    const prior = await tx.readerOperationReceipt.findUnique({
+      where: { subject_operationId: { subject, operationId: input.operationId } },
+    });
+    if (prior) return this.replayOutcome(input.operationId, prior.payloadHash, payloadHash, prior.result);
+
+    const access = await this.resolveAccess(tx, input.bookId, subject);
+    if (!access.allowed) {
+      // Terminal until state changes: intentionally NOT receipted, so a later
+      // replay after access/version state changes is re-evaluated rather than
+      // frozen (see docs/superpowers/specs/2026-10-01-pwa-contracts.md).
+      return { operationId: input.operationId, result: { kind: 'ACCESS_DENIED', resourceId: input.bookId, reason: access.reason } };
+    }
+    if (!access.supportedContentVersions.includes(input.contentVersion)) {
+      return {
+        operationId: input.operationId,
+        result: {
+          kind: 'INCOMPATIBLE_VERSION',
+          requestedContentVersion: input.contentVersion,
+          supportedContentVersions: access.supportedContentVersions,
+        },
+      };
+    }
+
+    const receiptId = randomUUID();
+    const result = await this.dispatch(tx, subject, input, receiptId);
+    if (result.kind === 'APPLIED' || result.kind === 'CONFLICT') {
+      await tx.readerOperationReceipt.create({
+        data: { id: receiptId, subject, operationId: input.operationId, payloadHash, result: result as unknown as Prisma.InputJsonValue },
+      });
+    }
+    return { operationId: input.operationId, result };
+  }
+
+  /**
+   * After a unique violation rolled back our transaction, adopt the winner's
+   * durable result. Returns null only when the violation was not a dedup race
+   * we can reconcile, letting the caller surface it.
+   */
+  private async replayAfterConflict(
+    subject: string,
+    input: NormalizedOperation,
+    payloadHash: string,
+    error: unknown,
+  ): Promise<ReaderOperationOutcome | null> {
+    if (!isUniqueViolation(error)) return null;
+    for (let attempt = 0; attempt < REPLAY_READ_ATTEMPTS; attempt += 1) {
+      const winner = await this.prisma.readerOperationReceipt.findUnique({
         where: { subject_operationId: { subject, operationId: input.operationId } },
       });
-      if (prior) {
-        if (prior.payloadHash !== payloadHash) {
-          throw new BadRequestException('operationId was already used with a different payload');
-        }
-        return { operationId: input.operationId, result: prior.result as OperationResultPayload };
-      }
+      if (winner) return this.replayOutcome(input.operationId, winner.payloadHash, payloadHash, winner.result);
+      await new Promise((resolve) => setTimeout(resolve, REPLAY_BACKOFF_MS));
+    }
+    // A unique violation we cannot map to a receipt is a genuine concurrent
+    // entity conflict, not an opaque 500: report it as a retryable conflict.
+    throw new ConflictException('Concurrent operation in progress for this operationId; retry');
+  }
 
-      const access = await this.resolveAccess(tx, input.bookId, subject);
-      if (!access.allowed) {
-        return { operationId: input.operationId, result: { kind: 'ACCESS_DENIED', resourceId: input.bookId, reason: access.reason } };
-      }
-      if (!access.supportedContentVersions.includes(input.contentVersion)) {
-        return {
-          operationId: input.operationId,
-          result: {
-            kind: 'INCOMPATIBLE_VERSION',
-            requestedContentVersion: input.contentVersion,
-            supportedContentVersions: access.supportedContentVersions,
-          },
-        };
-      }
-
-      const receiptId = randomUUID();
-      const result = await this.dispatch(tx, subject, input, receiptId);
-      // Only applied/conflict outcomes are durable: access/version outcomes are
-      // terminal only until state changes, so they must be re-evaluated on a
-      // replay rather than frozen by a receipt. The mutation, any conflict copy,
-      // and the receipt commit in this one transaction.
-      if (result.kind === 'APPLIED' || result.kind === 'CONFLICT') {
-        await this.recordReceipt(tx, receiptId, subject, input.operationId, payloadHash, result);
-      }
-      return { operationId: input.operationId, result };
-    });
+  private replayOutcome(
+    operationId: string,
+    storedHash: string,
+    payloadHash: string,
+    storedResult: unknown,
+  ): ReaderOperationOutcome {
+    if (storedHash !== payloadHash) {
+      throw new BadRequestException('operationId was already used with a different payload');
+    }
+    return { operationId, result: storedResult as OperationResultPayload };
   }
 
   private async resolveAccess(
@@ -177,34 +231,6 @@ export class ReaderMutationsService {
     const supported = new Set<number>(versions.map((row) => row.contentVersion));
     supported.add(book.contentVersion);
     return { allowed: true, reason: '', supportedContentVersions: [...supported].sort((a, b) => a - b) };
-  }
-
-  private async recordReceipt(
-    tx: Prisma.TransactionClient,
-    receiptId: string,
-    subject: string,
-    operationId: string,
-    payloadHash: string,
-    result: OperationResultPayload,
-  ): Promise<string> {
-    try {
-      const receipt = await tx.readerOperationReceipt.create({
-        data: { id: receiptId, subject, operationId, payloadHash, result: result as unknown as Prisma.InputJsonValue },
-      });
-      return receipt.id;
-    } catch (error) {
-      // A concurrent identical operation won the unique insert; return its result.
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        const existing = await tx.readerOperationReceipt.findUnique({
-          where: { subject_operationId: { subject, operationId } },
-        });
-        if (existing && existing.payloadHash !== payloadHash) {
-          throw new BadRequestException('operationId was already used with a different payload');
-        }
-        if (existing) return existing.id;
-      }
-      throw error;
-    }
   }
 
   private async dispatch(
@@ -239,43 +265,44 @@ export class ReaderMutationsService {
     input: NormalizedOperation,
     receiptId: string,
   ): Promise<OperationResultPayload> {
+    const baseRevision = input.baseRevision as number;
     const existing = await tx.bookProgress.findUnique({
       where: { userId_bookId: { userId: subject, bookId: input.bookId } },
     });
-    const baseRevision = input.baseRevision as number;
-    const currentRevision = existing?.revision ?? 0;
 
-    if (baseRevision !== currentRevision) {
-      return this.conflict(
-        subject,
-        input.bookId,
-        currentRevision,
-        existing ? this.progressValue(existing) : this.emptyProgressValue(input),
-        null,
-      );
+    if (!existing) {
+      if (baseRevision !== 0) {
+        return this.conflict(input.bookId, 0, this.emptyProgressValue(input), null);
+      }
+      // Conditional create: a concurrent create loses the (userId, bookId)
+      // unique constraint and is reconciled through the receipt replay path.
+      const created = await tx.bookProgress.create({
+        data: { userId: subject, bookId: input.bookId, currentPage: input.currentPage as number, scrollY: input.scrollY, revision: 1 },
+      });
+      return { kind: 'APPLIED', entityId: created.id, revision: created.revision, receiptId };
     }
 
-    const updated = existing
-      ? await tx.bookProgress.update({
-          where: { userId_bookId: { userId: subject, bookId: input.bookId } },
-          data: {
-            currentPage: input.currentPage as number,
-            scrollY: input.scrollY,
-            lastReadAt: new Date(),
-            revision: currentRevision + 1,
-          },
-        })
-      : await tx.bookProgress.create({
-          data: {
-            userId: subject,
-            bookId: input.bookId,
-            currentPage: input.currentPage as number,
-            scrollY: input.scrollY,
-            revision: 1,
-          },
-        });
+    if (existing.revision !== baseRevision) {
+      return this.conflict(input.bookId, existing.revision, this.progressValue(existing), null);
+    }
 
-    return { kind: 'APPLIED', entityId: updated.id, revision: updated.revision, receiptId };
+    // DB-conditional write: only advances if the revision is still baseRevision.
+    const result = await tx.bookProgress.updateMany({
+      where: { id: existing.id, userId: subject, revision: baseRevision },
+      data: { currentPage: input.currentPage as number, scrollY: input.scrollY, lastReadAt: new Date(), revision: { increment: 1 } },
+    });
+    if (result.count === 0) return this.staleProgressConflict(tx, subject, input);
+
+    return { kind: 'APPLIED', entityId: existing.id, revision: baseRevision + 1, receiptId };
+  }
+
+  private async staleProgressConflict(
+    tx: Prisma.TransactionClient,
+    subject: string,
+    input: NormalizedOperation,
+  ): Promise<OperationResultPayload> {
+    const fresh = await tx.bookProgress.findUnique({ where: { userId_bookId: { userId: subject, bookId: input.bookId } } });
+    return this.conflict(input.bookId, fresh?.revision ?? 0, fresh ? this.progressValue(fresh) : this.emptyProgressValue(input), null);
   }
 
   // ── Bookmarks ─────────────────────────────────────────────────────────────
@@ -290,18 +317,17 @@ export class ReaderMutationsService {
     const existing = await tx.bookmark.findUnique({
       where: { userId_clientEntityId: { userId: subject, clientEntityId } },
     });
-    if (existing && existing.deletedAt) {
+    if (existing?.deletedAt) {
       // A tombstoned identity can never be resurrected by a delayed add/retry.
-      return this.conflict(
-        subject,
-        input.bookId,
-        existing.revision,
-        this.bookmarkValue(existing),
-        null,
-      );
+      return this.conflict(input.bookId, existing.revision, this.bookmarkValue(existing), null);
     }
     if (existing) {
-      return { kind: 'APPLIED', entityId: existing.id, revision: existing.revision, receiptId };
+      if (this.bookmarkMatches(existing, input)) {
+        return { kind: 'APPLIED', entityId: existing.id, revision: existing.revision, receiptId };
+      }
+      // Same client identity with different content is a real conflict, not a
+      // silent overwrite; the existing row is the server value.
+      return this.conflict(input.bookId, existing.revision, this.bookmarkValue(existing), null);
     }
 
     const created = await tx.bookmark.create({
@@ -312,7 +338,7 @@ export class ReaderMutationsService {
         page: input.page as number,
         label: input.label,
         color: input.color,
-        anchor: (input.anchor as unknown as Prisma.InputJsonValue) ?? undefined,
+        anchor: toJsonOrDbNull(input.anchor),
         contentVersion: input.contentVersion,
         revision: 1,
       },
@@ -327,24 +353,27 @@ export class ReaderMutationsService {
     receiptId: string,
   ): Promise<OperationResultPayload> {
     const entityId = input.entityId as string;
-    const existing = await tx.bookmark.findFirst({ where: { id: entityId, userId: subject } });
+    // Scope to the declared book so a stale/cross-book op cannot touch it.
+    const existing = await tx.bookmark.findFirst({ where: { id: entityId, userId: subject, bookId: input.bookId } });
     if (!existing) {
-      return { kind: 'ACCESS_DENIED', resourceId: entityId, reason: 'Bookmark not found for this account' };
+      return { kind: 'ACCESS_DENIED', resourceId: entityId, reason: 'Bookmark not found for this account and book' };
     }
-    const baseRevision = input.baseRevision as number;
     if (existing.deletedAt) {
       return { kind: 'APPLIED', entityId: existing.id, revision: existing.revision, receiptId };
     }
+    const baseRevision = input.baseRevision as number;
     if (existing.revision !== baseRevision) {
-      return this.conflict(subject, input.bookId, existing.revision, this.bookmarkValue(existing), null);
+      return this.conflict(input.bookId, existing.revision, this.bookmarkValue(existing), null);
     }
 
-    const updated = await tx.bookmark.update({
-      where: { id: existing.id },
-      data: { deletedAt: new Date(), revision: existing.revision + 1 },
+    const result = await tx.bookmark.updateMany({
+      where: { id: existing.id, userId: subject, bookId: input.bookId, revision: baseRevision },
+      data: { deletedAt: new Date(), revision: { increment: 1 } },
     });
-    await this.upsertTombstone(tx, subject, existing.id, 'BOOKMARK', updated.revision);
-    return { kind: 'APPLIED', entityId: updated.id, revision: updated.revision, receiptId };
+    if (result.count === 0) return this.staleEntityConflict(tx, 'bookmark', input, existing.id, existing);
+
+    await this.upsertTombstone(tx, subject, existing.id, 'BOOKMARK', baseRevision + 1);
+    return { kind: 'APPLIED', entityId: existing.id, revision: baseRevision + 1, receiptId };
   }
 
   // ── Annotations (highlights) ──────────────────────────────────────────────
@@ -359,11 +388,14 @@ export class ReaderMutationsService {
     const existing = await tx.highlight.findUnique({
       where: { userId_clientEntityId: { userId: subject, clientEntityId } },
     });
-    if (existing && existing.deletedAt) {
-      return this.conflict(subject, input.bookId, existing.revision, this.highlightValue(existing), null);
+    if (existing?.deletedAt) {
+      return this.conflict(input.bookId, existing.revision, this.highlightValue(existing), null);
     }
     if (existing) {
-      return { kind: 'APPLIED', entityId: existing.id, revision: existing.revision, receiptId };
+      if (this.highlightMatches(existing, input)) {
+        return { kind: 'APPLIED', entityId: existing.id, revision: existing.revision, receiptId };
+      }
+      return this.conflict(input.bookId, existing.revision, this.highlightValue(existing), null);
     }
 
     const created = await tx.highlight.create({
@@ -375,7 +407,7 @@ export class ReaderMutationsService {
         text: input.text as string,
         note: input.note,
         color: input.color,
-        anchor: input.anchor as unknown as Prisma.InputJsonValue,
+        anchor: toJsonOrDbNull(input.anchor),
         contentVersion: input.contentVersion,
         revision: 1,
       },
@@ -393,35 +425,36 @@ export class ReaderMutationsService {
       return this.updateConflictCopy(tx, subject, input, receiptId);
     }
     const entityId = input.entityId as string;
-    const existing = await tx.highlight.findFirst({ where: { id: entityId, userId: subject } });
+    const existing = await tx.highlight.findFirst({ where: { id: entityId, userId: subject, bookId: input.bookId } });
     if (!existing) {
-      return { kind: 'ACCESS_DENIED', resourceId: entityId, reason: 'Annotation not found for this account' };
+      return { kind: 'ACCESS_DENIED', resourceId: entityId, reason: 'Annotation not found for this account and book' };
     }
     const baseRevision = input.baseRevision as number;
 
     if (existing.deletedAt) {
-      // Edit-after-delete: keep the deletion history AND the attempted edit.
-      const copy = await this.createConflictCopy(tx, subject, input, entityId, ConflictReason.DELETE_VS_EDIT);
-      return this.conflict(subject, input.bookId, existing.revision, this.highlightValue(existing), copy);
+      // Edit-after-delete: keep deletion history AND the attempted edit.
+      const copy = await this.createConflictCopy(tx, subject, input, existing.id, input.bookId, ConflictReason.DELETE_VS_EDIT, this.editFields(input));
+      return this.conflict(input.bookId, existing.revision, this.highlightValue(existing), copy);
     }
     if (existing.revision !== baseRevision) {
-      // Stale edit: preserve server state and the offline edit as a conflict copy.
-      const copy = await this.createConflictCopy(tx, subject, input, entityId, ConflictReason.STALE_REVISION);
-      return this.conflict(subject, input.bookId, existing.revision, this.highlightValue(existing), copy);
+      const copy = await this.createConflictCopy(tx, subject, input, existing.id, input.bookId, ConflictReason.STALE_REVISION, this.editFields(input));
+      return this.conflict(input.bookId, existing.revision, this.highlightValue(existing), copy);
     }
 
-    const updated = await tx.highlight.update({
-      where: { id: existing.id },
+    const result = await tx.highlight.updateMany({
+      where: { id: existing.id, userId: subject, bookId: input.bookId, revision: baseRevision },
       data: {
         page: input.page as number,
         text: input.text as string,
         note: input.note,
         color: input.color,
-        anchor: input.anchor as unknown as Prisma.InputJsonValue,
-        revision: existing.revision + 1,
+        anchor: toJsonOrDbNull(input.anchor),
+        revision: { increment: 1 },
       },
     });
-    return { kind: 'APPLIED', entityId: updated.id, revision: updated.revision, receiptId };
+    if (result.count === 0) return this.staleEntityConflict(tx, 'highlight', input, existing.id, existing);
+
+    return { kind: 'APPLIED', entityId: existing.id, revision: baseRevision + 1, receiptId };
   }
 
   private async updateConflictCopy(
@@ -431,28 +464,34 @@ export class ReaderMutationsService {
     receiptId: string,
   ): Promise<OperationResultPayload> {
     const entityId = input.entityId as string;
-    const existing = await tx.conflictCopy.findFirst({ where: { id: entityId, subject } });
+    const existing = await tx.conflictCopy.findFirst({ where: { id: entityId, subject, bookId: input.bookId } });
     if (!existing) {
-      return { kind: 'ACCESS_DENIED', resourceId: entityId, reason: 'Conflict copy not found for this account' };
+      return { kind: 'ACCESS_DENIED', resourceId: entityId, reason: 'Conflict copy not found for this account and book' };
     }
     const baseRevision = input.baseRevision as number;
+    const sourceEntityId = existing.sourceEntityId ?? existing.id;
     if (existing.revision !== baseRevision) {
-      const copy = await this.createConflictCopy(tx, subject, input, existing.sourceEntityId ?? entityId, ConflictReason.STALE_REVISION);
-      return this.conflict(subject, input.bookId, existing.revision, this.conflictCopyValue(existing), copy);
+      const copy = await this.createConflictCopy(tx, subject, input, sourceEntityId, existing.bookId, ConflictReason.STALE_REVISION, this.editFields(input));
+      return this.conflict(existing.bookId, existing.revision, this.conflictCopyValue(existing), copy);
     }
 
-    const updated = await tx.conflictCopy.update({
-      where: { id: existing.id },
+    const result = await tx.conflictCopy.updateMany({
+      where: { id: existing.id, subject, bookId: existing.bookId, revision: baseRevision },
       data: {
         page: input.page as number,
         text: input.text as string,
         note: input.note,
         color: input.color,
-        anchor: input.anchor as unknown as Prisma.InputJsonValue,
-        revision: existing.revision + 1,
+        anchor: toJsonOrDbNull(input.anchor),
+        revision: { increment: 1 },
       },
     });
-    return { kind: 'APPLIED', entityId: updated.id, revision: updated.revision, receiptId };
+    if (result.count === 0) {
+      const fresh = await tx.conflictCopy.findFirst({ where: { id: existing.id, subject, bookId: existing.bookId } });
+      return this.conflict(existing.bookId, fresh?.revision ?? existing.revision, this.conflictCopyValue(fresh ?? existing), null);
+    }
+
+    return { kind: 'APPLIED', entityId: existing.id, revision: baseRevision + 1, receiptId };
   }
 
   private async applyAnnotationDelete(
@@ -462,26 +501,53 @@ export class ReaderMutationsService {
     receiptId: string,
   ): Promise<OperationResultPayload> {
     const entityId = input.entityId as string;
-    const existing = await tx.highlight.findFirst({ where: { id: entityId, userId: subject } });
+    const existing = await tx.highlight.findFirst({ where: { id: entityId, userId: subject, bookId: input.bookId } });
     if (!existing) {
-      return { kind: 'ACCESS_DENIED', resourceId: entityId, reason: 'Annotation not found for this account' };
+      return { kind: 'ACCESS_DENIED', resourceId: entityId, reason: 'Annotation not found for this account and book' };
     }
     const baseRevision = input.baseRevision as number;
     if (existing.deletedAt) {
       return { kind: 'APPLIED', entityId: existing.id, revision: existing.revision, receiptId };
     }
     if (existing.revision !== baseRevision) {
-      // Stale delete-after-edit: keep the newer edit and record the delete intent.
-      const copy = await this.createConflictCopy(tx, subject, input, entityId, ConflictReason.DELETE_VS_EDIT);
-      return this.conflict(subject, input.bookId, existing.revision, this.highlightValue(existing), copy);
+      // Stale delete-after-edit: preserve the newer edit and record the delete
+      // intent as a copy of the current server annotation (honest content, not
+      // fabricated from the delete request, which carries no text/page).
+      const copy = await this.createConflictCopy(
+        tx,
+        subject,
+        input,
+        existing.id,
+        input.bookId,
+        ConflictReason.DELETE_VS_EDIT,
+        this.highlightFields(existing),
+      );
+      return this.conflict(input.bookId, existing.revision, this.highlightValue(existing), copy);
     }
 
-    const updated = await tx.highlight.update({
-      where: { id: existing.id },
-      data: { deletedAt: new Date(), revision: existing.revision + 1 },
+    const result = await tx.highlight.updateMany({
+      where: { id: existing.id, userId: subject, bookId: input.bookId, revision: baseRevision },
+      data: { deletedAt: new Date(), revision: { increment: 1 } },
     });
-    await this.upsertTombstone(tx, subject, existing.id, 'ANNOTATION', updated.revision);
-    return { kind: 'APPLIED', entityId: updated.id, revision: updated.revision, receiptId };
+    if (result.count === 0) return this.staleEntityConflict(tx, 'highlight', input, existing.id, existing);
+
+    await this.upsertTombstone(tx, subject, existing.id, 'ANNOTATION', baseRevision + 1);
+    return { kind: 'APPLIED', entityId: existing.id, revision: baseRevision + 1, receiptId };
+  }
+
+  private async staleEntityConflict(
+    tx: Prisma.TransactionClient,
+    entity: 'bookmark' | 'highlight',
+    input: NormalizedOperation,
+    entityId: string,
+    known: Record<string, unknown>,
+  ): Promise<OperationResultPayload> {
+    const fresh = entity === 'bookmark'
+      ? await tx.bookmark.findFirst({ where: { id: entityId, bookId: input.bookId } })
+      : await tx.highlight.findFirst({ where: { id: entityId, bookId: input.bookId } });
+    const row = (fresh as Record<string, unknown> | null) ?? known;
+    const value = entity === 'bookmark' ? this.bookmarkValue(row) : this.highlightValue(row);
+    return this.conflict(input.bookId, (row.revision as number) ?? 1, value, null);
   }
 
   // ── Shared helpers ────────────────────────────────────────────────────────
@@ -500,25 +566,41 @@ export class ReaderMutationsService {
     });
   }
 
+  private editFields(input: NormalizedOperation): ConflictFields {
+    return { page: input.page, text: input.text, note: input.note, color: input.color, anchor: input.anchor };
+  }
+
+  private highlightFields(row: Record<string, unknown>): ConflictFields {
+    return {
+      page: (row.page as number) ?? null,
+      text: (row.text as string) ?? null,
+      note: (row.note as string | null) ?? null,
+      color: (row.color as string | null) ?? null,
+      anchor: (row.anchor as NormalizedAnchor | null) ?? null,
+    };
+  }
+
   private async createConflictCopy(
     tx: Prisma.TransactionClient,
     subject: string,
     input: NormalizedOperation,
     sourceEntityId: string,
+    bookId: string,
     reason: ConflictReason,
+    fields: ConflictFields,
   ): Promise<Record<string, unknown>> {
     const copy = await tx.conflictCopy.create({
       data: {
         subject,
         operationId: input.operationId,
         sourceEntityId,
-        bookId: input.bookId,
+        bookId,
         contentVersion: input.contentVersion,
-        page: (input.page ?? 1) as number,
-        text: (input.text ?? '') as string,
-        note: input.note,
-        color: input.color,
-        anchor: (input.anchor as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+        page: (fields.page ?? 1) as number,
+        text: (fields.text ?? '') as string,
+        note: fields.note,
+        color: fields.color,
+        anchor: toJsonOrDbNull(fields.anchor),
         revision: 1,
         reason,
       },
@@ -527,7 +609,6 @@ export class ReaderMutationsService {
   }
 
   private conflict(
-    _subject: string,
     _bookId: string,
     serverRevision: number,
     serverValue: Record<string, unknown>,
@@ -561,7 +642,7 @@ export class ReaderMutationsService {
     return {
       __typename: 'BookmarkRecord',
       id: row.id,
-      clientEntityId: row.clientEntityId,
+      clientEntityId: row.clientEntityId ?? null,
       bookId: row.bookId,
       page: row.page,
       label: row.label ?? null,
@@ -578,7 +659,7 @@ export class ReaderMutationsService {
     return {
       __typename: 'HighlightRecord',
       id: row.id,
-      clientEntityId: row.clientEntityId,
+      clientEntityId: row.clientEntityId ?? null,
       bookId: row.bookId,
       page: row.page,
       text: row.text,
@@ -612,6 +693,21 @@ export class ReaderMutationsService {
     };
   }
 
+  private bookmarkMatches(row: Record<string, unknown>, input: NormalizedOperation): boolean {
+    return row.page === input.page
+      && (row.label ?? null) === input.label
+      && (row.color ?? null) === input.color
+      && JSON.stringify(row.anchor ?? null) === JSON.stringify(input.anchor ?? null);
+  }
+
+  private highlightMatches(row: Record<string, unknown>, input: NormalizedOperation): boolean {
+    return row.page === input.page
+      && row.text === input.text
+      && (row.note ?? null) === input.note
+      && (row.color ?? null) === input.color
+      && JSON.stringify(row.anchor ?? null) === JSON.stringify(input.anchor ?? null);
+  }
+
   // ── Validation ────────────────────────────────────────────────────────────
 
   /** Canonical, order-stable payload used for dedup hashing. */
@@ -639,9 +735,10 @@ export class ReaderMutationsService {
   /**
    * Validates the flattened envelope and returns a normalized operation. Exact
    * per-kind field presence is enforced: every field not listed for the kind
-   * must be absent, and every listed field must be present (nullable ones may
-   * be null). UUID/ID formats, positive integers, finite numbers, non-empty
-   * strings and the anchor rules are all checked before anything is applied.
+   * must be absent, and every required field must be present (nullable ones may
+   * be omitted or null). UUID/ID formats, positive integers, finite numbers,
+   * non-empty strings and the anchor rules are all checked before anything is
+   * applied.
    */
   validateOperation(raw: ReaderOperationInput): NormalizedOperation {
     if (!raw || typeof raw !== 'object') throw new BadRequestException('Operation input is required');
@@ -693,8 +790,6 @@ export class ReaderMutationsService {
       note: raw.note ?? null,
     };
 
-    this.assertNullableShape(normalized);
-
     switch (kind) {
       case OperationKind.PROGRESS_SET:
         this.requireInteger(normalized.baseRevision, 'baseRevision', 0);
@@ -737,26 +832,6 @@ export class ReaderMutationsService {
     return normalized;
   }
 
-  private assertNullableShape(op: NormalizedOperation): void {
-    const mustBeNull: Array<[unknown, string]> = [
-      [op.entityId, 'entityId'],
-      [op.clientEntityId, 'clientEntityId'],
-      [op.targetKind, 'targetKind'],
-      [op.baseRevision, 'baseRevision'],
-      [op.currentPage, 'currentPage'],
-      [op.scrollY, 'scrollY'],
-      [op.page, 'page'],
-      [op.label, 'label'],
-      [op.color, 'color'],
-      [op.anchor, 'anchor'],
-      [op.text, 'text'],
-      [op.note, 'note'],
-    ];
-    for (const [value, name] of mustBeNull) {
-      if (value === undefined) throw new BadRequestException(`Field "${name}" must not be undefined`);
-    }
-  }
-
   private validateAnchor(anchor: { version: number; page: number; startOffset: number; endOffset: number }, page: number | null): NormalizedAnchor {
     if (anchor.version !== 1) throw new BadRequestException('anchor.version must be 1');
     this.requireInteger(anchor.page, 'anchor.page', 1);
@@ -787,4 +862,12 @@ export class ReaderMutationsService {
   private requireNonEmpty(value: string | null, name: string): void {
     if (!value || value.trim().length === 0) throw new BadRequestException(`${name} must be a non-empty string`);
   }
+}
+
+interface ConflictFields {
+  page: number | null;
+  text: string | null;
+  note: string | null;
+  color: string | null;
+  anchor: NormalizedAnchor | null;
 }

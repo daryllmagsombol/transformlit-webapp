@@ -1,7 +1,6 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ReaderMutationsService } from './reader-mutations.service';
-import { UpgradeRequiredError, UPGRADE_REQUIRED_CODE } from './reader-mutation.errors';
 import {
   OperationKind,
   OperationTargetKind,
@@ -15,6 +14,27 @@ const BOOK_ID = 'book-1';
 const SUBJECT = 'user-1';
 
 interface Row { [key: string]: unknown }
+
+function uniqueViolation(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError('duplicate', { code: 'P2002', clientVersion: 'test' });
+}
+
+/** Prisma-like `where` matching: equality plus `{ increment: n }` on data. */
+function matches(row: Row, where: Row): boolean {
+  return Object.entries(where).every(([key, value]) => value === undefined || row[key] === value);
+}
+
+/** Applies `{ increment: n }` operators the way Prisma's updateMany does. */
+function applyIncrements(row: Row, data: Row): void {
+  for (const [key, value] of Object.entries(data)) {
+    if (value && typeof value === 'object' && 'increment' in (value as Row)) {
+      const increment = (value as { increment: number }).increment;
+      row[key] = ((row[key] as number) ?? 0) + increment;
+    } else {
+      row[key] = value;
+    }
+  }
+}
 
 /** Minimal stateful in-memory Prisma supporting the models Task 8 uses. */
 function createFakePrisma() {
@@ -51,47 +71,53 @@ function createFakePrisma() {
     bookProgress: {
       findUnique: jest.fn(async ({ where }: { where: { userId_bookId: { userId: string; bookId: string } } }) =>
         state.bookProgress.find((r) => r.userId === where.userId_bookId.userId && r.bookId === where.userId_bookId.bookId) ?? null),
-      update: jest.fn(async ({ where, data }: { where: { userId_bookId: { userId: string; bookId: string } }; data: Row }) => {
-        const row = state.bookProgress.find((r) => r.userId === where.userId_bookId.userId && r.bookId === where.userId_bookId.bookId);
-        Object.assign(row as Row, data);
-        return row;
-      }),
       create: jest.fn(async ({ data }: { data: Row }) => {
+        const duplicate = state.bookProgress.find((r) => r.userId === data.userId && r.bookId === data.bookId);
+        if (duplicate) throw uniqueViolation();
         const row = { id: nextId('progress'), completedAt: null, ...data };
         state.bookProgress.push(row);
         return row;
+      }),
+      updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
+        const rows = state.bookProgress.filter((r) => matches(r, where));
+        for (const row of rows) applyIncrements(row, data);
+        return { count: rows.length };
       }),
     },
     bookmark: {
       findUnique: jest.fn(async ({ where }: { where: { userId_clientEntityId: { userId: string; clientEntityId: string } } }) =>
         state.bookmark.find((r) => r.userId === where.userId_clientEntityId.userId && r.clientEntityId === where.userId_clientEntityId.clientEntityId) ?? null),
-      findFirst: jest.fn(async ({ where }: { where: { id?: string; userId?: string } }) =>
-        state.bookmark.find((r) => (!where.id || r.id === where.id) && (!where.userId || r.userId === where.userId)) ?? null),
+      findFirst: jest.fn(async ({ where }: { where: Row }) =>
+        state.bookmark.find((r) => matches(r, where)) ?? null),
       create: jest.fn(async ({ data }: { data: Row }) => {
+        const duplicate = state.bookmark.find((r) => r.userId === data.userId && r.clientEntityId === data.clientEntityId);
+        if (duplicate) throw uniqueViolation();
         const row = { id: nextId('bookmark'), deletedAt: null, createdAt: new Date(), ...data };
         state.bookmark.push(row);
         return row;
       }),
-      update: jest.fn(async ({ where, data }: { where: { id: string }; data: Row }) => {
-        const row = state.bookmark.find((r) => r.id === where.id);
-        Object.assign(row as Row, data);
-        return row;
+      updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
+        const rows = state.bookmark.filter((r) => matches(r, where));
+        for (const row of rows) applyIncrements(row, data);
+        return { count: rows.length };
       }),
     },
     highlight: {
       findUnique: jest.fn(async ({ where }: { where: { userId_clientEntityId: { userId: string; clientEntityId: string } } }) =>
         state.highlight.find((r) => r.userId === where.userId_clientEntityId.userId && r.clientEntityId === where.userId_clientEntityId.clientEntityId) ?? null),
-      findFirst: jest.fn(async ({ where }: { where: { id?: string; userId?: string } }) =>
-        state.highlight.find((r) => (!where.id || r.id === where.id) && (!where.userId || r.userId === where.userId)) ?? null),
+      findFirst: jest.fn(async ({ where }: { where: Row }) =>
+        state.highlight.find((r) => matches(r, where)) ?? null),
       create: jest.fn(async ({ data }: { data: Row }) => {
+        const duplicate = state.highlight.find((r) => r.userId === data.userId && r.clientEntityId === data.clientEntityId);
+        if (duplicate) throw uniqueViolation();
         const row = { id: nextId('highlight'), deletedAt: null, createdAt: new Date(), updatedAt: new Date(), ...data };
         state.highlight.push(row);
         return row;
       }),
-      update: jest.fn(async ({ where, data }: { where: { id: string }; data: Row }) => {
-        const row = state.highlight.find((r) => r.id === where.id);
-        Object.assign(row as Row, data, { updatedAt: new Date() });
-        return row;
+      updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
+        const rows = state.highlight.filter((r) => matches(r, where));
+        for (const row of rows) applyIncrements(row, { ...data, updatedAt: new Date() });
+        return { count: rows.length };
       }),
     },
     conflictCopy: {
@@ -100,12 +126,12 @@ function createFakePrisma() {
         state.conflictCopy.push(row);
         return row;
       }),
-      findFirst: jest.fn(async ({ where }: { where: { id?: string; subject?: string } }) =>
-        state.conflictCopy.find((r) => (!where.id || r.id === where.id) && (!where.subject || r.subject === where.subject)) ?? null),
-      update: jest.fn(async ({ where, data }: { where: { id: string }; data: Row }) => {
-        const row = state.conflictCopy.find((r) => r.id === where.id);
-        Object.assign(row as Row, data);
-        return row;
+      findFirst: jest.fn(async ({ where }: { where: Row }) =>
+        state.conflictCopy.find((r) => matches(r, where)) ?? null),
+      updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
+        const rows = state.conflictCopy.filter((r) => matches(r, where));
+        for (const row of rows) applyIncrements(row, data);
+        return { count: rows.length };
       }),
     },
     readerOperationReceipt: {
@@ -364,24 +390,126 @@ describe('ReaderMutationsService', () => {
     });
   });
 
-  describe('legacy write rejection', () => {
-    it('rejects a legacy mutation with a stable UPGRADE_REQUIRED code', () => {
-      const { service } = build();
-      try {
-        service.rejectLegacyMutation('saveProgress');
-        throw new Error('expected to throw');
-      } catch (error) {
-        expect(error).toBeInstanceOf(UpgradeRequiredError);
-        expect((error as UpgradeRequiredError).extensions.code).toBe(UPGRADE_REQUIRED_CODE);
-      }
+  describe('migrated legacy rows (null provenance)', () => {
+    it('serializes a conflict on a bookmark with null clientEntityId without inventing an id', async () => {
+      const { service, state } = build();
+      state.bookmark.push({
+        id: 'legacy-bm',
+        userId: SUBJECT,
+        bookId: BOOK_ID,
+        clientEntityId: null,
+        page: 3,
+        label: null,
+        color: null,
+        anchor: null,
+        contentVersion: 1,
+        revision: 4,
+        deletedAt: null,
+        createdAt: new Date(),
+      });
+      const outcome = await service.applyOperation(SUBJECT, {
+        ...baseInput({ kind: OperationKind.BOOKMARK_REMOVE, entityId: 'legacy-bm', baseRevision: 1 } as never),
+        operationId: '15151515-1515-4151-8151-151515151515',
+      } as never);
+      expect(outcome.result.kind).toBe('CONFLICT');
+      const value = (outcome.result as { serverValue?: { clientEntityId?: string | null } }).serverValue;
+      expect(value?.clientEntityId ?? null).toBeNull();
     });
 
-    it('does not mutate or receipt a legacy rejection', async () => {
+    it('records an honest delete-vs-edit conflict copy from current server content', async () => {
       const { service, state } = build();
-      expect(() => service.rejectLegacyMutation('addBookmark')).toThrow(UpgradeRequiredError);
-      expect(state.bookProgress).toHaveLength(0);
-      expect(state.bookmark).toHaveLength(0);
-      expect(state.receipt).toHaveLength(0);
+      const created = await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.ANNOTATION_CREATE, clientEntityId: CLIENT_ID, page: 2, text: 'v1', note: null, color: null, anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 } } as never));
+      const entityId = (created.result as { entityId: string }).entityId;
+      // A newer edit advances the row to revision 2.
+      await service.applyOperation(SUBJECT, {
+        ...baseInput({ kind: OperationKind.ANNOTATION_UPDATE, entityId, targetKind: OperationTargetKind.ANNOTATION, baseRevision: 1, page: 2, text: 'v2', note: null, color: null, anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 } } as never),
+        operationId: '16161616-1616-4161-8161-161616161616',
+      } as never);
+      // A stale delete (base 1) must preserve the newer edit and record the
+      // delete intent as a copy of the honest server annotation, not a blank one.
+      const staleDelete = await service.applyOperation(SUBJECT, {
+        ...baseInput({ kind: OperationKind.ANNOTATION_DELETE, entityId, baseRevision: 1 } as never),
+        operationId: '17171717-1717-4171-8171-171717171717',
+      } as never);
+      expect(staleDelete.result.kind).toBe('CONFLICT');
+      const copy = state.conflictCopy[0];
+      expect(copy.reason).toBe('DELETE_VS_EDIT');
+      expect(copy.text).toBe('v2');
+      expect(copy.page).toBe(2);
+      expect((staleDelete.result as { serverValue?: { text?: string } }).serverValue?.text).toBe('v2');
+    });
+  });
+
+  describe('concurrency (lost-update prevention)', () => {
+    it('serializes two same-base progress writes: one APPLIED, one CONFLICT, no lost update', async () => {
+      const { service, state, prisma } = build();
+      // Winner: revision 0 -> 1 at page 5.
+      const winner = await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 0, currentPage: 5, scrollY: null } as never));
+      expect(winner.result).toMatchObject({ kind: 'APPLIED', revision: 1 });
+
+      // Loser reads the row as revision 0 (its stale snapshot), but another
+      // writer has already advanced the real row to revision 1. The DB-conditional
+      // updateMany must match 0 rows -> CONFLICT, never a silent overwrite.
+      const staleSnapshot = { id: state.bookProgress[0].id, userId: SUBJECT, bookId: BOOK_ID, currentPage: 5, scrollY: null, revision: 0, lastReadAt: new Date() };
+      prisma.bookProgress.findUnique.mockResolvedValueOnce(staleSnapshot);
+      const loser = await service.applyOperation(SUBJECT, {
+        ...baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 0, currentPage: 99, scrollY: null } as never),
+        operationId: '13131313-1313-4131-8131-131313131313',
+      } as never);
+      expect(loser.result.kind).toBe('CONFLICT');
+      expect((loser.result as { serverRevision?: number }).serverRevision).toBe(1);
+      // The loser's page was never written and the winner's revision is intact.
+      expect(state.bookProgress[0].currentPage).toBe(5);
+      expect(state.bookProgress[0].revision).toBe(1);
+    });
+
+    it('does not overwrite a highlight whose revision advanced between read and write', async () => {
+      const { service, state, prisma } = build();
+      const created = await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.ANNOTATION_CREATE, clientEntityId: CLIENT_ID, page: 2, text: 'v1', note: null, color: null, anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 } } as never));
+      const entityId = (created.result as { entityId: string }).entityId;
+
+      // Another writer advanced the row to revision 2 after our read of revision 1.
+      state.highlight[0].revision = 2;
+      const staleSnapshot = { ...state.highlight[0], revision: 1, text: 'v1' };
+      prisma.highlight.findFirst.mockResolvedValueOnce(staleSnapshot);
+      const loser = await service.applyOperation(SUBJECT, {
+        ...baseInput({ kind: OperationKind.ANNOTATION_UPDATE, entityId, targetKind: OperationTargetKind.ANNOTATION, baseRevision: 1, page: 2, text: 'offline', note: null, color: null, anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 } } as never),
+        operationId: '12121212-1212-4121-8121-121212121212',
+      } as never);
+      expect(loser.result.kind).toBe('CONFLICT');
+      expect(state.highlight[0].text).toBe('v1');
+      expect(state.highlight[0].revision).toBe(2);
+    });
+  });
+
+  describe('concurrent duplicate operation (receipt race)', () => {
+    it('adopts the winner stored result when our receipt insert loses the unique race', async () => {
+      const { service, state, prisma } = build();
+      const input = baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 0, currentPage: 4, scrollY: null } as never);
+      const winner = await service.applyOperation(SUBJECT, input);
+      expect(winner.result.kind).toBe('APPLIED');
+
+      // Simulate READ COMMITTED: our transaction's initial receipt read misses the
+      // winner, then our receipt create hits the unique constraint. The loser must
+      // re-read the winner and return its stored result, not a recomputed value.
+      prisma.readerOperationReceipt.findUnique.mockResolvedValueOnce(null);
+      const loser = await service.applyOperation(SUBJECT, input);
+      expect(loser.result).toEqual(winner.result);
+      expect(state.receipt).toHaveLength(1);
+      expect(state.bookProgress).toHaveLength(1);
+    });
+
+    it('translates a concurrent entity-create unique violation into a replay/conflict, not a 500', async () => {
+      const { service, prisma } = build();
+      const first = baseInput({ kind: OperationKind.BOOKMARK_ADD, clientEntityId: CLIENT_ID, page: 5, label: null, color: null, anchor: null } as never);
+      await service.applyOperation(SUBJECT, first);
+      // A different operationId for the same client identity: our candidate read
+      // misses the concurrently-created bookmark, then the create violates
+      // (userId, clientEntityId). This must not surface as an opaque 500 and must
+      // not fabricate a divergent second row.
+      prisma.bookmark.findUnique.mockResolvedValueOnce(null);
+      const second = { ...first, operationId: '14141414-1414-4141-8141-141414141414' } as never;
+      await expect(service.applyOperation(SUBJECT, second)).rejects.toBeInstanceOf(ConflictException);
     });
   });
 });

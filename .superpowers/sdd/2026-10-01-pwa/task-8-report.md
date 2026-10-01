@@ -129,3 +129,115 @@ Runtime schema built via the compiled `AppModule` confirms `applyBookReaderOpera
 ## Commit
 
 `feat(api): add replay-safe reader mutation contracts` (see git log for SHA).
+
+---
+
+## Round 1 fix — race-safe, conflict-serializable reader mutations
+
+Fixed a Critical TOCTOU race, receipt-race divergence, conflict-serialization/scoping issues on
+branch `feature/pwa-lane-a` (HEAD before fix: `3847529`).
+
+### C1 — conditional (non-TOCTOU) revision writes
+
+`ReaderMutationsService` no longer reads a revision then issues an unconditional `update` by id.
+Every write is now a DB-conditional `updateMany({ where: { id, userId, bookId, revision: baseRevision },
+data: { ..., revision: { increment: 1 } } })`:
+
+- progress and highlight/bookmark updates branch to `CONFLICT` when `count === 0`, re-reading the
+  current server row for the conflict value (never a lost update, never highest/last-wins).
+- progress creation is conditional on the `(userId, bookId)` unique constraint; bookmarks/highlights
+  on `(userId, clientEntityId)`.
+- conflict-copy retargets are likewise conditional.
+
+### C1b — concurrent receipt/create race
+
+`applyOperation` wraps the transaction in a try/catch: on a unique violation the transaction is
+already rolled back, so the loser re-reads the winner's durable receipt and returns the winner's
+**stored** result (mismatched hash → `BadRequestException`). Entity-create `P2002` races that cannot
+be mapped to a receipt surface as a retryable `ConflictException`, not a raw 500, and never commit a
+second/divergent row.
+
+### C1c — required concurrency coverage
+
+- Unit (stateful fake): two same-base progress writes → one `APPLIED`, one `CONFLICT`, loser's page
+  not written; highlight read-then-write race → `CONFLICT`; receipt race → loser adopts winner's
+  stored result; duplicate entity-create → `ConflictException` (not 500). Authored in
+  `reader-mutations.service.spec.ts`.
+- Integration: `test/reader-sync.integration.spec.ts` now has a real simultaneous
+  `Promise.all` same-base progress race (one `APPLIED`/one `CONFLICT`, revision 2, winner's page
+  retained) and a simultaneous duplicate-operation-ID test (one stored result, one row/receipt).
+  Authored; runs only with Docker.
+
+### I1 — delete-after-edit conflict serialization
+
+`ConflictCopy.anchor` is now nullable in the GraphQL model (was non-null), so a typed `CONFLICT`
+with a delete-vs-edit copy serializes. `DELETE_VS_EDIT` copies store the **current server
+annotation's honest page/text/anchor**, not a blank `text:''`/`page:1` derived from the delete
+request. Contracts doc updated.
+
+### I2 — migrated legacy rows
+
+`BookmarkRecord.clientEntityId` and `HighlightRecord.clientEntityId` are now nullable so a conflict
+on a migrated row (null provenance) serializes without inventing an ID. Contracts doc updated.
+
+### I3 — entity operations scoped to the declared book
+
+`applyBookmarkRemove`/`applyAnnotationUpdate`/`applyAnnotationDelete`/`updateConflictCopy` now match
+`id + userId + bookId` (conflict copies also match `bookId`), and conflict copies are stamped with
+the entity's real `bookId`, so a stale/cross-book op cannot mutate another book's entity. New
+integration test asserts a cross-book remove returns `ACCESS_DENIED` and leaves the row untouched.
+
+### I4 — terminal-outcome receipts (documented deviation)
+
+`ACCESS_DENIED`/`INCOMPATIBLE_VERSION` remain **unreceipted** because they are terminal only until
+access/version state changes and must be re-evaluated on replay. This deliberate deviation is now
+explicitly documented in `docs/superpowers/specs/2026-10-01-pwa-contracts.md`.
+
+### Minors fixed
+
+- Removed the dead `rejectLegacyMutation` method (legacy rejection lives in `reader-error` types used
+  by `BooksService`; no caller remained).
+- Removed the no-op `assertNullableShape` (validation already enforces required-field presence).
+- `BOOKMARK_ADD`/`ANNOTATION_CREATE` now compare payload before returning `APPLIED` for an existing
+  entity; a differing payload on the same client identity returns `CONFLICT` instead of a silent
+  `APPLIED`.
+- Retargeted conflict copy now keys `sourceEntityId` off the original annotation, not the prior copy.
+
+### Round 1 verification
+
+RED (new tests vs the pre-fix service, `git show 3847529:...`):
+`Test Suites: 1 failed, Tests: 7 failed, 17 passed` — including both lost-update tests, the receipt
+race, and the entity-create race.
+
+GREEN:
+```
+pnpm --filter @transformlit/api test --runInBand
+Test Suites: 40 passed, 40 total   Tests: 653 passed, 653 total
+
+pnpm --filter @transformlit/api exec jest --config jest.contract.config.ts \
+  --runInBand --runTestsByPath test/helpers/schema-runtime.spec.ts test/helpers/schema-drift.spec.ts
+Test Suites: 2 passed, 2 total   Tests: 5 passed
+
+pnpm --filter @transformlit/api run typecheck   # exit 0
+pnpm --filter @transformlit/api run build       # 122 files compiled
+prisma validate                                 # valid
+git diff --check                                # clean
+```
+The DB-free compiled-AppModule schema probe confirms `BookmarkRecord.clientEntityId: String` and
+`ConflictCopy.anchor: PageTextAnchorV1` are now nullable in the runtime SDL.
+
+`test/reader-sync.integration.spec.ts` compiles and fails only at the disposable-DB guard (Docker
+unavailable). Canonical `schema.gql` remains BLOCKED (guarded export needs Docker) and was not
+hand-edited.
+
+### Round 1 files
+
+- Modified: `apps/api/src/books/reader-mutations.service.ts`,
+  `apps/api/src/books/reader-mutations.service.spec.ts`,
+  `apps/api/src/books/models/book.model.ts`,
+  `apps/api/test/reader-sync.integration.spec.ts`,
+  `docs/superpowers/specs/2026-10-01-pwa-contracts.md`
+
+### Round 1 commit
+
+`fix(api): make reader mutations race-safe and conflict-serializable`

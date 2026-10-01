@@ -205,4 +205,104 @@ describe('Reader sync idempotency', () => {
     });
     expect(await prisma.readerOperationReceipt.count({ where: { subject } })).toBe(before);
   });
+
+  it('applies exactly one of two simultaneous same-base progress writes and conflicts the other', async () => {
+    const book = await prisma.book.create({
+      data: { title: `Race ${Date.now()}`, status: 'PUBLISHED', conversionStatus: 'READY', accessLevel: 'FREE', contentVersion: 1 },
+    });
+    // Seed revision 0.
+    await mutations.applyOperation(subject, {
+      operationId: 'aaaaaaaa-0000-4000-8000-000000000001',
+      bookId: book.id,
+      contentVersion: 1,
+      kind: OperationKind.PROGRESS_SET,
+      baseRevision: 0,
+      currentPage: 5,
+      scrollY: null,
+    } as never);
+
+    // Launch two concurrent writes that both base on revision 1. Database
+    // uniqueness/conditional writes must let exactly one win; the loser must
+    // get an explicit CONFLICT, never a silent lost update.
+    const [a, b] = await Promise.all([
+      mutations.applyOperation(subject, {
+        operationId: 'aaaaaaaa-0000-4000-8000-000000000002',
+        bookId: book.id,
+        contentVersion: 1,
+        kind: OperationKind.PROGRESS_SET,
+        baseRevision: 1,
+        currentPage: 20,
+        scrollY: null,
+      } as never),
+      mutations.applyOperation(subject, {
+        operationId: 'aaaaaaaa-0000-4000-8000-000000000003',
+        bookId: book.id,
+        contentVersion: 1,
+        kind: OperationKind.PROGRESS_SET,
+        baseRevision: 1,
+        currentPage: 30,
+        scrollY: null,
+      } as never),
+    ]);
+    const kinds = [a.result.kind, b.result.kind].sort();
+    expect(kinds).toEqual([OperationResultKind.APPLIED, OperationResultKind.CONFLICT].sort());
+    const progress = await prisma.bookProgress.findUnique({ where: { userId_bookId: { userId: subject, bookId: book.id } } });
+    expect(progress?.revision).toBe(2);
+    expect([20, 30]).toContain(progress?.currentPage);
+  });
+
+  it('returns one durable result for simultaneous duplicate operation IDs', async () => {
+    const book = await prisma.book.create({
+      data: { title: `Dup ${Date.now()}`, status: 'PUBLISHED', conversionStatus: 'READY', accessLevel: 'FREE', contentVersion: 1 },
+    });
+    const operationId = 'bbbbbbbb-0000-4000-8000-000000000001';
+    const clientEntityId = 'bbbbbbbb-0000-4000-8000-000000000002';
+    const input = {
+      operationId,
+      bookId: book.id,
+      contentVersion: 1,
+      kind: OperationKind.BOOKMARK_ADD,
+      clientEntityId,
+      page: 4,
+      label: null,
+      color: null,
+      anchor: null,
+    } as never;
+    const [a, b] = await Promise.all([mutations.applyOperation(subject, input), mutations.applyOperation(subject, input)]);
+    expect(a.result).toEqual(b.result);
+    expect(await prisma.readerOperationReceipt.count({ where: { subject, operationId } })).toBe(1);
+    expect(await prisma.bookmark.count({ where: { userId: subject, clientEntityId } })).toBe(1);
+  });
+
+  it('scopes an entity operation to its declared book', async () => {
+    const bookA = await prisma.book.create({
+      data: { title: `ScopeA ${Date.now()}`, status: 'PUBLISHED', conversionStatus: 'READY', accessLevel: 'FREE', contentVersion: 1 },
+    });
+    const bookB = await prisma.book.create({
+      data: { title: `ScopeB ${Date.now()}`, status: 'PUBLISHED', conversionStatus: 'READY', accessLevel: 'FREE', contentVersion: 1 },
+    });
+    const created = await mutations.applyOperation(subject, {
+      operationId: 'cccccccc-0000-4000-8000-000000000001',
+      bookId: bookA.id,
+      contentVersion: 1,
+      kind: OperationKind.BOOKMARK_ADD,
+      clientEntityId: 'cccccccc-0000-4000-8000-000000000002',
+      page: 1,
+      label: null,
+      color: null,
+      anchor: null,
+    } as never);
+    const entityId = (created.result as { entityId: string }).entityId;
+    // Removing through a different book must not touch book A's bookmark.
+    const crossBook = await mutations.applyOperation(subject, {
+      operationId: 'cccccccc-0000-4000-8000-000000000003',
+      bookId: bookB.id,
+      contentVersion: 1,
+      kind: OperationKind.BOOKMARK_REMOVE,
+      entityId,
+      baseRevision: 1,
+    } as never);
+    expect(crossBook.result.kind).toBe(OperationResultKind.ACCESS_DENIED);
+    expect(await prisma.bookmark.findUnique({ where: { id: entityId } })).toMatchObject({ deletedAt: null });
+  });
 });

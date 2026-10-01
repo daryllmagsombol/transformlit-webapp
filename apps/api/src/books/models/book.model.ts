@@ -333,7 +333,8 @@ export class ReaderOperationInput {
 export class BookmarkRecord {
   @Field(() => ID) id: string;
 
-  @Field() clientEntityId: string;
+  /** Null for migrated legacy rows whose provenance is unknown. */
+  @Field(() => String, { nullable: true }) clientEntityId?: string | null;
 
   @Field(() => ID) bookId: string;
 
@@ -358,7 +359,8 @@ export class BookmarkRecord {
 export class HighlightRecord {
   @Field(() => ID) id: string;
 
-  @Field() clientEntityId: string;
+  /** Null for migrated legacy rows whose provenance is unknown. */
+  @Field(() => String, { nullable: true }) clientEntityId?: string | null;
 
   @Field(() => ID) bookId: string;
 
@@ -416,7 +418,12 @@ export class ConflictCopy {
 
   @Field(() => String, { nullable: true }) color?: string | null;
 
-  @Field(() => PageTextAnchorV1) anchor: PageTextAnchorV1;
+  /**
+   * Nullable: a delete-vs-edit conflict has no text-layer provenance to
+   * preserve, and migrated legacy rows have no trustworthy anchor. Never
+   * invented to satisfy a non-null contract.
+   */
+  @Field(() => PageTextAnchorV1, { nullable: true }) anchor?: PageTextAnchorV1 | null;
 
   @Field(() => Int) revision: number;
 
