@@ -200,10 +200,53 @@ jobs:
       # resources; the trap tears down only this invocation even when tests fail.
       - name: Production PWA harness (up -> test -> down)
         run: |
-          set -e
-          trap 'pnpm --filter @transformlit/api exec tsx test/scripts/pwa-harness.ts down || true' EXIT
-          pnpm --filter @transformlit/api exec tsx test/scripts/pwa-harness.ts up
-          pnpm --filter @transformlit/api exec tsx test/scripts/pwa-harness.ts test
+          harness() { pnpm --filter @transformlit/api exec tsx test/scripts/pwa-harness.ts "$@"; }
+          dump_diagnostics() {
+            echo "=== harness state dir ==="
+            ls -la .pwa-harness 2>&1 || true
+            echo "=== owner metadata ==="
+            cat .pwa-harness/environment.json 2>&1 || true
+            echo "=== supervisor log(s) ==="
+            find .pwa-harness -name 'supervisor.log' -print -exec tail -200 {} \; 2>&1 || true
+            echo "=== owned containers ==="
+            docker ps -a --filter label=transformlit.owner 2>&1 || true
+            for cid in $(docker ps -aq --filter label=transformlit.owner); do
+              echo "=== docker logs $cid ==="
+              docker logs "$cid" 2>&1 | tail -200 || true
+            done
+          }
+          set +e
+          harness up
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            harness test
+            status=$?
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::PWA harness/test failed (exit $status); capturing diagnostics before teardown"
+            dump_diagnostics
+          fi
+          harness down || true
+          exit "$status"
+      - name: Upload PWA harness diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwa-harness-diagnostics
+          path: |
+            .pwa-harness/**
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload Playwright results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwa-playwright-results
+          path: |
+            apps/web/test-results/**
+            apps/web/playwright-report/**
+          if-no-files-found: ignore
+          retention-days: 14
 
   review:
     if: github.event.pull_request.head.repo.fork == false
