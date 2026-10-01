@@ -19,6 +19,7 @@ import {
   decodeJwt,
   getAccessToken,
   isTokenExpiringSoon,
+  withAuthLifecycleLock,
 } from './auth';
 import {
   captureOriginEpoch,
@@ -145,24 +146,14 @@ async function doRefreshTokens(): Promise<boolean> {
   }
 }
 
-interface AuthLockManager {
-  request<T>(name: string, options: { mode?: 'exclusive' | 'shared' }, callback: () => Promise<T>): Promise<T>;
-}
-
-function authLockManager(): AuthLockManager | null {
-  const nav = globalThis.navigator as (Navigator & { locks?: AuthLockManager }) | undefined;
-  return nav?.locks ?? null;
-}
-
 /**
- * Serializes cookie-rotating refreshes across tabs via the Web Locks API.
- * The lock only coordinates concurrent refresh calls; tokens never leave the
- * response body and are never carried by any notification.
+ * Serializes cookie-rotating refreshes across tabs on the SHARED auth-lifecycle
+ * lock, which is also held by login/registration and logout. This makes a
+ * delayed logout/refresh response unable to cross into a newly activated
+ * session. Tokens only ever travel in the response body.
  */
 async function withCookieRefreshLock(run: () => Promise<boolean>): Promise<boolean> {
-  const locks = authLockManager();
-  if (!locks) return run();
-  return locks.request('transformlit-auth-refresh', { mode: 'exclusive' }, run);
+  return withAuthLifecycleLock(run);
 }
 
 export function refreshTokens(): Promise<boolean> {

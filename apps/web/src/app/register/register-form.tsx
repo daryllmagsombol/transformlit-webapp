@@ -12,6 +12,7 @@ import { useToast, TextInput, SpinnerIcon, PersonIcon, MailIcon, LockIcon, EyeIc
 import { Footer } from '../../components/layout';
 import { API_BASE } from '../../lib/constants';
 import { completeLocalAuth } from '../../lib/offline/account-activation';
+import { withAuthLifecycleLock } from '../../lib/auth';
 
 /* ------------------------------------------------------------------ */
 /*  Zod schema                                                        */
@@ -61,6 +62,10 @@ export default function RegisterForm() {
     async (values: RegisterFormValues) => {
       setLoading(true);
       try {
+        // Hold the auth-lifecycle lock across the cookie-setting registration
+        // AND the lifecycle install so a concurrent logout/refresh cannot
+        // interleave its Set-Cookie with this session.
+        await withAuthLifecycleLock(async () => {
         const res = await fetch(`${API_BASE}/auth/register`, {
           method: 'POST',
           credentials: 'include',
@@ -90,6 +95,7 @@ export default function RegisterForm() {
         // Route installation through the account-lifecycle gate.
         const installed = await completeLocalAuth(data.user, data.accessToken);
         if (!installed) throw new Error('Could not activate this account. Please try again.');
+        });
 
         addToast('Account created! Welcome to TransformLit.', 'success');
         router.push('/feed');

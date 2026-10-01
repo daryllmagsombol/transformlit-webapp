@@ -92,7 +92,7 @@ describe('auth refresh classification and activation fencing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('serializes cookie-rotating refreshes across tabs when Web Locks exist', async () => {
+  it('serializes cookie-rotating refreshes on the shared auth-lifecycle lock', async () => {
     const request = jest.fn((_name: string, _options: unknown, run: () => Promise<unknown>) => run());
     Object.defineProperty(globalThis.navigator, 'locks', {
       configurable: true,
@@ -102,7 +102,9 @@ describe('auth refresh classification and activation fencing', () => {
     try {
       fetchMock.mockResolvedValue(okResponse({ id: 'user-a' }, buildJwt('user-a')));
       await refreshTokens();
-      expect(request).toHaveBeenCalledWith('transformlit-auth-refresh', expect.anything(), expect.any(Function));
+      // The SAME lock is held by login/registration and logout, so a stale
+      // Set-Cookie response cannot cross into a newly activated session.
+      expect(request).toHaveBeenCalledWith('transformlit-auth-lifecycle', expect.anything(), expect.any(Function));
     } finally {
       Reflect.deleteProperty(globalThis.navigator as Navigator, 'locks');
     }

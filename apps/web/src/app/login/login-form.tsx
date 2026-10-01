@@ -13,6 +13,7 @@ import { Footer } from '../../components/layout';
 import { API_BASE } from '../../lib/constants';
 import { bootstrapAuth } from '../../lib/apollo-client';
 import { completeLocalAuth } from '../../lib/offline/account-activation';
+import { withAuthLifecycleLock } from '../../lib/auth';
 
 /* ------------------------------------------------------------------ */
 /*  Zod schema                                                        */
@@ -120,6 +121,10 @@ export default function LoginForm() {
     async (values: LoginFormValues) => {
       setLoading(true);
       try {
+        // Hold the auth-lifecycle lock across the cookie-setting login AND the
+        // lifecycle install, so a concurrent logout/refresh cannot interleave
+        // its Set-Cookie with this session.
+        await withAuthLifecycleLock(async () => {
         const res = await fetch(`${API_BASE}/auth/login`, {
           method: 'POST',
           credentials: 'include',
@@ -153,6 +158,7 @@ export default function LoginForm() {
         // established for the verified subject and account-scoped state resets.
         const installed = await completeLocalAuth(data.user, data.accessToken);
         if (!installed) throw new Error('Could not activate this account. Please try again.');
+        });
 
         addToast('Welcome back!', 'success');
         router.push(redirectTargetRef.current);

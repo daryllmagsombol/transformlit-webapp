@@ -1,7 +1,7 @@
 'use client';
 
 import { API_BASE } from '../constants';
-import { clearAuth } from '../auth';
+import { clearAuth, withAuthLifecycleLock } from '../auth';
 import { useAuthStore } from '../../store';
 import { useBibleStore } from '../../store/bible-store';
 import { resetApolloState } from '../apollo-client';
@@ -66,20 +66,24 @@ export async function readExitWork(): Promise<ExitWorkSummary> {
  * deferred-logout barrier rather than assuming success.
  */
 async function invalidateSession(): Promise<boolean> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), LOGOUT_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${API_BASE}/auth/logout`, {
-      method: 'POST',
-      credentials: 'include',
-      signal: controller.signal,
-    });
-    return response.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
+  // Hold the shared auth-lifecycle lock so a concurrent login/refresh cannot
+  // interleave with this cookie-clearing round-trip.
+  return withAuthLifecycleLock(async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), LOGOUT_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+        signal: controller.signal,
+      });
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 }
 
 /** Destructive local cleanup for the exited subject; runs after the barrier. */

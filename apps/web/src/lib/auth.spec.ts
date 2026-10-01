@@ -6,6 +6,7 @@ import {
   decodeJwt,
   getTokenExpiry,
   isTokenExpiringSoon,
+  withAuthLifecycleLock,
   AuthHttpError,
 } from './auth';
 import { issueAuthInstallTicket, isAuthInstallTicket } from './offline/install-ticket';
@@ -16,6 +17,73 @@ function buildJwt(payload: Record<string, unknown>): string {
   const sig = btoa('fakesig');
   return `${header}.${body}.${sig}`;
 }
+
+describe('withAuthLifecycleLock', () => {
+  interface FakeLockManager {
+    request<T>(name: string, options: { mode?: 'exclusive' | 'shared' }, callback: () => Promise<T>): Promise<T>;
+  }
+
+  function installFakeLocks(): { maxActive: () => number; names: string[] } {
+    let tail: Promise<unknown> = Promise.resolve();
+    let active = 0;
+    let max = 0;
+    const names: string[] = [];
+    const manager: FakeLockManager = {
+      request: <T>(name: string, _options: { mode?: 'exclusive' | 'shared' }, callback: () => Promise<T>) => {
+        names.push(name);
+        const run = tail.then(async () => {
+          active += 1;
+          max = Math.max(max, active);
+          try {
+            return await callback();
+          } finally {
+            active -= 1;
+          }
+        });
+        tail = run.then(
+          () => undefined,
+          () => undefined,
+        );
+        return run as Promise<T>;
+      },
+    };
+    (globalThis.navigator as unknown as { locks?: FakeLockManager }).locks = manager;
+    return { maxActive: () => max, names };
+  }
+
+  function removeFakeLocks(): void {
+    delete (globalThis.navigator as unknown as { locks?: FakeLockManager }).locks;
+  }
+
+  afterEach(() => {
+    removeFakeLocks();
+  });
+
+  it('serializes auth lifecycle operations so a stale cookie response cannot cross', async () => {
+    const fake = installFakeLocks();
+    const order: string[] = [];
+    const first = withAuthLifecycleLock(async () => {
+      order.push('start-1');
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      order.push('end-1');
+    });
+    const second = withAuthLifecycleLock(async () => {
+      order.push('start-2');
+      order.push('end-2');
+    });
+
+    await Promise.all([first, second]);
+
+    expect(fake.maxActive()).toBe(1);
+    expect(order).toEqual(['start-1', 'end-1', 'start-2', 'end-2']);
+    expect(fake.names.every((name) => name === 'transformlit-auth-lifecycle')).toBe(true);
+  });
+
+  it('runs directly when the Web Locks API is unavailable', async () => {
+    removeFakeLocks();
+    await expect(withAuthLifecycleLock(async () => 'ok')).resolves.toBe('ok');
+  });
+});
 
 describe('auth utilities', () => {
   beforeEach(() => {
