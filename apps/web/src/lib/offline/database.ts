@@ -571,7 +571,7 @@ export class OfflineDatabase {
       guardWrite(tx, subject, epoch, fail, () => {
         tx.objectStore('receipts').put(receipt as unknown as IDBValidKey);
         const outbox = tx.objectStore('outbox');
-        for (const successor of successors) outbox.put(successor as unknown as IDBValidKey);
+        for (const successor of successors) outbox.put(successor);
         outbox.delete(outboxId);
         done(undefined);
       });
@@ -594,7 +594,7 @@ export class OfflineDatabase {
     await runTransaction<void>(db, ['lifecycle', 'outbox'], 'readwrite', (tx, done, fail) => {
       guardWrite(tx, subject, epoch, fail, () => {
         const outbox = tx.objectStore('outbox');
-        for (const upsert of upserts) outbox.put(upsert as unknown as IDBValidKey);
+        for (const upsert of upserts) outbox.put(upsert);
         for (const id of removeIds) outbox.delete(id);
         done(undefined);
       });

@@ -528,29 +528,41 @@ async function cleanupExternalOwner(owner: PwaMetadata): Promise<void> {
   await rm(metadataPath, { force: true });
 }
 
-async function down(): Promise<void> {
-  try { await access(metadataPath); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-  const owner = await readMetadata();
-  if (owner.state === 'failed') {
-    try {
-      await sendSupervisor(owner, 'ping');
-      throw new Error('Failed supervisor is still live; refusing external cleanup');
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('still live')) throw error;
-      if ((error as NodeJS.ErrnoException).code !== 'ECONNREFUSED' && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    await cleanupExternalOwner(owner);
-    return;
+/** True when owner metadata exists; rethrows any non-ENOENT access failure. */
+async function metadataPresent(): Promise<boolean> {
+  try { await access(metadataPath); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+}
+
+/**
+ * Cleans up a supervisor already recorded as failed, refusing when it is still
+ * reachable (a live supervisor owns its resources). Any connectivity code other
+ * than a refused/absent control socket is rethrown.
+ */
+async function cleanupFailedOwner(owner: PwaMetadata): Promise<void> {
+  try {
+    await sendSupervisor(owner, 'ping');
+    throw new Error('Failed supervisor is still live; refusing external cleanup');
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('still live')) throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ECONNREFUSED' && code !== 'ENOENT') throw error;
   }
+  await cleanupExternalOwner(owner);
+}
+
+/**
+ * Shuts down a ready supervisor. A control socket that vanished between
+ * readiness and shutdown means the supervisor crashed; its metadata is stale but
+ * ownership-verified cleanup remains safe.
+ */
+async function shutdownReadyOwner(owner: PwaMetadata): Promise<void> {
   let result: { ok?: boolean };
   try {
     result = await sendSupervisor(owner, 'shutdown') as { ok?: boolean };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (owner.state === 'ready' && (code === 'ECONNREFUSED' || code === 'ENOENT')) {
-      // The supervisor crashed between readiness and shutdown; its metadata is
-      // stale but ownership-verified cleanup remains safe.
       owner.state = 'failed';
       owner.failure = `Supervisor control socket unavailable during shutdown (${code})`;
       await writeMetadata(owner);
@@ -564,6 +576,16 @@ async function down(): Promise<void> {
     try { await access(metadataPath); return true; }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
   });
+}
+
+async function down(): Promise<void> {
+  if (!(await metadataPresent())) return;
+  const owner = await readMetadata();
+  if (owner.state === 'failed') {
+    await cleanupFailedOwner(owner);
+    return;
+  }
+  await shutdownReadyOwner(owner);
 }
 
 async function main(): Promise<void> {

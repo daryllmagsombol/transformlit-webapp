@@ -85,6 +85,14 @@ export type DispatchFailure =
   | 'REJECTED'
   | 'STORAGE_FAILURE';
 
+/** The reconciliation effect of one dispatched operation on the current run. */
+interface DispatchEffect {
+  readonly removed: boolean;
+  readonly paused: boolean;
+  readonly ackRevision: number | null;
+  readonly blocked: boolean;
+}
+
 export interface OutboxStore {
   list(subject: string): Promise<OutboxOperationRecord[]>;
   remove(id: string): Promise<void>;
@@ -500,26 +508,36 @@ export class SyncCoordinator {
     return run;
   }
 
+  /**
+   * Pre-dispatch replay-identity gate. A genuine 401 parks replay as
+   * AUTH_REQUIRED; replaying in that state would re-send every queued operation,
+   * count each failure, and retry forever instead of pausing for same-subject
+   * reauthentication. A verified identity that disagrees with the owner we are
+   * about to dispatch for also fails closed. Returns the blocked result, or null
+   * when replay may proceed. Extracted from `runDrain` to bound its cognitive
+   * complexity.
+   */
+  private replayGate(initialOwner: AccountOwner, summary: DrainSummary): DrainResult | null {
+    const replay = this.deps.lifecycle.requireReplayIdentity?.();
+    if (!replay) return null;
+    if (replay.status !== 'READY') {
+      if (replay.reason === 'AUTH_REQUIRED') summary.authRequired += 1;
+      return this.blocked('AUTH_REQUIRED', summary);
+    }
+    if (replay.owner.subject !== initialOwner.subject || replay.owner.epoch !== initialOwner.epoch) {
+      return this.blocked('NO_OWNER', summary);
+    }
+    return null;
+  }
+
   private async runDrain(): Promise<DrainResult> {
     const summary = emptySummary();
     const lifecycle = this.deps.lifecycle;
     const initialOwner = lifecycle.getOwner();
     if (!initialOwner) return this.blocked('NO_OWNER', summary);
 
-    // A genuine 401 parks replay as AUTH_REQUIRED. Replaying in that state would
-    // re-send every queued operation, count each failure, and retry forever
-    // instead of pausing for same-subject reauthentication. Fail closed BEFORE
-    // acquiring the lease or dispatching anything.
-    const replay = lifecycle.requireReplayIdentity?.();
-    if (replay && replay.status !== 'READY') {
-      if (replay.reason === 'AUTH_REQUIRED') summary.authRequired += 1;
-      return this.blocked('AUTH_REQUIRED', summary);
-    }
-    if (replay && (replay.owner.subject !== initialOwner.subject || replay.owner.epoch !== initialOwner.epoch)) {
-      // The verified replay identity must agree with the owner we are about to
-      // dispatch for; otherwise the subject changed under us.
-      return this.blocked('NO_OWNER', summary);
-    }
+    const gate = this.replayGate(initialOwner, summary);
+    if (gate) return gate;
 
     const lock = this.deps.lock;
     let lease: LeaseRecord | null = null;
@@ -602,7 +620,7 @@ export class SyncCoordinator {
     operation: OutboxOperationRecord,
     summary: DrainSummary,
     lease: LeaseRecord | null,
-  ): Promise<{ removed: boolean; paused: boolean; ackRevision: number | null; blocked: boolean }> {
+  ): Promise<DispatchEffect> {
     await this.deps.store.update({ ...operation, dispatchState: 'DISPATCHING' });
 
     const input = await this.dispatchInput(owner, operation);
@@ -611,48 +629,7 @@ export class SyncCoordinator {
     try {
       outcome = await this.deps.send(input);
     } catch (error) {
-      const failure = classifyDispatchError(error);
-      if (failure === 'AUTH_REQUIRED') {
-        // A genuine 401 is NOT a transport retry: return the operation to
-        // PENDING (no attempt penalty) and BLOCK the whole run so the remaining
-        // queue is not hammered with the same rejected credentials.
-        await this.deps.store.update({ ...operation, dispatchState: 'PENDING' });
-        summary.authRequired += 1;
-        return { removed: false, paused: true, ackRevision: null, blocked: true };
-      }
-      if (failure === 'ACCESS_DENIED' || failure === 'INCOMPATIBLE_VERSION') {
-        // Non-transient server classifications are TERMINAL, not retried
-        // forever. They are re-evaluated only when user/account/content changes.
-        await this.retainTerminal(operation, failure);
-        summary.accessDenied += failure === 'ACCESS_DENIED' ? 1 : 0;
-        summary.incompatibleVersion += failure === 'INCOMPATIBLE_VERSION' ? 1 : 0;
-        return { removed: false, paused: false, ackRevision: null, blocked: false };
-      }
-      if (failure === 'REJECTED') {
-        // An HTTP 400 is a server contract rejection (e.g. hash-mismatch /
-        // validateOperation). Retrying re-sends the same invalid input, so it is
-        // retained TERMINAL rather than looping forever.
-        await this.retainTerminal(operation, 'REJECTED');
-        summary.rejected += 1;
-        return { removed: false, paused: false, ackRevision: null, blocked: false };
-      }
-      if (failure === 'CONFLICT') {
-        // A transport 409 with no parsed outcome is a durable conflict: mark it
-        // FAILED (user-resolvable) instead of rescheduling it forever.
-        await this.deps.store.update({
-          ...operation,
-          dispatchState: 'FAILED',
-          attemptCount: operation.attemptCount + 1,
-        });
-        summary.conflict += 1;
-        return { removed: false, paused: true, ackRevision: null, blocked: false };
-      }
-      // Truly transient network/5xx faults: reschedule WITH backoff, preserving
-      // the immutable id/payload — but only within a BOUNDED retry budget. Once
-      // exhausted the operation is retained TERMINAL (user-recoverable) so a
-      // poison head cannot loop forever.
-      await this.rescheduleOrExhaust(operation, failure, summary);
-      return { removed: false, paused: false, ackRevision: null, blocked: false };
+      return this.handleDispatchFailure(operation, error, summary);
     }
 
     // Discard stale results: the account changed or the sync lease is no longer
@@ -666,6 +643,56 @@ export class SyncCoordinator {
 
     const effect = await this.reconcile(owner, operation, outcome, summary);
     return { ...effect, blocked: false };
+  }
+
+  /**
+   * Classifies a dispatch rejection and reconciles the durable operation state /
+   * summary. A genuine 401 blocks the run without an attempt penalty; permanent
+   * classifications are retained terminal; a transport 409 is a user-resolvable
+   * conflict; everything else is a bounded transient retry. Extracted from
+   * `dispatch` to bound its cognitive complexity.
+   */
+  private async handleDispatchFailure(
+    operation: OutboxOperationRecord,
+    error: unknown,
+    summary: DrainSummary,
+  ): Promise<DispatchEffect> {
+    const failure = classifyDispatchError(error);
+    if (failure === 'AUTH_REQUIRED') {
+      await this.deps.store.update({ ...operation, dispatchState: 'PENDING' });
+      summary.authRequired += 1;
+      return { removed: false, paused: true, ackRevision: null, blocked: true };
+    }
+    if (failure === 'ACCESS_DENIED' || failure === 'INCOMPATIBLE_VERSION') {
+      // Non-transient server classifications are TERMINAL, not retried forever.
+      await this.retainTerminal(operation, failure);
+      summary.accessDenied += failure === 'ACCESS_DENIED' ? 1 : 0;
+      summary.incompatibleVersion += failure === 'INCOMPATIBLE_VERSION' ? 1 : 0;
+      return { removed: false, paused: false, ackRevision: null, blocked: false };
+    }
+    if (failure === 'REJECTED') {
+      // An HTTP 400 is a server contract rejection (e.g. hash-mismatch /
+      // validateOperation). Retrying re-sends the same invalid input, so it is
+      // retained TERMINAL rather than looping forever.
+      await this.retainTerminal(operation, 'REJECTED');
+      summary.rejected += 1;
+      return { removed: false, paused: false, ackRevision: null, blocked: false };
+    }
+    if (failure === 'CONFLICT') {
+      // A transport 409 with no parsed outcome is a durable conflict: mark it
+      // FAILED (user-resolvable) instead of rescheduling it forever.
+      await this.deps.store.update({
+        ...operation,
+        dispatchState: 'FAILED',
+        attemptCount: operation.attemptCount + 1,
+      });
+      summary.conflict += 1;
+      return { removed: false, paused: true, ackRevision: null, blocked: false };
+    }
+    // Truly transient network/5xx faults: reschedule WITH backoff within a
+    // BOUNDED retry budget (exhausted attempts are retained TERMINAL).
+    await this.rescheduleOrExhaust(operation, failure, summary);
+    return { removed: false, paused: false, ackRevision: null, blocked: false };
   }
 
   /**
@@ -685,7 +712,7 @@ export class SyncCoordinator {
     operation: OutboxOperationRecord,
     outcome: OperationOutcome,
     summary: DrainSummary,
-  ): Promise<{ removed: boolean; paused: boolean; ackRevision: number | null; blocked: boolean }> {
+  ): Promise<DispatchEffect> {
     switch (outcome.kind) {
       case 'APPLIED':
         await this.applyAck(operation, outcome);

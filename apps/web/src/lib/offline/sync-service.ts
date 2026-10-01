@@ -268,6 +268,98 @@ function projectedSyncedAt(
 }
 
 /**
+ * The stable identity a projected row should carry: null for a local-only
+ * pending row (`id === clientEntityId`), otherwise the server id. Extracted so
+ * `projectAnnotation` stays within the cognitive-complexity bound.
+ */
+function annotationServerEntityId(annotation: MergeAnnotation): string | null {
+  if (annotation.clientEntityId !== null && annotation.id === annotation.clientEntityId) return null;
+  return annotation.id;
+}
+
+/** Builds and persists one `readerRecords` row for a merged annotation. */
+async function projectAnnotation(
+  database: OfflineDatabase,
+  owner: { subject: string; epoch: number },
+  bookId: string,
+  annotation: MergeAnnotation,
+  prior: BookmarkRecord | HighlightRecord | undefined,
+  pending: readonly MergePendingOperation[],
+): Promise<void> {
+  const key = annotationRecordKey(owner.subject, annotation);
+  const serverEntityId = annotationServerEntityId(annotation);
+  // A projected SERVER row is server-confirmed, so it must not count as
+  // local-only work (which would permanently veto `fullyDrained`). A row still
+  // targeted by a pending local edit keeps its un-synced provenance.
+  const syncedAt = projectedSyncedAt(prior, serverEntityId, annotation, key, pending);
+  const createdAt = readNumber(annotation.data.createdAt, prior?.createdAt ?? Date.now());
+  const updatedAt = readNumber(annotation.data.updatedAt, prior?.updatedAt ?? Date.now());
+  const base = {
+    id: key,
+    subject: owner.subject,
+    clientEntityId: annotation.clientEntityId ?? annotation.id,
+    serverEntityId,
+    bookId,
+    contentVersion: readContentVersion(annotation.data),
+    revision: annotation.revision,
+    deletedAt: annotation.deletedAt,
+    syncedAt,
+    createdAt,
+    updatedAt,
+  };
+  if (annotation.kind === 'BOOKMARK') {
+    const record: BookmarkRecord = {
+      ...base,
+      page: readPage(annotation.data),
+      label: readNullableString(annotation.data.label),
+      color: readNullableString(annotation.data.color),
+      anchor: annotation.data.anchor ?? null,
+    };
+    await database.putAccountRecord(owner.subject, owner.epoch, 'readerRecords', record);
+    return;
+  }
+  const priorText = prior && 'text' in prior ? prior.text : '';
+  const priorAnchor = prior && 'anchor' in prior ? prior.anchor : null;
+  const record: HighlightRecord = {
+    ...base,
+    page: readPage(annotation.data),
+    text: readStringValue(annotation.data.text, priorText),
+    note: readNullableString(annotation.data.note),
+    color: readNullableString(annotation.data.color),
+    anchor: annotation.data.anchor ?? priorAnchor,
+  };
+  await database.putAccountRecord(owner.subject, owner.epoch, 'readerRecords', record);
+}
+
+/**
+ * Soft-deletes live local rows whose entity is tombstoned and absent from the
+ * merge. The merge already kept any row touched by pending work (it appears in
+ * `presentKeys`), so those are never clobbered here.
+ */
+async function softDeleteTombstonedRows(
+  database: OfflineDatabase,
+  owner: { subject: string; epoch: number },
+  bookId: string,
+  presentKeys: ReadonlySet<string>,
+  tombstones: BookMergeResult['tombstones'],
+): Promise<void> {
+  const tombstoned = new Set(tombstones.map((tombstone) => tombstone.entityId));
+  const affected = await database.getAllByIndex<BookmarkRecord | HighlightRecord>(
+    'readerRecords',
+    'subjectBook',
+    [owner.subject, bookId],
+  );
+  for (const row of affected) {
+    if (row.deletedAt !== null || presentKeys.has(row.id)) continue;
+    if (!isTombstonedRow(row, tombstoned)) continue;
+    await database.putAccountRecord(owner.subject, owner.epoch, 'readerRecords', {
+      ...row,
+      deletedAt: Date.now(),
+    });
+  }
+}
+
+/**
  * Projects the merged annotation set into `readerRecords` for one book:
  * upserts present/soft-deleted merged rows and soft-deletes live local rows
  * whose entity is tombstoned and absent from the merge (i.e. no pending work).
@@ -288,72 +380,13 @@ async function projectAnnotations(
   for (const annotation of result.annotations) {
     const key = annotationRecordKey(owner.subject, annotation);
     const prior = existing.find((row) => row.id === key);
-    // A merged annotation that carries a distinct server id is
-    // server-authoritative: record its `serverEntityId` so a later refresh keys
-    // by the same stable identity. A local-only pending row has
-    // `id === clientEntityId` and no server id yet.
-    const serverEntityId =
-      annotation.clientEntityId !== null && annotation.id === annotation.clientEntityId
-        ? null
-        : annotation.id;
-    // A projected SERVER row is server-confirmed, so it must not count as
-    // local-only work (which would permanently veto `fullyDrained`). A row still
-    // targeted by a pending local edit keeps its un-synced provenance.
-    const syncedAt = projectedSyncedAt(prior, serverEntityId, annotation, key, result.pending);
-    const base = {
-      id: key,
-      subject: owner.subject,
-      clientEntityId: annotation.clientEntityId ?? annotation.id,
-      serverEntityId,
-      bookId,
-      contentVersion: readContentVersion(annotation.data),
-      revision: annotation.revision,
-      deletedAt: annotation.deletedAt,
-      syncedAt,
-    };
-    if (annotation.kind === 'BOOKMARK') {
-      const record: BookmarkRecord = {
-        ...base,
-        page: readPage(annotation.data),
-        label: readNullableString(annotation.data.label),
-        color: readNullableString(annotation.data.color),
-        anchor: annotation.data.anchor ?? null,
-        createdAt: readNumber(annotation.data.createdAt, prior?.createdAt ?? Date.now()),
-        updatedAt: readNumber(annotation.data.updatedAt, prior?.updatedAt ?? Date.now()),
-      };
-      await database.putAccountRecord(owner.subject, owner.epoch, 'readerRecords', record);
-      continue;
-    }
-    const highlight: HighlightRecord = {
-      ...base,
-      page: readPage(annotation.data),
-      text: readStringValue(annotation.data.text, prior && 'text' in prior ? prior.text : ''),
-      note: readNullableString(annotation.data.note),
-      color: readNullableString(annotation.data.color),
-      anchor: annotation.data.anchor ?? (prior && 'anchor' in prior ? prior.anchor : null),
-      createdAt: readNumber(annotation.data.createdAt, prior?.createdAt ?? Date.now()),
-      updatedAt: readNumber(annotation.data.updatedAt, prior?.updatedAt ?? Date.now()),
-    };
-    await database.putAccountRecord(owner.subject, owner.epoch, 'readerRecords', highlight);
+    await projectAnnotation(database, owner, bookId, annotation, prior, result.pending);
   }
 
   // A server tombstone must remove a stale live local row, but the merge already
   // kept any row touched by pending work (it appears in `presentKeys`). Only rows
   // absent from the merge AND whose entity is tombstoned are soft-deleted.
-  const tombstoned = new Set(result.tombstones.map((tombstone) => tombstone.entityId));
-  const affected = await database.getAllByIndex<BookmarkRecord | HighlightRecord>(
-    'readerRecords',
-    'subjectBook',
-    [owner.subject, bookId],
-  );
-  for (const row of affected) {
-    if (row.deletedAt !== null || presentKeys.has(row.id)) continue;
-    if (!isTombstonedRow(row, tombstoned)) continue;
-    await database.putAccountRecord(owner.subject, owner.epoch, 'readerRecords', {
-      ...row,
-      deletedAt: Date.now(),
-    });
-  }
+  await softDeleteTombstonedRows(database, owner, bookId, presentKeys, result.tombstones);
 }
 
 /** True when a live local row's server/client identity is in the tombstone set. */

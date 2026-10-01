@@ -55,7 +55,7 @@ async function awaitRegisteredBarriers(): Promise<boolean> {
       }
     }),
   );
-  return outcomes.every((permitted) => permitted);
+  return outcomes.every(Boolean);
 }
 
 export interface PwaUpdateValue {
