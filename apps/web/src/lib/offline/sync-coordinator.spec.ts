@@ -17,6 +17,7 @@ import {
   type OutboxReceiptRecord,
 } from './contracts';
 import type { OutboxOperationRecord } from './outbox';
+import type { MergeAnnotation } from './snapshot-merge';
 import { OfflineDatabase, resetOfflineDatabaseHandle } from './database';
 import {
   createMemoryIndexedDb,
@@ -443,6 +444,61 @@ describe('SyncCoordinator', () => {
       expect.objectContaining({ id: expect.any(String), subject: OWNER.subject, resultKind: 'CONFLICT' }),
     );
     expect(harness.store.rows.map((row) => row.id).sort()).toEqual(['create', 'update']);
+  });
+
+  it('persists the returned conflict copy on a CONFLICT outcome (usable before any snapshot)', async () => {
+    const persistConflictCopy = jest.fn(async () => undefined);
+    const harness = makeHarness({ persistConflictCopy });
+    harness.store.rows.push(operation({ id: 'a', seq: 1 }));
+    const outcome: OperationOutcome = {
+      kind: 'CONFLICT',
+      entityId: 'server-1',
+      serverRevision: 5,
+      serverValue: { id: 'server-1', revision: 5 },
+      conflictCopyId: 'cc-1',
+      conflictCopy: {
+        id: 'cc-1',
+        operationId: 'op-a',
+        sourceEntityId: 'server-1',
+        bookId: BOOK,
+        contentVersion: 1,
+        page: 1,
+        text: 'offline edit',
+        note: null,
+        color: null,
+        anchor: null,
+        revision: 3,
+        reason: 'STALE_REVISION',
+        createdAt: 1,
+      },
+    };
+    harness.send.mockResolvedValue(outcome);
+
+    await harness.coordinator.drain();
+
+    expect(persistConflictCopy).toHaveBeenCalledTimes(1);
+    expect(persistConflictCopy.mock.calls[0]?.[0]).toEqual(OWNER);
+    expect(persistConflictCopy.mock.calls[0]?.[2]).toMatchObject({ kind: 'CONFLICT', conflictCopyId: 'cc-1' });
+  });
+
+  it('passes the real local annotation set into the merge during a snapshot refresh', async () => {
+    const local: MergeAnnotation[] = [
+      {
+        id: 'server-1',
+        kind: 'ANNOTATION',
+        clientEntityId: 'client-1',
+        revision: 2,
+        deletedAt: null,
+        data: { text: 'local' },
+      },
+    ];
+    const readLocalAnnotations = jest.fn(async () => local);
+    const harness = makeHarness({ readLocalAnnotations });
+    harness.store.rows.push(operation({ id: 'a', seq: 1, bookId: BOOK }));
+
+    await harness.coordinator.refreshSnapshots();
+
+    expect(readLocalAnnotations).toHaveBeenCalledWith(OWNER.subject, BOOK);
   });
 
   it('fetches, merges AND applies a snapshot for each book without losing pending work', async () => {
