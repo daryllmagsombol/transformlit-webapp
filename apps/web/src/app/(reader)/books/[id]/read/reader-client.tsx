@@ -51,9 +51,13 @@ interface Manifest {
  * Content version sentinel for session (non-version-pinned) reader endpoints.
  *
  * The online reader's reading-session/page endpoints are not version-pinned, so
- * the repository reports `0` here. `ReaderRecords.saveProgress` coerces a
- * non-positive value to the locally downloaded active version (or `1`), because
- * the server operation envelope requires a POSITIVE integer content version.
+ * the repository reports `0` here. Every `ReaderRecords` mutation — progress AND
+ * annotations — resolves a non-positive value to the locally downloaded active
+ * version (or `1`), because the server operation envelope requires a POSITIVE
+ * integer content version. The reader therefore passes this sentinel through to
+ * `<AnnotationPanel>` and relies on the in-`ReaderRecords` resolver, so no
+ * persisted/queued operation is ever stamped `0`.
+ *
  * Task 11 must send the server's current supported version before dispatch.
  */
 const CURRENT_CONTENT_VERSION = 0;

@@ -6,7 +6,8 @@ import {
   type HighlightRecord,
   type ProgressRecord,
   qualifyKey,
-} from './contracts';import {
+} from './contracts';
+import {
   coalesceProgress,
   nextLocalSequence,
   pendingProgressFor,
@@ -149,7 +150,7 @@ export class ReaderRecords {
       const owner = this.getOwner();
       if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
       const entityKey = qualifyKey(owner.subject, 'progress', input.bookId);
-      const contentVersion = await this.resolveProgressContentVersion(owner, input.bookId, input.contentVersion);
+      const contentVersion = await this.resolveContentVersion(owner, input.bookId, input.contentVersion);
       const record: ProgressRecord = {
         id: entityKey,
         subject: owner.subject,
@@ -194,21 +195,23 @@ export class ReaderRecords {
   }
 
   /**
-   * Resolves the content version stamped on a PROGRESS_SET operation.
+   * Resolves the content version stamped on EVERY reader operation (progress and
+   * annotations alike).
    *
    * The server operation envelope requires a POSITIVE integer content version
    * and rejects `0` (it validates the value against the book's supported
-   * versions). Progress is semantically content-version-independent, but the
-   * envelope field is still required. Preference order:
+   * versions). The online reader reports `0` because its session/page endpoints
+   * are not version-pinned, so a raw caller value can never be trusted blindly.
+   * Preference order:
    *  1. the caller's real content version when it is already positive
    *     (offline/pinned reading, or a future API-supplied version),
    *  2. the locally downloaded active version for this book,
    *  3. `1` as the minimal valid positive value.
    *
    * Task 11 is responsible for sending the server's CURRENT supported version
-   * for progress (rather than trusting any stored placeholder) before dispatch.
+   * before dispatch rather than trusting any stored placeholder.
    */
-  async resolveProgressContentVersion(
+  async resolveContentVersion(
     owner: AccountOwner,
     bookId: string,
     provided: number,
@@ -233,12 +236,13 @@ export class ReaderRecords {
     if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
     const clientEntityId = this.newId();
     const entityKey = qualifyKey(owner.subject, 'bookmark', clientEntityId);
+    const contentVersion = await this.resolveContentVersion(owner, input.bookId, input.contentVersion);
     const record: BookmarkRecord = {
       id: entityKey,
       subject: owner.subject,
       clientEntityId,
       bookId: input.bookId,
-      contentVersion: input.contentVersion,
+      contentVersion,
       page: input.page,
       label: null,
       color: null,
@@ -248,7 +252,7 @@ export class ReaderRecords {
       updatedAt: this.now(),
       deletedAt: null,
     };
-    return this.commitRecord(owner, input.bookId, input.contentVersion, entityKey, record, {
+    return this.commitRecord(owner, input.bookId, contentVersion, entityKey, record, {
       kind: 'BOOKMARK_ADD',
       entityKey,
       baseRevision: null,
@@ -269,8 +273,14 @@ export class ReaderRecords {
     if (!existing || existing.subject !== owner.subject) {
       return { status: 'FAILED', operationId: null, error: 'Bookmark not found on this device' };
     }
-    const record: BookmarkRecord = { ...existing, deletedAt: this.now(), revision: existing.revision + 1 };
-    return this.commitRecord(owner, input.bookId, input.contentVersion, entityKey, record, {
+    const contentVersion = await this.resolveContentVersion(owner, input.bookId, input.contentVersion);
+    const record: BookmarkRecord = {
+      ...existing,
+      contentVersion,
+      deletedAt: this.now(),
+      revision: existing.revision + 1,
+    };
+    return this.commitRecord(owner, input.bookId, contentVersion, entityKey, record, {
       kind: 'BOOKMARK_REMOVE',
       entityKey,
       baseRevision: input.baseRevision,
@@ -290,12 +300,13 @@ export class ReaderRecords {
     if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
     const clientEntityId = this.newId();
     const entityKey = qualifyKey(owner.subject, 'highlight', clientEntityId);
+    const contentVersion = await this.resolveContentVersion(owner, input.bookId, input.contentVersion);
     const record: HighlightRecord = {
       id: entityKey,
       subject: owner.subject,
       clientEntityId,
       bookId: input.bookId,
-      contentVersion: input.contentVersion,
+      contentVersion,
       page: input.page,
       text: input.text,
       note: input.note,
@@ -306,7 +317,7 @@ export class ReaderRecords {
       updatedAt: this.now(),
       deletedAt: null,
     };
-    return this.commitRecord(owner, input.bookId, input.contentVersion, entityKey, record, {
+    return this.commitRecord(owner, input.bookId, contentVersion, entityKey, record, {
       kind: 'ANNOTATION_CREATE',
       entityKey,
       baseRevision: null,
@@ -334,8 +345,10 @@ export class ReaderRecords {
     if (!existing || existing.subject !== owner.subject) {
       return { status: 'FAILED', operationId: null, error: 'Annotation not found on this device' };
     }
+    const contentVersion = await this.resolveContentVersion(owner, input.bookId, input.contentVersion);
     const record: HighlightRecord = {
       ...existing,
+      contentVersion,
       page: input.page,
       text: input.text,
       note: input.note,
@@ -344,7 +357,7 @@ export class ReaderRecords {
       revision: existing.revision + 1,
       updatedAt: this.now(),
     };
-    return this.commitRecord(owner, input.bookId, input.contentVersion, entityKey, record, {
+    return this.commitRecord(owner, input.bookId, contentVersion, entityKey, record, {
       kind: 'ANNOTATION_UPDATE',
       entityKey,
       baseRevision: input.baseRevision,
@@ -374,8 +387,14 @@ export class ReaderRecords {
     if (!existing || existing.subject !== owner.subject) {
       return { status: 'FAILED', operationId: null, error: 'Annotation not found on this device' };
     }
-    const record: HighlightRecord = { ...existing, deletedAt: this.now(), revision: existing.revision + 1 };
-    return this.commitRecord(owner, input.bookId, input.contentVersion, entityKey, record, {
+    const contentVersion = await this.resolveContentVersion(owner, input.bookId, input.contentVersion);
+    const record: HighlightRecord = {
+      ...existing,
+      contentVersion,
+      deletedAt: this.now(),
+      revision: existing.revision + 1,
+    };
+    return this.commitRecord(owner, input.bookId, contentVersion, entityKey, record, {
       kind: 'ANNOTATION_DELETE',
       entityKey,
       baseRevision: input.baseRevision,

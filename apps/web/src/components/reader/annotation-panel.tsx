@@ -127,12 +127,21 @@ export function itemIndexForAnchor(items: readonly PdfTextItem[], anchor: PageTe
  * duplicate strings, and binding by text would attach a highlight to the wrong
  * occurrence. A highlight with a null/legacy anchor therefore does not pre-fill
  * an item; the anchor is the only trustworthy provenance.
+ *
+ * When the panel knows a positive pinned `contentVersion`, a highlight from a
+ * DIFFERENT content version cannot bind even if page/offsets coincide — offsets
+ * are only meaningful within one pinned text layer. When the panel's version is
+ * unknown (`0`, online session), the version criterion is skipped so the anchor
+ * still binds; the persisted/queued version is resolved separately by
+ * `ReaderRecords`.
  */
 function findHighlightForItem(
   highlights: readonly HighlightRecord[],
   anchor: PageTextAnchor,
+  contentVersion: number,
 ): HighlightRecord | undefined {
   return highlights.find((highlight) => {
+    if (contentVersion >= 1 && highlight.contentVersion !== contentVersion) return false;
     const recordAnchor = highlight.anchor as Partial<PageTextAnchor> | null;
     if (!recordAnchor || recordAnchor.version !== ANCHOR_VERSION) return false;
     if (recordAnchor.page !== anchor.page) return false;
@@ -201,12 +210,12 @@ export function AnnotationPanel({
     if (!item) return;
     const anchor = anchorForItem(textItems, index, page);
     setSelectedIndex(index);
-    const existing = findHighlightForItem(highlights, anchor);
+    const existing = findHighlightForItem(highlights, anchor, contentVersion);
     setEditingId(existing?.id ?? null);
     setNote(existing?.note ?? '');
     setError(null);
     setStatus('IDLE');
-  }, [textItems, highlights, page]);
+  }, [textItems, highlights, page, contentVersion]);
 
   const beginEdit = useCallback((highlight: HighlightRecord) => {
     setEditingId(highlight.id);

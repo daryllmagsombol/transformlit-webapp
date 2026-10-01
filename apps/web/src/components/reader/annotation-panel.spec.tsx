@@ -80,10 +80,36 @@ describe('annotation anchors match the canonical text layer', () => {
     fireEvent.click(buttons[1]);
     expect(screen.getByRole('textbox', { name: 'Note' })).toHaveValue('second one');
   });
+
+  it('does not bind a highlight pinned to a different content version', () => {
+    const harness = makeHarness();
+    // Coincident page/offsets but a different pinned version: offsets are only
+    // meaningful within one content version, so this must not bind.
+    const staleHighlight = {
+      id: 'hl-stale',
+      clientEntityId: 'client-stale',
+      bookId: 'book-1',
+      contentVersion: 999,
+      page: 2,
+      text: 'Hello',
+      note: 'from another pinned version',
+      color: null,
+      anchor: { version: 1, page: 2, startOffset: 0, endOffset: 5 },
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+    };
+    renderPanel(harness, { highlights: [staleHighlight] });
+
+    fireEvent.click(screen.getByRole('button', { name: /highlight "Hello"/i }));
+    expect(screen.getByRole('textbox', { name: 'Note' })).toHaveValue('');
+  });
 });
 
 describe('AnnotationPanel', () => {
-  it('saves a highlight with an anchor derived from the selected text-layer item', async () => {    const harness = makeHarness();
+  it('saves a highlight with an anchor derived from the selected text-layer item', async () => {
+    const harness = makeHarness();
     renderPanel(harness);
 
     fireEvent.click(screen.getByRole('button', { name: /highlight "Hello"/i }));
