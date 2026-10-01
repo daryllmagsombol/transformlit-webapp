@@ -229,7 +229,6 @@ function isStorageDomException(error: unknown): boolean {
   if (typeof DOMException === 'undefined' || !(error instanceof DOMException)) return false;
   return (
     error.name === 'QuotaExceededError' ||
-    error.name === 'AbortError' ||
     error.name === 'InvalidStateError' ||
     error.name === 'NotFoundError'
   );

@@ -151,6 +151,11 @@ describe('classifyDispatchError', () => {
     expect(classifyDispatchError(new DOMException('quota', 'QuotaExceededError'))).toBe('STORAGE_FAILURE');
   });
 
+  it('treats a fetch/abort DOMException as transient, NOT a storage fault', () => {
+    // A user/fetch AbortError is a cancelled network request and must remain
+    // retryable; only genuine storage faults are STORAGE_FAILURE.
+    expect(classifyDispatchError(new DOMException('aborted', 'AbortError'))).toBe('TRANSIENT');
+  });
 });
 
 describe('SyncCoordinator', () => {
