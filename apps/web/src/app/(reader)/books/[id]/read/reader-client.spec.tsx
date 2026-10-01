@@ -38,6 +38,23 @@ jest.mock('../../../../../lib/reader/api', () => ({
 jest.mock('../../../../../lib/offline/database', () => ({ OfflineDatabase: jest.fn() }));
 jest.mock('../../../../../lib/offline/account-activation', () => ({ accountLifecycle: () => ({ getOwner: () => null }) }));
 
+const mockSaveProgress = jest.fn().mockResolvedValue({ status: 'SAVED', operationId: 'op-1', error: null });
+const mockGetProgress = jest.fn().mockResolvedValue(null);
+jest.mock('../../../../../lib/hooks/use-reader-records', () => ({
+  readerRecords: () => ({
+    saveProgress: (...args: unknown[]) => mockSaveProgress(...args),
+    getProgress: (...args: unknown[]) => mockGetProgress(...args),
+    createHighlight: jest.fn(),
+    updateHighlight: jest.fn(),
+    deleteHighlight: jest.fn(),
+    addBookmark: jest.fn(),
+    removeBookmark: jest.fn(),
+    listHighlights: jest.fn().mockResolvedValue([]),
+    listBookmarks: jest.fn().mockResolvedValue([]),
+  }),
+  useReaderAnnotations: () => ({ highlights: [], bookmarks: [], refresh: jest.fn() }),
+}));
+
 import { ReaderClient } from './reader-client';
 
 const fetchPageTextMock = mockFetchText;
@@ -50,6 +67,9 @@ describe('ReaderClient', () => {
     fetchPageTextMock.mockResolvedValue({ items: [{ t: 'Hello', x: 0.1, y: 0.1, w: 0.2, h: 0.02 }] });
     openReadingSessionMock.mockReset();
     openReadingSessionMock.mockResolvedValue({ expiresInMs: 900000 });
+    mockSaveProgress.mockClear();
+    mockGetProgress.mockReset();
+    mockGetProgress.mockResolvedValue(null);
     mockQuery.mockResolvedValue({
       data: { book: { id: 'book-1', title: 'Test Book', format: 'PDF', pageCount: 3, conversionStatus: 'READY', toc: [] } },
     });
@@ -80,6 +100,25 @@ describe('ReaderClient', () => {
   it('resumes from saved progress when the URL has no page', async () => {
     render(<ReaderClient bookId="book-1" />);
     expect(await screen.findByText('Page 2 of 3')).toBeInTheDocument();
+  });
+
+  it('prefers the durable on-device progress over the server read', async () => {
+    mockGetProgress.mockResolvedValue({ currentPage: 3 });
+    render(<ReaderClient bookId="book-1" />);
+    expect(await screen.findByText('Page 3 of 3')).toBeInTheDocument();
+  });
+
+  it('persists progress locally on a deliberate page change only', async () => {
+    render(<ReaderClient bookId="book-1" initialPage={1} />);
+    await screen.findByText('Page 1 of 3');
+    expect(mockSaveProgress).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+
+    expect(await screen.findByText('Page 2 of 3')).toBeInTheDocument();
+    expect(mockSaveProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 'book-1', currentPage: 2 }),
+    );
   });
 
   it('shows the access-denied state when the manifest query fails', async () => {

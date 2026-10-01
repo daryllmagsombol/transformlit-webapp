@@ -1,4 +1,3 @@
-import { gql } from '@apollo/client';
 import {
   BookReaderAnnotationSnapshotDocument,
   BookReadProgressDocument,
@@ -34,20 +33,6 @@ export type {
   ApplyBookReaderOperationMutation,
   ApplyBookReaderOperationMutationVariables,
 };
-
-/**
- * Legacy progress write document. Task 8 makes the server `saveProgress`
- * mutation reject with UPGRADE_REQUIRED; Task 11 migrates the online reader to
- * the `applyBookReaderOperation` operation envelope. Until then this remains the
- * only handwritten reader document.
- */
-export const SAVE_PROGRESS_MUTATION = gql`
-  mutation SaveReaderProgress($input: SaveProgressInput!) {
-    saveProgress(input: $input) {
-      currentPage
-    }
-  }
-`;
 
 export interface PdfTextItem {
   t: string;
@@ -143,14 +128,6 @@ export async function fetchReadProgress(bookId: string): Promise<{ currentPage: 
     fetchPolicy: 'no-cache',
   });
   return result.data?.readProgress ?? null;
-}
-
-/** Debounced by the reader client; persists the page so a later visit can resume. */
-export async function saveReaderProgress(bookId: string, currentPage: number): Promise<void> {
-  await apolloClient.mutate({
-    mutation: SAVE_PROGRESS_MUTATION,
-    variables: { input: { bookId, currentPage } },
-  });
 }
 
 /**

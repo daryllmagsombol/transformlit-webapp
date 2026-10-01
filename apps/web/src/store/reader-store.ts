@@ -4,6 +4,14 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 export type ReaderTheme = 'paper' | 'sepia' | 'warm' | 'dark';
 export type ReaderMode = 'paged' | 'scroll';
 
+/**
+ * Transient reader presentation preferences ONLY.
+ *
+ * Reading progress and annotations are owned by the account-scoped offline
+ * `ReaderRecords` store (Task 10), which commits each edit and its outbox
+ * operation atomically. This store must never hold authoritative progress or
+ * annotation state — `lastPage` was deliberately migrated out in v2.
+ */
 interface ReaderStore {
   theme: ReaderTheme;
   mode: ReaderMode;

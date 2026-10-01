@@ -1,5 +1,6 @@
 'use client';
 
+import { useCallback, useState, type ReactNode } from 'react';
 import { PageCanvas } from './page-canvas';
 import { ReaderToolbar } from './reader-toolbar';
 import type { PdfTextItem } from '../../lib/reader/api';
@@ -34,6 +35,12 @@ export interface BookReaderViewProps {
    * infinite spinner or a stale previous page.
    */
   readonly pageError?: string | null;
+  /**
+   * Annotation surface (highlight/note/bookmark). When provided, the toolbar
+   * gains a toggle and the panel renders beside the page. Callers own the
+   * local-first mutation wiring; the view stays presentational.
+   */
+  readonly annotations?: ReactNode;
 }
 
 /**
@@ -104,7 +111,11 @@ export function BookReaderView({
   theme = 'paper',
   statusNotice = null,
   pageError = null,
+  annotations = null,
 }: BookReaderViewProps) {
+  const [annotationsOpen, setAnnotationsOpen] = useState(false);
+  const toggleAnnotations = useCallback(() => setAnnotationsOpen((open) => !open), []);
+
   return (
     <div data-reader-theme={theme} className="flex min-h-dvh flex-col bg-paper text-on-surface">
       <ReaderToolbar
@@ -113,6 +124,8 @@ export function BookReaderView({
         pageCount={pageCount}
         onPageChange={onPageChange}
         onBack={onBack}
+        onToggleAnnotations={annotations ? toggleAnnotations : undefined}
+        annotationsOpen={annotationsOpen}
       />
       {statusNotice ? (
         <p
@@ -124,9 +137,16 @@ export function BookReaderView({
         </p>
       ) : null}
       <UnavailableFeatures capabilities={capabilities} />
-      <main className="flex flex-1 items-start justify-center overflow-auto p-4">
-        <ReaderSurface frame={frame} items={items} pageError={pageError} />
-      </main>
+      <div className="flex flex-1 flex-col lg:flex-row">
+        <main className="flex flex-1 items-start justify-center overflow-auto p-4">
+          <ReaderSurface frame={frame} items={items} pageError={pageError} />
+        </main>
+        {annotations && annotationsOpen ? (
+          <aside className="w-full shrink-0 border-t border-outline-variant bg-surface p-4 lg:w-[360px] lg:border-l lg:border-t-0">
+            {annotations}
+          </aside>
+        ) : null}
+      </div>
     </div>
   );
 }

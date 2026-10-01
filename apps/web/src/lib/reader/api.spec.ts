@@ -1,4 +1,11 @@
-import { fetchPageText, fetchReadProgress, openReadingSession, pageFrameUrl, saveReaderProgress } from './api';
+import {
+  applyReaderOperation,
+  fetchAnnotationSnapshot,
+  fetchPageText,
+  fetchReadProgress,
+  openReadingSession,
+  pageFrameUrl,
+} from './api';
 import { apolloClient, refreshTokens } from '../apollo-client';
 import { removeAccessToken, setAccessToken } from '../auth';
 import { API_BASE } from '../constants';
@@ -86,11 +93,31 @@ describe('reader api', () => {
     await expect(fetchReadProgress('book-1')).resolves.toBeNull();
   });
 
-  it('persists the current page through the saveProgress mutation', async () => {
-    mutateMock.mockResolvedValue({ data: { saveProgress: { currentPage: 12 } } });
-    await saveReaderProgress('book-1', 12);
+  it('sends a queued operation through the generated applyBookReaderOperation mutation', async () => {
+    mutateMock.mockResolvedValue({ data: { applyBookReaderOperation: { operationId: 'op-1', result: { kind: 'APPLIED' } } } });
+    const outcome = await applyReaderOperation({
+      bookId: 'book-1',
+      contentVersion: 1,
+      kind: 'PROGRESS_SET',
+      operationId: 'op-1',
+      baseRevision: 0,
+      currentPage: 12,
+      scrollY: null,
+    });
+    expect(outcome.operationId).toBe('op-1');
     expect(mutateMock).toHaveBeenCalledWith(
-      expect.objectContaining({ variables: { input: { bookId: 'book-1', currentPage: 12 } } }),
+      expect.objectContaining({ variables: { input: expect.objectContaining({ bookId: 'book-1', currentPage: 12 }) } }),
+    );
+  });
+
+  it('loads the authoritative annotation snapshot query', async () => {
+    queryMock.mockResolvedValue({
+      data: { bookReaderAnnotationSnapshot: { bookId: 'book-1', snapshotRevision: 3, annotations: [], tombstones: [], conflictCopies: [] } },
+    });
+    const snapshot = await fetchAnnotationSnapshot('book-1');
+    expect(snapshot.snapshotRevision).toBe(3);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ variables: { bookId: 'book-1' }, fetchPolicy: 'no-cache' }),
     );
   });
 });

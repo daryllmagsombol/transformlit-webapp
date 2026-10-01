@@ -75,14 +75,11 @@ describe('reader GraphQL documents match the API schema', () => {
     expect(printed).not.toContain('snapshotRevision');
   });
 
-  it('does not maintain a competing handwritten annotation snapshot or operation definition', () => {
-    // `api.ts` retains only the legacy saveProgress write (Task 11 migrates it to
-    // the generated operation envelope). The snapshot, progress read, and queued
-    // operation must all come from `@transformlit/graphql`.
+  it('does not maintain competing handwritten reader GraphQL definitions', () => {
+    // Task 10 removed the last handwritten progress write: the snapshot, the
+    // separate progress read, and the queued operation all come from
+    // `@transformlit/graphql`.
     const documents = extractGqlTemplates(readFileSync(join(WEB_ROOT, 'src', 'lib', 'reader', 'api.ts'), 'utf-8'));
-    const joined = documents.join('\n');
-    expect(joined).not.toContain('bookReaderAnnotationSnapshot');
-    expect(joined).not.toContain('applyBookReaderOperation');
-    expect(joined).not.toContain('readProgress');
+    expect(documents).toEqual([]);
   });
 });

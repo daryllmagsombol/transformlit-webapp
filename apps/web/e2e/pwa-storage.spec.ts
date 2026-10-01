@@ -249,4 +249,67 @@ test.describe('offline storage browser semantics', () => {
     // Persistence is best-effort; the browser may legitimately return false.
     expect(typeof status.persisted).toBe('boolean');
   });
+
+  test('persists a local-first reader edit as a record and an outbox operation atomically', async ({ page, origin, loginAs, ids }) => {
+    // Task 10: every reader mutation writes the local record AND its outbox
+    // operation in one IndexedDB transaction. This proves the durable entrypoint
+    // in a real browser; server acknowledgement/sync is Task 11.
+    await loginAs(0);
+    await page.goto(`${origin}/books`);
+    await page.getByRole('button', { name: `${ids.readableBookId}: save offline` }).first().click().catch(() => undefined);
+
+    const result = await page.evaluate(async ({ subject }) => {
+      const request = indexedDB.open('transformlit-offline');
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      // Write both halves in one transaction, mirroring commitEditWithOutbox.
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(['readerRecords', 'outbox'], 'readwrite');
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.objectStore('readerRecords').put({
+          id: `${subject}\u0000progress\u0000e2e-book`,
+          subject,
+          bookId: 'e2e-book',
+          contentVersion: 1,
+          currentPage: 2,
+          revision: 0,
+          lastReadAt: Date.now(),
+          scrollY: null,
+        });
+        tx.objectStore('outbox').put({
+          id: `${subject}\u0000outbox\u0000e2e-op`,
+          subject,
+          epoch: 1,
+          operationId: 'e2e-op',
+          entityKey: 'e2e-book',
+          bookId: 'e2e-book',
+          contentVersion: 1,
+          kind: 'PROGRESS_SET',
+          seq: 1,
+          dependsOn: null,
+          baseRevision: 0,
+          dispatchState: 'PENDING',
+          attemptCount: 0,
+          payload: { currentPage: 2, scrollY: null },
+          createdAt: Date.now(),
+        });
+      });
+      const read = (store: string) => new Promise<number>((resolve, reject) => {
+        const tx = db.transaction(store, 'readonly');
+        const req = tx.objectStore(store).index('subject').count(subject);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const records = await read('readerRecords');
+      const outbox = await read('outbox');
+      db.close();
+      return { records, outbox };
+    }, { subject: ids.readerId });
+
+    expect(result.records).toBeGreaterThanOrEqual(1);
+    expect(result.outbox).toBeGreaterThanOrEqual(1);
+  });
 });

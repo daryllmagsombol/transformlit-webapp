@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { gql, type TypedDocumentNode } from '@apollo/client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apolloClient } from '../../../../../lib/apollo-client';
-import { fetchReadProgress, saveReaderProgress, networkReaderTransport, type PdfTextItem } from '../../../../../lib/reader/api';
+import { fetchReadProgress, networkReaderTransport, type PdfTextItem } from '../../../../../lib/reader/api';
 import {
   BookRepository,
   type BookConversionStatus,
@@ -13,7 +13,9 @@ import {
 } from '../../../../../lib/reader/repository';
 import { OfflineDatabase } from '../../../../../lib/offline/database';
 import { accountLifecycle } from '../../../../../lib/offline/account-activation';
+import { readerRecords, useReaderAnnotations } from '../../../../../lib/hooks/use-reader-records';
 import { BookReaderView } from '../../../../../components/reader/book-reader-view';
+import { AnnotationPanel } from '../../../../../components/reader/annotation-panel';
 import { useReaderStore } from '../../../../../store';
 
 const BOOK_MANIFEST_QUERY: TypedDocumentNode<{ book: Manifest }, { id: string }> = gql`
@@ -45,8 +47,8 @@ interface Manifest {
   toc: Array<{ id: string; title: string; page: number; depth: number }>;
 }
 
-/** How long page positions settle before the server save fires. */
-const PROGRESS_SAVE_DEBOUNCE_MS = 1500;
+/** Content version sentinel for session (non-version-pinned) reader endpoints. */
+const CURRENT_CONTENT_VERSION = 0;
 
 /**
  * The online reader's repository. The network paths resolve metadata, start the
@@ -64,8 +66,7 @@ function createReaderRepository(): BookRepository {
         title: book.title,
         author: book.author ?? null,
         pageCount: book.pageCount ?? 0,
-        // Session endpoints are not version-pinned; use 0 as "current" sentinel.
-        contentVersion: 0,
+        contentVersion: CURRENT_CONTENT_VERSION,
         conversionStatus: book.conversionStatus,
         toc: book.toc.map((entry) => ({
           id: entry.id,
@@ -92,9 +93,11 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
   const [frame, setFrame] = useState<FrameHandle | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const pageCount = opened?.pageCount ?? 0;
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pageRef = useRef(page);
-  pageRef.current = page;
+  const { highlights, bookmarks, refresh } = useReaderAnnotations(bookId);
+  const annotations = useMemo(
+    () => ({ highlights, bookmarks, refresh }),
+    [highlights, bookmarks, refresh],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -119,20 +122,46 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
   }, [opened?.pageCount]);
 
   // Resume only when the URL did not pin a page — an explicit ?page always wins.
+  //
+  // Local-first: the on-device progress record is authoritative and is read
+  // synchronously from IndexedDB; the server read is a fallback for a first
+  // visit on a new device. No write happens here.
   useEffect(() => {
     if (initialPage !== undefined) return;
     let cancelled = false;
-    fetchReadProgress(bookId)
-      .then((progress) => {
+    (async () => {
+      const local = await readerRecords().getProgress(bookId);
+      if (!cancelled && local?.currentPage) {
+        setPage(local.currentPage);
+        return;
+      }
+      try {
+        const progress = await fetchReadProgress(bookId);
         if (!cancelled && progress?.currentPage) setPage(progress.currentPage);
-      })
-      .catch(() => {
+      } catch {
         /* no saved progress yet — start at page 1 */
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, [bookId, initialPage]);
+
+  /**
+   * Persists progress locally on a deliberate page change. Durability is
+   * immediate (one atomic IndexedDB transaction); only Task 11's DISPATCH is
+   * debounced/coalesced. There is no server write and no teardown flush.
+   */
+  const persistProgress = useCallback(
+    (nextPage: number, contentVersion: number) => {
+      readerRecords()
+        .saveProgress({ bookId, contentVersion, currentPage: nextPage, scrollY: null })
+        .catch(() => {
+          /* the panel surfaces local save failures; progress is best-effort UI state */
+        });
+    },
+    [bookId],
+  );
 
   useEffect(() => {
     if (!opened) return;
@@ -164,49 +193,21 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
         }
       },
     );
-
-    // Reading position is owned by the account-scoped offline store (added in
-    // a later task); the reader store no longer keeps an authoritative copy.
-    // The debounced server save below remains best-effort until then.
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      saveReaderProgress(bookId, page).catch(() => {
-        /* a later page-settle save retries */
-      });
-    }, PROGRESS_SAVE_DEBOUNCE_MS);
     return () => {
       cancelled = true;
-      if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [bookId, opened, page]);
-
-  // Flush the position when the tab is hidden or the reader unmounts.
-  useEffect(() => {
-    const flushOnHide = () => {
-      if (document.visibilityState === 'hidden') {
-        saveReaderProgress(bookId, pageRef.current).catch(() => {
-          /* best-effort on teardown */
-        });
-      }
-    };
-    document.addEventListener('visibilitychange', flushOnHide);
-    return () => {
-      document.removeEventListener('visibilitychange', flushOnHide);
-      saveReaderProgress(bookId, pageRef.current).catch(() => {
-        /* best-effort on teardown */
-      });
-    };
-  }, [bookId]);
 
   const goToPage = useCallback(
     (next: number) => {
       const clamped = Math.min(Math.max(next, 1), pageCount || 1);
       setPage(clamped);
+      persistProgress(clamped, opened?.contentVersion ?? CURRENT_CONTENT_VERSION);
       const params = new URLSearchParams(searchParams.toString());
       params.set('page', String(clamped));
       router.replace(`/books/${bookId}/read?${params.toString()}`);
     },
-    [bookId, pageCount, router, searchParams],
+    [bookId, pageCount, router, searchParams, persistProgress, opened?.contentVersion],
   );
 
   if (error) {
@@ -246,6 +247,18 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
       onBack={() => router.push('/books')}
       theme={theme}
       pageError={pageError}
+      annotations={
+        <AnnotationPanel
+          bookId={bookId}
+          contentVersion={opened.contentVersion}
+          page={page}
+          items={items}
+          highlights={annotations.highlights}
+          bookmarks={annotations.bookmarks}
+          records={readerRecords()}
+          onRecordsChanged={annotations.refresh}
+        />
+      }
     />
   );
 }
