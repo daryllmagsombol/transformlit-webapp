@@ -4,10 +4,12 @@ Evidence path for the release gates in `2026-10-01-pwa-design.md`. Items are gro
 where the evidence must be produced. **Local-only checks cannot substitute for
 live-origin/device checks, and vice versa.** Sources are primary vendor docs; see the end.
 
-Date: 2026-10-02 · Branch: `feature/pwa-offline` · HEAD: `a0371ac` · Base: `main`.
+Date: 2026-10-02 · Branch: `feature/pwa-offline` · Base: `main`. Evidence HEAD: `a0371ac`
+(the pre-documentation state this checklist records); the checklist itself lands on the
+branch tip.
 
 **Overall status: RELEASE BLOCKED.** Repository-controlled code and blocking CI gates are
-complete and review-clean, but the live-origin, CDN-retention, trusted-HTTPS,
+authored and reviewed, but the live-origin, CDN-retention, trusted-HTTPS,
 translation-rights and real-iOS-device evidence is **unverified** (external). See
 `docs/Deployment.md` §"PWA offline delivery path and release gates (Task 14C)" for the
 delivery-path description and the E1–E11 supplier table.

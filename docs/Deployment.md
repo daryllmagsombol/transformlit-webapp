@@ -322,10 +322,11 @@ that exists on this branch, and the external evidence that must be supplied befo
 release. It deliberately does **not** substitute local-container evidence for production
 infrastructure or physical-device evidence.
 
-**Status: RELEASE BLOCKED.** The repository-controlled code and CI gates are complete and
-review-clean, but the live-origin, CDN-retention, translation-rights and real-iOS-device
-evidence below is unverified. Do not enable translation downloads, private offline
-downloads or installed-PWA offline edits until the blocking items are closed.
+**Status: RELEASE BLOCKED.** The repository-controlled code and CI gates are authored and
+reviewed, but one blocking PWA CI job (`pwa-chromium`) has not yet run green, and the
+live-origin, CDN-retention, translation-rights and real-iOS-device evidence below is
+unverified. Do not enable translation downloads, private offline downloads or
+installed-PWA offline edits until the blocking items are closed.
 
 ### Delivery path ownership (from repository evidence)
 
@@ -337,7 +338,7 @@ The only delivery topology that repository Terraform actually defines is:
 | DNS + TLS termination | Nothing in `infra/`; `docs/ARCHITECTURE.md` / `docs/MEMORY.md` document Cloudflare "DNS + Full SSL" and `docs/Deployment.md` documents Full (strict) | Cloudflare account (external) |
 | Reverse proxy / edge cache | Nothing in `infra/`; no `cloudflare_*` resources, no cache/worker module | Cloudflare account (external) |
 | HTTPS ingress | `azurerm_container_app` ingress (`external_enabled = true`, `transport = "auto"`, `allow_insecure_connections = false`) | Terraform (`infra/modules/container-app/main.tf`) |
-| TLS certificate | ACA managed certificate auto-provisioned on custom-domain binding | ACA / Terraform custom-domain binding |
+| TLS certificate | ACA managed certificate on a **manually bound** custom domain (no `custom_domain`-consuming or certificate resource exists in `infra/`) | ACA / external operator |
 
 **Important distinction (unresolved):** `docs/Deployment.md`, `docs/ARCHITECTURE.md` and
 `docs/MEMORY.md` document a **path-split** proxy (`/api/*` → API container, `/*` → web
@@ -375,7 +376,8 @@ evidence only** and do not prove the real origin.
   unit-covered (14A).
 - **CI gates** (14B, `.github/workflows/opencode-review.yml`) run real type/contract/unit/
   build/integration checks; the AI `review` job is not a correctness gate. `pwa-chromium`
-  is wired as a blocking job but has not run green (see N4).
+  is wired as a blocking job but has not run green (see the Task 14B report at
+  `.superpowers/sdd/2026-10-01-pwa/task-14B-report.md`).
 - **Licensing gate fails closed.** `docs/superpowers/specs/2026-10-01-bible-offline-rights.md`
   records that no per-translation license grants offline storage/redistribution/format
   conversion; all curated translations are disabled until a reviewed record is supplied.
