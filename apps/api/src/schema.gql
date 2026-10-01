@@ -288,7 +288,7 @@ type Highlight {
 }
 
 type HighlightRecord {
-  anchor: PageTextAnchorV1!
+  anchor: PageTextAnchorV1
   bookId: ID!
   clientEntityId: String
   color: String

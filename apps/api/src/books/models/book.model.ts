@@ -372,7 +372,11 @@ export class HighlightRecord {
 
   @Field(() => String, { nullable: true }) color?: string | null;
 
-  @Field(() => PageTextAnchorV1) anchor: PageTextAnchorV1;
+  /**
+   * Nullable: a migrated legacy highlight (pre-anchor) has no trustworthy
+   * text-layer anchor. Never invented to satisfy a non-null shape.
+   */
+  @Field(() => PageTextAnchorV1, { nullable: true }) anchor?: PageTextAnchorV1 | null;
 
   @Field(() => Int) contentVersion: number;
 

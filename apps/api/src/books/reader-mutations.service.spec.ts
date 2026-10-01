@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { ReaderMutationsService } from './reader-mutations.service';
+import { ReaderMutationsService, CONCURRENT_OPERATION_CODE } from './reader-mutations.service';
 import {
   OperationKind,
   OperationTargetKind,
@@ -416,6 +416,33 @@ describe('ReaderMutationsService', () => {
       expect(value?.clientEntityId ?? null).toBeNull();
     });
 
+    it('serializes a conflict on a legacy highlight with a null anchor without fabricating one', async () => {
+      const { service, state } = build();
+      state.highlight.push({
+        id: 'legacy-hl',
+        userId: SUBJECT,
+        bookId: BOOK_ID,
+        clientEntityId: null,
+        page: 2,
+        text: 'legacy text',
+        note: null,
+        color: null,
+        anchor: null,
+        contentVersion: 1,
+        revision: 3,
+        deletedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const outcome = await service.applyOperation(SUBJECT, {
+        ...baseInput({ kind: OperationKind.ANNOTATION_UPDATE, entityId: 'legacy-hl', targetKind: OperationTargetKind.ANNOTATION, baseRevision: 1, page: 2, text: 'offline', note: null, color: null, anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 } } as never),
+        operationId: '18181818-1818-4181-8181-181818181818',
+      } as never);
+      expect(outcome.result.kind).toBe('CONFLICT');
+      const value = (outcome.result as { serverValue?: { anchor?: unknown } }).serverValue;
+      expect(value?.anchor ?? null).toBeNull();
+    });
+
     it('records an honest delete-vs-edit conflict copy from current server content', async () => {
       const { service, state } = build();
       const created = await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.ANNOTATION_CREATE, clientEntityId: CLIENT_ID, page: 2, text: 'v1', note: null, color: null, anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 } } as never));
@@ -509,7 +536,10 @@ describe('ReaderMutationsService', () => {
       // not fabricate a divergent second row.
       prisma.bookmark.findUnique.mockResolvedValueOnce(null);
       const second = { ...first, operationId: '14141414-1414-4141-8141-141414141414' } as never;
-      await expect(service.applyOperation(SUBJECT, second)).rejects.toBeInstanceOf(ConflictException);
+      const error = await service.applyOperation(SUBJECT, second).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ConflictException);
+      // A clearly retryable, stable code so clients retry rather than discard.
+      expect((error as ConflictException).getResponse()).toMatchObject({ code: CONCURRENT_OPERATION_CODE });
     });
   });
 });

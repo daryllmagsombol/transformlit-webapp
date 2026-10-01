@@ -72,9 +72,16 @@ const ENVELOPE_FIELDS = [
   'note',
 ] as const;
 
-/** Extra attempts to observe a concurrently-committed winner receipt. */
-const REPLAY_READ_ATTEMPTS = 3;
-const REPLAY_BACKOFF_MS = 5;
+/**
+ * Extra attempts to observe a concurrently-committed winner receipt. A
+ * unique-violation only fires after the winning transaction commits, so the
+ * winner is normally visible immediately; this bounded retry covers a replica /
+ * pooler read-your-writes lag without unbounded waiting.
+ */
+const REPLAY_READ_ATTEMPTS = 5;
+const REPLAY_BACKOFF_MS = 15;
+/** Stable, retryable code surfaced when a concurrent winner cannot be observed. */
+export const CONCURRENT_OPERATION_CODE = 'CONCURRENT_OPERATION_IN_PROGRESS';
 
 interface NormalizedAnchor {
   version: number;
@@ -198,8 +205,12 @@ export class ReaderMutationsService {
       await new Promise((resolve) => setTimeout(resolve, REPLAY_BACKOFF_MS));
     }
     // A unique violation we cannot map to a receipt is a genuine concurrent
-    // entity conflict, not an opaque 500: report it as a retryable conflict.
-    throw new ConflictException('Concurrent operation in progress for this operationId; retry');
+    // entity conflict, not an opaque 500: report it as a clearly retryable
+    // conflict with a stable code so clients can retry rather than discard.
+    throw new ConflictException({
+      message: 'Concurrent operation in progress for this operationId; retry',
+      code: CONCURRENT_OPERATION_CODE,
+    });
   }
 
   private replayOutcome(

@@ -358,3 +358,67 @@ and passes. `pnpm --filter @transformlit/api lint` is also broken repo-wide (ESL
 
 - `fix(api): release pubsub LISTEN connection so shutdown terminates`
 - `chore(api): regenerate canonical GraphQL SDL`
+
+---
+
+## Round 3 fix — nullable `HighlightRecord.anchor` + replay-window hardening
+
+### Residual I2 (partial): `HighlightRecord.anchor` nullability
+
+`HighlightRecord.anchor` was declared non-null in `book.model.ts` while `highlightValue` already
+emitted `anchor: row.anchor ?? null`; a `CONFLICT` on a migrated legacy (pre-anchor) highlight row
+therefore failed non-null GraphQL serialization. Made it nullable, matching the existing
+`BookmarkRecord.clientEntityId` / `HighlightRecord.clientEntityId` / `ConflictCopy.anchor`
+treatment. No anchor is fabricated. Contracts doc updated.
+
+RED (DB-free compiled-AppModule probe against the pre-fix model):
+`PRE-FIX: anchor: PageTextAnchorV1!`
+
+GREEN:
+```
+pnpm --filter @transformlit/api run graphql:schema:export   # guarded export
+pnpm --filter @transformlit/api run graphql:schema:check    # Canonical GraphQL SDL is current.
+# schema.gql diff: -  anchor: PageTextAnchorV1!  /  +  anchor: PageTextAnchorV1
+```
+New unit test proves a `CONFLICT` on a legacy highlight (null anchor) serializes with a null anchor
+and no fabricated provenance.
+
+### Replay-window minor
+
+The loser's `replayAfterConflict` window was ~3×5 ms, which could surface `ConflictException`
+instead of the winner's stored result under a longer lock/commit/read-your-writes window. Bounded
+and cheaply widened to 5 attempts × 15 ms, and the terminal failure now carries a stable retryable
+code `CONCURRENT_OPERATION_IN_PROGRESS` (`CONCURRENT_OPERATION_CODE`) so clients retry rather than
+discard. The unique violation only fires after the winner commits, so this remains a bounded
+worst-case wait, not a new blocking path. Unit test asserts the code.
+
+### Round 3 verification (Docker/Colima available)
+
+```
+pnpm --filter @transformlit/api test --runInBand
+Test Suites: 40 passed, 40 total   Tests: 655 passed, 655 total
+pnpm --filter @transformlit/api run typecheck   # exit 0
+pnpm --filter @transformlit/api run build       # 122 files compiled
+pnpm --filter @transformlit/api run test:command-runner   # compiled AppModule bootstrap matches SDL
+git diff --check                                # clean
+
+DOCKER_HOST=unix:///Users/daryllmagsombol/.colima/default/docker.sock \
+TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock \
+pnpm --filter @transformlit/api test:integration --runInBand \
+  --runTestsByPath test/reader-sync.integration.spec.ts
+Test Suites: 1 passed   Tests: 8 passed   # real Postgres concurrency/idempotency
+... test/pwa-migration.integration.spec.ts test/reader-security.integration.spec.ts
+Test Suites: 2 passed   Tests: 10 passed
+```
+
+### Round 3 files
+
+- Modified: `apps/api/src/books/models/book.model.ts`,
+  `apps/api/src/books/reader-mutations.service.ts`,
+  `apps/api/src/books/reader-mutations.service.spec.ts`,
+  `docs/superpowers/specs/2026-10-01-pwa-contracts.md`
+- Regenerated (guarded export): `apps/api/src/schema.gql`
+
+### Round 3 commit
+
+`fix(api): allow null anchor on legacy highlight records`
