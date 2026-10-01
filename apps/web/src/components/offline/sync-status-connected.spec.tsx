@@ -39,6 +39,8 @@ function status(overrides: Partial<CoordinatorStatus> = {}): CoordinatorStatus {
     pending: 0,
     conflicts: 0,
     terminal: 0,
+    incompatibleVersion: 0,
+    accessDenied: 0,
     authRequired: false,
     storageFailure: false,
     lastError: null,
@@ -91,6 +93,14 @@ describe('SyncStatusConnected', () => {
     emit(status({ state: 'ERROR', terminal: 2 }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/2/);
+    expect(screen.queryByRole('button', { name: /discard/i })).not.toBeInTheDocument();
+  });
+
+  it('surfaces an incompatible-version result explicitly (not as a generic conflict)', () => {
+    render(<SyncStatusConnected />);
+    emit(status({ state: 'ERROR', terminal: 1, incompatibleVersion: 1 }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/newer version of the app/i);
     expect(screen.queryByRole('button', { name: /discard/i })).not.toBeInTheDocument();
   });
 });

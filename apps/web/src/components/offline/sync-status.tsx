@@ -18,6 +18,14 @@ export interface SyncStatusProps {
    * Surfaced as needing recovery; never offered as discardable conflicts.
    */
   readonly terminal?: number;
+  /**
+   * Terminal outcomes whose content version was unavailable/incompatible.
+   * Surfaced with an explicit "update the app" recovery message rather than the
+   * generic terminal "recovery" label.
+   */
+  readonly incompatibleVersion?: number;
+  /** Terminal outcomes retained because access was denied. */
+  readonly accessDenied?: number;
   readonly state: 'IDLE' | 'SYNCING' | 'BLOCKED' | 'ERROR';
   readonly lastError?: string | null;
   /**
@@ -40,6 +48,8 @@ function statusLabel(
   pending: number,
   conflicts: number,
   terminal: number,
+  incompatibleVersion: number,
+  accessDenied: number,
   state: SyncStatusProps['state'],
   authRequired: boolean,
   storageFailure: boolean,
@@ -48,6 +58,12 @@ function statusLabel(
   if (storageFailure) return 'This device could not store your changes';
   if (conflicts > 0) {
     return `${conflicts} change${conflicts === 1 ? '' : 's'} need${conflicts === 1 ? 's' : ''} your attention`;
+  }
+  if (incompatibleVersion > 0) {
+    return `${incompatibleVersion} change${incompatibleVersion === 1 ? '' : 's'} need${incompatibleVersion === 1 ? 's' : ''} a newer version of the app to sync`;
+  }
+  if (accessDenied > 0) {
+    return `${accessDenied} change${accessDenied === 1 ? '' : 's'} need${accessDenied === 1 ? 's' : ''} access to sync`;
   }
   if (terminal > 0) {
     return `${terminal} change${terminal === 1 ? '' : 's'} need${terminal === 1 ? 's' : ''} recovery`;
@@ -63,6 +79,8 @@ export function SyncStatus({
   pending,
   conflicts,
   terminal = 0,
+  incompatibleVersion = 0,
+  accessDenied = 0,
   state,
   lastError = null,
   authRequired: authRequiredProp,
@@ -72,8 +90,18 @@ export function SyncStatus({
   onDiscard,
 }: SyncStatusProps) {
   const authRequired = isAuthRequired(authRequiredProp, lastError);
-  const hasWork = pending > 0 || conflicts > 0 || terminal > 0 || storageFailure;
-  const label = statusLabel(pending, conflicts, terminal, state, authRequired, storageFailure);
+  const hasWork =
+    pending > 0 || conflicts > 0 || terminal > 0 || incompatibleVersion > 0 || accessDenied > 0 || storageFailure;
+  const label = statusLabel(
+    pending,
+    conflicts,
+    terminal,
+    incompatibleVersion,
+    accessDenied,
+    state,
+    authRequired,
+    storageFailure,
+  );
 
   const controls = (
     <div className="flex flex-wrap gap-2">
@@ -116,6 +144,7 @@ export function SyncStatus({
         label={label}
         conflicts={conflicts}
         terminal={terminal}
+        incompatibleVersion={incompatibleVersion}
         authRequired={authRequired}
         storageFailure={storageFailure}
         showControls={hasWork}
@@ -129,6 +158,7 @@ function SyncStatusBody({
   label,
   conflicts,
   terminal,
+  incompatibleVersion,
   authRequired,
   storageFailure,
   showControls,
@@ -137,12 +167,13 @@ function SyncStatusBody({
   readonly label: string;
   readonly conflicts: number;
   readonly terminal: number;
+  readonly incompatibleVersion: number;
   readonly authRequired: boolean;
   readonly storageFailure: boolean;
   readonly showControls: boolean;
   readonly controls: ReactNode;
 }) {
-  if (conflicts > 0 || terminal > 0 || authRequired || storageFailure) {
+  if (conflicts > 0 || terminal > 0 || incompatibleVersion > 0 || authRequired || storageFailure) {
     return (
       <>
         <p role="alert" className="font-small text-small text-error" data-testid="sync-alert">

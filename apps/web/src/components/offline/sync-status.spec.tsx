@@ -59,6 +59,37 @@ describe('SyncStatus', () => {
     expect(onReauthenticate).toHaveBeenCalledTimes(1);
   });
 
+  it('surfaces incompatible-version recovery distinctly from access denial', () => {
+    const { rerender } = render(
+      <SyncStatus
+        pending={0}
+        conflicts={0}
+        terminal={1}
+        incompatibleVersion={1}
+        state="ERROR"
+        onRetry={jest.fn()}
+        onReauthenticate={jest.fn()}
+        onDiscard={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(/newer version of the app/i);
+
+    rerender(
+      <SyncStatus
+        pending={0}
+        conflicts={0}
+        terminal={1}
+        accessDenied={1}
+        state="ERROR"
+        onRetry={jest.fn()}
+        onReauthenticate={jest.fn()}
+        onDiscard={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(/need.*access to sync/i);
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/newer version/i);
+  });
+
   it('surfaces terminal work as needing recovery and never offers discard for it', () => {
     render(
       <SyncStatus

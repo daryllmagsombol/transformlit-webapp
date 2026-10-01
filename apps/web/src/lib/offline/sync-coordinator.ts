@@ -7,7 +7,13 @@ import {
   type OutboxReceiptRecord,
 } from './contracts';
 import type { OutboxOperationRecord } from './outbox';
-import { advanceSuccessorRevision, isBlockedSuccessor, orderForDispatch } from './outbox';
+import {
+  accessDeniedOperations,
+  advanceSuccessorRevision,
+  incompatibleVersionOperations,
+  isBlockedSuccessor,
+  orderForDispatch,
+} from './outbox';
 import { leaseStillValid } from './coordination';
 import {
   mergeSnapshot,
@@ -173,6 +179,14 @@ export interface CoordinatorStatus {
   readonly conflicts: number;
   /** Durable non-conflict terminal outcomes (dispatchState `TERMINAL`). */
   readonly terminal: number;
+  /**
+   * The subset of `terminal` whose content version was unavailable /
+   * incompatible — surfaced distinctly from access denial so the recovery
+   * message can be honest ("update the app" vs "request access").
+   */
+  readonly incompatibleVersion: number;
+  /** The subset of `terminal` retained because access was denied. */
+  readonly accessDenied: number;
   readonly authRequired: boolean;
   readonly storageFailure: boolean;
   readonly lastError: string | null;
@@ -585,6 +599,10 @@ export class SyncCoordinator {
       // as a conflict.
       conflicts: operations.filter((operation) => operation.dispatchState === 'FAILED').length,
       terminal: operations.filter((operation) => operation.dispatchState === 'TERMINAL').length,
+      // Broken out from `terminal` so incompatible-version recovery is surfaced
+      // distinctly from access denial.
+      incompatibleVersion: incompatibleVersionOperations(operations).length,
+      accessDenied: accessDeniedOperations(operations).length,
       authRequired: summary.authRequired > 0,
       storageFailure: summary.storageFailure > 0,
       lastError,

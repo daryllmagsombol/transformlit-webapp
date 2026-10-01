@@ -53,6 +53,8 @@ export function SyncStatusConnected() {
     status.pending > 0 ||
     status.conflicts > 0 ||
     status.terminal > 0 ||
+    status.incompatibleVersion > 0 ||
+    status.accessDenied > 0 ||
     status.authRequired ||
     status.storageFailure ||
     status.state === 'ERROR';
@@ -63,6 +65,8 @@ export function SyncStatusConnected() {
       pending={status.pending}
       conflicts={status.conflicts}
       terminal={status.terminal}
+      incompatibleVersion={status.incompatibleVersion}
+      accessDenied={status.accessDenied}
       state={busy ? 'SYNCING' : status.state}
       lastError={status.lastError}
       authRequired={status.authRequired}

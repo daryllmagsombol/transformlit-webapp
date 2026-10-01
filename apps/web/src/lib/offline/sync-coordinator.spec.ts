@@ -493,6 +493,8 @@ describe('SyncCoordinator', () => {
     const status = harness.coordinator.getStatus();
     expect(status?.terminal).toBe(1);
     expect(status?.conflicts).toBe(0);
+    expect(status?.accessDenied).toBe(1);
+    expect(status?.incompatibleVersion).toBe(0);
   });
 
   it('marks an incompatible-version outcome TERMINAL (not a conflict) and retains it', async () => {
@@ -513,6 +515,8 @@ describe('SyncCoordinator', () => {
     const status = harness.coordinator.getStatus();
     expect(status?.terminal).toBe(1);
     expect(status?.conflicts).toBe(0);
+    expect(status?.incompatibleVersion).toBe(1);
+    expect(status?.accessDenied).toBe(0);
   });
 
   it('subscribes to status transitions and replays the latest status', async () => {

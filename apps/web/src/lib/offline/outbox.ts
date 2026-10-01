@@ -75,6 +75,15 @@ export function incompatibleVersionOperations(
   );
 }
 
+/** Terminal operations retained because access was denied. */
+export function accessDeniedOperations(
+  operations: readonly OutboxOperationRecord[],
+): OutboxOperationRecord[] {
+  return operations.filter(
+    (operation) => operation.dispatchState === 'TERMINAL' && operation.terminalReason === 'ACCESS_DENIED',
+  );
+}
+
 export class OutboxError extends Error {
   constructor(message: string) {
     super(message);
