@@ -1,4 +1,4 @@
-FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS builder
 WORKDIR /workspace
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:3005/graphql
@@ -7,7 +7,7 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_WS_URL=ws://localhost:3005/graphql
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 
-RUN npm install -g pnpm@10
+RUN npm install -g pnpm@11.24.0
 
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/web/package.json apps/web/
@@ -18,13 +18,21 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
-# Install/build run as root (pnpm workspace install requires it);
-# only the runtime tree is handed over to the non-root `node` user before CMD.
-RUN pnpm exec turbo run build --filter=@transformlit/web... && \
-    chown -R node:node /workspace
-USER node
+RUN pnpm exec turbo run build --filter=@transformlit/web...
+
+FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+WORKDIR /workspace
 
 ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+COPY --from=builder --chown=node:node /workspace/apps/web/.next/standalone/ ./
+COPY --from=builder --chown=node:node /workspace/apps/web/public/ ./apps/web/public/
+COPY --from=builder --chown=node:node /workspace/apps/web/.next/static/ ./apps/web/.next/static/
+
+USER node
+
 EXPOSE 3000
 
-CMD ["pnpm", "--filter", "@transformlit/web", "run", "start"]
+CMD ["node", "apps/web/server.js"]

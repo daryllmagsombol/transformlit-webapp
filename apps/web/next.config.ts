@@ -47,6 +47,8 @@ const CSP_DIRECTIVES = [
   "form-action 'self'",
   // No upstream object/worker embedding from other origins.
   "object-src 'none'",
+  // The PWA service worker is same-origin; no worker is registered here.
+  "worker-src 'self'",
 ];
 
 /** Split a single CSP string into an object of directive → value arrays for Next. */
@@ -96,6 +98,14 @@ const nextConfig: NextConfig = {
               .map(([k, v]) => `${k} ${v.join(' ')}`.trim())
               .join('; '),
           },
+        ],
+      },
+      {
+        source: '/sw.js',
+        headers: [
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+          { key: 'Service-Worker-Allowed', value: '/' },
         ],
       },
     ];
