@@ -194,6 +194,33 @@ describe('controlled drain before exit', () => {
   });
 });
 
+describe('cancelling an exit', () => {
+  it('unfreezes writes and replay when the user cancels sign-out', async () => {
+    const harness = makeHarness();
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
+    expect(harness.lifecycle.writePermit()).toMatchObject({ permitted: false, reason: 'BLOCKED' });
+
+    harness.lifecycle.cancelExit();
+
+    expect(harness.lifecycle.writePermit()).toMatchObject({ permitted: true });
+    expect(harness.lifecycle.requireReplayIdentity().status).toBe('READY');
+  });
+
+  it('allows beginExit again after a cancel', async () => {
+    const harness = makeHarness();
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
+    harness.lifecycle.cancelExit();
+
+    const decision = harness.lifecycle.beginExit();
+
+    expect(decision).toEqual({ status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' });
+    expect(harness.lifecycle.writePermit()).toMatchObject({ permitted: false, reason: 'BLOCKED' });
+  });
+
+});
+
 describe('barrier, cleanup and invalidation ordering', () => {
   it('persists the barrier BEFORE destructive cleanup and before remote invalidation', async () => {
     const harness = makeHarness();
@@ -205,6 +232,34 @@ describe('barrier, cleanup and invalidation ordering', () => {
     // drain → persist barrier → remote invalidation → local cleanup → notify.
     expect(harness.persistence.barrierWrites).toHaveLength(1);
     expect(harness.events).toEqual(['drain', 'barrier', 'invalidate', `clear:${SUBJECT}`, 'notify']);
+  });
+
+  it('clears the barrier (activation eligible) only AFTER destructive cleanup settles', async () => {
+    const harness = makeHarness();
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
+
+    // Make cleanup observably last: record when the barrier is cleared.
+    let barrierClearedDuringCleanup: boolean | null = null;
+    harness.lifecycle.configureExitDeps({
+      controlledDrain: async () => drainReport(),
+      invalidateSession: async () => true,
+      clearLocalData: async (subject) => {
+        harness.events.push(`clear:${subject}`);
+        harness.persistence.events = harness.events;
+        // Read the barrier from inside cleanup — it must still be durable.
+        barrierClearedDuringCleanup = harness.persistence.barrier === null;
+      },
+    });
+
+    const decision = await harness.lifecycle.completeExit();
+
+    expect(decision).toEqual({ status: 'PROCEED' });
+    // Cleanup ran while the barrier was still durable, and activation becomes
+    // eligible only afterwards.
+    expect(barrierClearedDuringCleanup).toBe(false);
+    expect(harness.persistence.barrier).toBeNull();
+    expect(await harness.lifecycle.activationEligible()).toBe(true);
   });
 
   it('advances the epoch and fences late results from the previous owner', async () => {
@@ -259,6 +314,44 @@ describe('deferred logout', () => {
     expect(establish).toEqual({ status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' });
     const install = await harness.lifecycle.installIdentity({ epoch: 3, subject: 'subject-b', value: null });
     expect(install).toEqual({ status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' });
+  });
+
+  it('auto-resumes a barrier-only state on hydrate (crash mid-exit) without a manual retry', async () => {
+    // Simulate a crash between persistBarrier and the rest of the exit: only a
+    // durable barrier remains, no deferred marker.
+    const harness = makeHarness();
+    await harness.lifecycle.persistBarrier(SUBJECT, 2, 'SIGN_OUT');
+
+    // Re-hydrate with a WORKING invalidation: hydrate must retry and, on
+    // success, run cleanup and clear the barrier so activation is not blocked
+    // forever.
+    let invalidated = false;
+    harness.lifecycle.configureExitDeps({
+      controlledDrain: async () => drainReport(),
+      invalidateSession: async () => {
+        invalidated = true;
+        return true;
+      },
+      clearLocalData: async (subject) => {
+        harness.events.push(`clear:${subject}`);
+      },
+    });
+
+    await harness.lifecycle.hydrate();
+
+    expect(invalidated).toBe(true);
+    expect(harness.persistence.barrier).toBeNull();
+    expect(harness.events).toContain(`clear:${SUBJECT}`);
+    expect(await harness.lifecycle.activationEligible()).toBe(true);
+  });
+
+  it('keeps a barrier-only state blocked when resume invalidation still fails', async () => {
+    const harness = makeHarness({ invalidate: false });
+    await harness.lifecycle.persistBarrier(SUBJECT, 2, 'SIGN_OUT');
+
+    await harness.lifecycle.hydrate();
+
+    expect(await harness.lifecycle.activationEligible()).toBe(false);
   });
 
   it('resumes after restart: a rehydrated lifecycle still sees the deferred barrier', async () => {

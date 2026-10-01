@@ -76,6 +76,11 @@ export interface LifecycleExitDeps {
 export interface CompleteExitOptions {
   /** Explicit informed discard after the user confirms; skips the drain gate. */
   readonly discard?: boolean;
+  /**
+   * The caller already observed a fully-drained controlled-drain report in this
+   * (frozen) exit; new writes cannot land, so the drain re-check is skipped.
+   */
+  readonly drained?: boolean;
   readonly reason?: BarrierReason;
 }
 
@@ -136,6 +141,14 @@ export interface AuthLifecycle {
    * whether a controlled drain is required before the exit can proceed.
    */
   beginExit(reason?: BarrierReason): ExitDecision;
+  /** Cancels a begun-but-uncommitted exit, unfreezing writes + replay. */
+  cancelExit(): void;
+  /**
+   * Resumes an interrupted exit after restart (durable barrier and/or deferred
+   * logout with no in-memory state): retries remote invalidation and completes
+   * cleanup, or keeps the barrier durable when invalidation still fails.
+   */
+  resumeExit(): Promise<ExitDecision>;
   /**
    * Completes the exit: gates on the controlled drain (unless `discard`),
    * persists the barrier, invalidates the remote session, and clears old-account
@@ -178,6 +191,7 @@ export class AccountLifecycle implements AuthLifecycle {
   private readonly persistence: LifecyclePersistence;
   private authRequired = false;
   private freezing = false;
+  private exitReason: BarrierReason = 'SIGN_OUT';
   private version = 0;
   private readonly listeners = new Set<() => void>();
   private exitDeps: LifecycleExitDeps;
@@ -243,10 +257,18 @@ export class AccountLifecycle implements AuthLifecycle {
    */
   async hydrate(): Promise<AccountOwner | null> {
     // A durable barrier or deferred logout means the previous session must not
-    // be silently restored: the old account is mid-exit and activation is
-    // blocked until remote invalidation completes. Fail closed across restart.
-    if (await this.persistence.readBarrier()) return this.context.getOwner();
-    if (await this.persistence.readDeferredLogout()) return this.context.getOwner();
+    // be silently restored: the old account is mid-exit. Automatically RESUME
+    // the interrupted exit so a crash cannot leave activation blocked forever
+    // (retry invalidation; on success clean up and clear; on failure keep the
+    // durable barrier). Fail closed across restart.
+    if (await this.persistence.readBarrier()) {
+      await this.resumeExit();
+      return this.context.getOwner();
+    }
+    if (await this.persistence.readDeferredLogout()) {
+      await this.resumeExit();
+      return this.context.getOwner();
+    }
     if (this.context.hasEstablishedOwner()) return this.context.getOwner();
     const restored = await this.context.restore();
     if (restored) this.notify();
@@ -350,13 +372,69 @@ export class AccountLifecycle implements AuthLifecycle {
    * drain is required. The caller then runs `completeExit()` (drained) or
    * confirms an explicit discard.
    */
-  beginExit(_reason: BarrierReason = 'SIGN_OUT'): ExitDecision {
+  beginExit(reason: BarrierReason = 'SIGN_OUT'): ExitDecision {
     if (this.freezing) return { status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' };
     const owner = this.context.getOwner();
     if (!owner) return { status: 'PROCEED' };
+    this.exitReason = reason;
     this.freezing = true;
     this.notify();
     return { status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' };
+  }
+
+  /**
+   * Cancels a begun-but-uncommitted exit, unfreezing writes + replay. Once the
+   * exit has committed (ownership cleared / barrier durable) `freezing` is
+   * already false, so this is a safe no-op then.
+   */
+  cancelExit(): void {
+    if (!this.freezing) return;
+    this.freezing = false;
+    this.notify();
+  }
+
+  /**
+   * Resumes an interrupted exit after restart. When only a durable barrier
+   * remains (a crash mid-exit), it retries remote invalidation and, on success,
+   * runs destructive cleanup BEFORE clearing the barrier; on failure it keeps
+   * the barrier (writing a deferred marker) so activation stays blocked. With
+   * no barrier/deferred it is a no-op.
+   */
+  async resumeExit(): Promise<ExitDecision> {
+    const barrier = await this.persistence.readBarrier();
+    const deferred = await this.persistence.readDeferredLogout();
+    if (!barrier && !deferred) return { status: 'PROCEED' };
+    const subject = (deferred ?? barrier)?.subject ?? '';
+    const epoch = (deferred ?? barrier)?.epoch ?? 0;
+
+    let settled = false;
+    try {
+      settled = await this.exitDeps.invalidateSession();
+    } catch {
+      settled = false;
+    }
+    if (!settled) {
+      if (!deferred) {
+        await this.persistence.writeDeferredLogout({
+          id: 'deferred-logout',
+          subject,
+          epoch,
+          createdAt: Date.now(),
+        });
+      }
+      return { status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' };
+    }
+    // Invalidation settled: clean up the old subject BEFORE clearing the barrier
+    // so activation never becomes eligible while old data is still live.
+    try {
+      await this.exitDeps.clearLocalData(subject);
+    } catch {
+      // Cleanup is best effort; the barrier remains until it is cleared below.
+    }
+    await this.persistence.clearDeferredLogout();
+    await this.persistence.clearBarrier();
+    this.notify();
+    return { status: 'PROCEED' };
   }
 
   /**
@@ -373,13 +451,18 @@ export class AccountLifecycle implements AuthLifecycle {
     const owner = this.context.getOwner();
     this.freezing = true;
     if (!owner) {
-      // No local account to exit; still clear any stale barrier.
-      await this.persistence.clearBarrier();
       this.freezing = false;
+      // A pending deferred logout means the old session is still live: keep it
+      // (and the barrier) so activation stays blocked; otherwise clear a stale
+      // barrier so a crash-leftover gate does not block forever.
+      if (await this.persistence.readDeferredLogout()) {
+        return { status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' };
+      }
+      await this.persistence.clearBarrier();
       return { status: 'PROCEED' };
     }
 
-    if (options.discard !== true) {
+    if (options.discard !== true && options.drained !== true) {
       // Un-synced sign-out MUST be gated on the disjoint controlled-drain
       // contract, never a raw pending count (which includes blocked successors).
       const report = await this.exitDeps.controlledDrain();
@@ -389,7 +472,7 @@ export class AccountLifecycle implements AuthLifecycle {
     }
 
     // 2. Persist the durable barrier BEFORE any destructive step.
-    await this.persistBarrier(owner.subject, owner.epoch, options.reason ?? 'SIGN_OUT');
+    await this.persistBarrier(owner.subject, owner.epoch, options.reason ?? this.exitReason);
     // 3. Clear local ownership (advances the epoch, fencing every late result).
     await this.context.clear();
     this.authRequired = false;
@@ -397,31 +480,35 @@ export class AccountLifecycle implements AuthLifecycle {
     this.notify();
 
     // 4. Invalidate the remote session; a timeout/failure is NOT proof the old
-    //    cookie is gone, so persist a durable deferred marker that blocks
-    //    activation until invalidation actually completes.
+    //    cookie is gone.
     let settled = false;
     try {
       settled = await this.exitDeps.invalidateSession();
     } catch {
       settled = false;
     }
+
+    // 5. Destructive local cleanup runs BEFORE the barrier is cleared, so
+    //    activation can never become eligible while old-subject data (Apollo
+    //    cache, in-memory auth, IndexedDB) is still live.
+    try {
+      await this.exitDeps.clearLocalData(owner.subject);
+    } catch {
+      // Cleanup is best effort; the barrier stays durable until cleared below.
+    }
+
     if (settled) {
       await this.persistence.clearBarrier();
+      await this.persistence.clearDeferredLogout();
     } else {
+      // Keep the barrier AND persist a deferred marker; activation stays blocked
+      // until invalidation completes.
       await this.persistence.writeDeferredLogout({
         id: 'deferred-logout',
         subject: owner.subject,
         epoch: owner.epoch,
         createdAt: Date.now(),
       });
-    }
-
-    // 5. Destructive local cleanup only after the barrier is durable.
-    try {
-      await this.exitDeps.clearLocalData(owner.subject);
-    } catch {
-      // Local cleanup is approved regardless; the durable barrier already
-      // guarantees a new subject cannot activate over inconsistent data.
     }
     this.exitDeps.notifyOtherTabs?.();
 

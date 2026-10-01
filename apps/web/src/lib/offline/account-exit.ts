@@ -110,12 +110,44 @@ function notifyOtherTabs(): void {
   }
 }
 
-let configured = false;
+let exitListenerInstalled = false;
 
-/** Wires (once) the lifecycle exit seams. Idempotent. */
+/**
+ * Listens for another tab's account exit and fails closed here too: it
+ * re-hydrates the lifecycle so the durable barrier (if any) refuses activation
+ * in this tab. Tokens are NEVER carried over the channel.
+ */
+export function installAccountExitListener(): void {
+  if (exitListenerInstalled) return;
+  if (typeof BroadcastChannel === 'undefined') return;
+  exitListenerInstalled = true;
+  try {
+    const channel = new BroadcastChannel(LIFECYCLE_CHANNEL);
+    channel.onmessage = (event: MessageEvent) => {
+      const type = (event.data as { type?: string } | null)?.type;
+      if (type !== 'account-exit') return;
+      configureAccountExit();
+      accountLifecycle()
+        .hydrate()
+        .catch(() => undefined);
+    };
+  } catch {
+    exitListenerInstalled = false;
+  }
+}
+
+/** Test seam: allow the listener to be re-installed after a reset. */
+export function resetAccountExitListenerForTests(): void {
+  exitListenerInstalled = false;
+}
+
+/**
+ * Wires the lifecycle exit seams. Idempotent in effect (a plain reassignment of
+ * module-level deps) and re-run on every entry, so a reset of the lifecycle
+ * singleton never leaves stale deps behind.
+ */
 export function configureAccountExit(): void {
-  if (configured) return;
-  configured = true;
+  installAccountExitListener();
   accountLifecycle().configureExitDeps({
     controlledDrain: async (): Promise<ExitDrainReport> => {
       const work = await readExitWork();
@@ -127,31 +159,50 @@ export function configureAccountExit(): void {
   });
 }
 
-/** Test seam: allow re-wiring after a singleton reset. */
-export function resetAccountExitForTests(): void {
-  configured = false;
+/** The decision plus the work the exit gate observed. */
+export interface ExitRequest {
+  readonly decision: ExitDecision;
+  readonly work: ExitWorkSummary;
 }
 
 /**
- * Begins a sign-out / account switch: freezes new writes + replay and reports
- * whether a controlled drain is required. The caller then shows the exit dialog.
+ * Begins a sign-out / account switch and reads the outstanding work in one call
+ * (collapsing the begin → drain round-trip). The caller then shows the exit
+ * dialog when the work is not fully drained.
  */
-export async function beginAccountExit(): Promise<ExitDecision> {
+export async function requestAccountExit(): Promise<ExitRequest> {
   configureAccountExit();
   await accountLifecycle().hydrate();
-  return accountLifecycle().beginExit('SIGN_OUT');
+  const decision = accountLifecycle().beginExit('SIGN_OUT');
+  if (decision.status === 'PROCEED') return { decision, work: EMPTY_EXIT_WORK };
+  return { decision, work: await readExitWork() };
 }
 
-/** Completes the exit after the user syncs or explicitly confirms discard. */
-export async function completeAccountExit(discard: boolean): Promise<ExitDecision> {
+/**
+ * Completes the exit after the user syncs or explicitly confirms discard. When
+ * the caller already observed a fully-drained report (`drained`), the lifecycle
+ * skips its own re-check (writes are frozen, so nothing new can land).
+ */
+export async function completeAccountExit(discard: boolean, drained = false): Promise<ExitDecision> {
   configureAccountExit();
-  return accountLifecycle().completeExit({ discard, reason: 'SIGN_OUT' });
+  return accountLifecycle().completeExit({ discard, drained, reason: 'SIGN_OUT' });
+}
+
+/** Cancels a begun-but-uncommitted exit, restoring writes + replay. */
+export function cancelAccountExit(): void {
+  accountLifecycle().cancelExit();
 }
 
 /** Retries a deferred remote invalidation (e.g. after connectivity returns). */
 export async function retryDeferredLogout(): Promise<ExitDecision> {
   configureAccountExit();
   return accountLifecycle().resolveDeferredLogout();
+}
+
+/** Resumes an interrupted exit after restart (barrier-only or deferred). */
+export async function resumeAccountExit(): Promise<ExitDecision> {
+  configureAccountExit();
+  return accountLifecycle().resumeExit();
 }
 
 /** True when no durable barrier blocks a new activation. */

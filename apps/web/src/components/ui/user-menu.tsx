@@ -7,9 +7,9 @@ import { UserAvatar } from './user-avatar';
 import { AccountExitDialog } from '../offline/account-exit-dialog';
 import {
   EMPTY_EXIT_WORK,
-  beginAccountExit,
+  cancelAccountExit,
   completeAccountExit,
-  readExitWork,
+  requestAccountExit,
   type ExitWorkSummary,
 } from '../../lib/offline/account-exit';
 
@@ -36,13 +36,14 @@ export function UserMenu({ user }: UserMenuProps) {
    * un-synced sign-out; undrained work opens the informed dialog instead.
    */
   const runExit = useCallback(
-    async (discard: boolean) => {
+    async (discard: boolean, drained: boolean) => {
       setExitBusy(true);
       setExitError(null);
       try {
-        const decision = await completeAccountExit(discard);
+        const decision = await completeAccountExit(discard, drained);
         if (decision.status === 'SYNC_REQUIRED') {
-          setExitWork(await readExitWork());
+          const request = await requestAccountExit();
+          setExitWork(request.work);
           setExitError('Some changes still need to sync.');
           return;
         }
@@ -58,23 +59,37 @@ export function UserMenu({ user }: UserMenuProps) {
     [router],
   );
 
+  /**
+   * Starts the exit. Any failure must NOT leave writes permanently frozen with
+   * no recovery path: we unfreeze and surface the error in the dialog.
+   */
   const handleLogout = useCallback(() => {
     handleClose();
-    void (async () => {
-      const decision = await beginAccountExit();
-      const work = await readExitWork();
+    const start = async () => {
+      const { decision, work } = await requestAccountExit();
       if (decision.status === 'PROCEED' || work.fullyDrained) {
-        await runExit(false);
+        await runExit(false, work.fullyDrained);
         return;
       }
       setExitWork(work);
       setExitOpen(true);
-    })();
+    };
+    start().catch(() => {
+      cancelAccountExit();
+      setExitWork(EMPTY_EXIT_WORK);
+      setExitError('Could not start sign-out. Please try again.');
+      setExitOpen(true);
+    });
   }, [handleClose, runExit]);
 
-  const handleSync = useCallback(() => void runExit(false), [runExit]);
-  const handleConfirmDiscard = useCallback(() => void runExit(true), [runExit]);
+  const handleSync = useCallback(() => {
+    runExit(false, exitWork.fullyDrained).catch(() => undefined);
+  }, [runExit, exitWork.fullyDrained]);
+  const handleConfirmDiscard = useCallback(() => {
+    runExit(true, false).catch(() => undefined);
+  }, [runExit]);
   const handleCancelExit = useCallback(() => {
+    cancelAccountExit();
     setExitOpen(false);
     setExitError(null);
   }, []);
