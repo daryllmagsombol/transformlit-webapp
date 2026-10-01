@@ -415,7 +415,8 @@ export function AnnotationPanel({
                 ) : null}
                 {unresolved ? (
                   <p
-                    role="alert"
+                    role="status"
+                    aria-live="polite"
                     data-testid="annotation-unresolved"
                     className="font-small text-small text-error"
                   >

@@ -9,7 +9,9 @@ import {
   planProgressChoice,
   planRetarget,
   planServerChoice,
+  progressChoicePage,
   referencedContentVersions,
+  serverProgressPage,
   type ConflictPlanContext,
   type ConflictView,
   type StoredConflictCopyRecord,
@@ -230,6 +232,29 @@ describe('resolution plans', () => {
     const plan = planProgressChoice(conflict, [progressBase], 'SERVER', 4, context(() => 'new-p'));
     expect(plan.removeIds).toEqual([progressBase.id]);
     expect(plan.upserts).toHaveLength(0);
+  });
+});
+
+describe('progress choice resolution', () => {
+  function progressConflict(serverValue: Record<string, unknown> | null): ConflictView {
+    return listConflictViews([conflicted('p', {
+      kind: 'PROGRESS_SET',
+      entityKey: qualifyKey(OWNER.subject, 'progress', BOOK),
+      payload: { currentPage: 2, scrollY: null },
+    })], [], [], { 'op-p': { revision: 4, value: serverValue } })[0];
+  }
+
+  it('exposes the local or server resume page for an explicit choice', () => {
+    const conflict = progressConflict({ currentPage: 40, revision: 4 });
+    expect(progressChoicePage(conflict, 'LOCAL')).toBe(2);
+    expect(progressChoicePage(conflict, 'SERVER')).toBe(40);
+  });
+
+  it('reports an unknown server page as null so the SERVER control can be disabled', () => {
+    const conflict = progressConflict(null);
+    expect(serverProgressPage(conflict)).toBeNull();
+    expect(progressChoicePage(conflict, 'SERVER')).toBeNull();
+    expect(progressChoicePage(conflict, 'LOCAL')).toBe(2);
   });
 });
 

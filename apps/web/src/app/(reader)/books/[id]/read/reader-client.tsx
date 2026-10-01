@@ -20,6 +20,7 @@ import { OfflineDatabase } from '../../../../../lib/offline/database';
 import { accountLifecycle } from '../../../../../lib/offline/account-activation';
 import {
   conflictResolver,
+  progressChoicePage,
   type ConflictResolutionResult,
   type ConflictServerValue,
   type ConflictView,
@@ -114,11 +115,25 @@ async function loadServerValues(bookId: string): Promise<Record<string, Conflict
     const snapshot = await fetchAnnotationSnapshot(bookId);
     const values: Record<string, ConflictServerValue> = {};
     for (const row of snapshot.annotations) {
-      values[row.id] = { revision: row.revision, value: row };
+      values[row.id] = { revision: row.revision, value: row as unknown as Record<string, unknown> };
     }
     return values;
   } catch {
     return {};
+  }
+}
+
+/** The authoritative server reading position, or null when unavailable. */
+async function loadProgressServerValue(bookId: string): Promise<ConflictServerValue | null> {
+  try {
+    const progress = await fetchReadProgress(bookId);
+    if (!progress) return null;
+    return {
+      revision: progress.revision,
+      value: { currentPage: progress.currentPage, revision: progress.revision },
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -163,7 +178,19 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
 
   const loadConflicts = useCallback(async () => {
     const serverValues = await loadServerValues(bookId);
-    setConflicts(await conflictResolver().listConflicts(bookId, serverValues));
+    let next = await conflictResolver().listConflicts(bookId, serverValues);
+    // A PROGRESS_SET conflict's server value comes from the SEPARATE revisioned
+    // progress endpoint, not the annotation snapshot.
+    if (next.some((conflict) => conflict.conflictKind === 'PROGRESS' && conflict.serverValue === null)) {
+      const progress = await loadProgressServerValue(bookId);
+      if (progress) {
+        for (const conflict of next) {
+          if (conflict.conflictKind === 'PROGRESS') serverValues[conflict.operationId] = progress;
+        }
+        next = await conflictResolver().listConflicts(bookId, serverValues);
+      }
+    }
+    setConflicts(next);
   }, [bookId]);
 
   useEffect(() => {
@@ -222,14 +249,7 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
       ),
     [applyResolution],
   );
-  const resolveProgress = useCallback(
-    (conflict: ConflictView, choice: ProgressChoice) =>
-      applyResolution(
-        () => conflictResolver().resolveProgress(conflict, choice),
-        choice === 'LOCAL' ? 'Resumed at your page' : 'Resumed at the server page',
-      ),
-    [applyResolution],
-  );
+
 
   useEffect(() => {
     let cancelled = false;
@@ -293,6 +313,29 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
         });
     },
     [bookId],
+  );
+
+  /**
+   * Resolve a PROGRESS conflict by the explicit chosen position and ADOPT it in
+   * the reader + local record (so the choice is not a no-op). LOCAL adopts the
+   * offline page; SERVER adopts the authoritative server page.
+   */
+  const resolveProgress = useCallback(
+    (conflict: ConflictView, choice: ProgressChoice) => {
+      const chosenPage = progressChoicePage(conflict, choice);
+      return applyResolution(
+        async () => {
+          const result = await conflictResolver().resolveProgress(conflict, choice);
+          if (result.status === 'RESOLVED' && chosenPage !== null) {
+            setPage(chosenPage);
+            persistProgress(chosenPage, opened?.contentVersion ?? CURRENT_CONTENT_VERSION);
+          }
+          return result;
+        },
+        choice === 'LOCAL' ? 'Resumed at your page' : 'Resumed at the server page',
+      );
+    },
+    [applyResolution, persistProgress, opened?.contentVersion],
   );
 
   useEffect(() => {
@@ -380,7 +423,7 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
       theme={theme}
       pageError={pageError}
       conflicts={
-        conflicts.length > 0 ? (
+        conflicts.length > 0 || conflictStatus !== null || conflictError !== null ? (
           <ConflictPanel
             conflicts={conflicts}
             busy={conflictBusy}

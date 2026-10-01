@@ -1,6 +1,7 @@
 'use client';
 
-import type { ConflictView, ProgressChoice } from '../../lib/offline/conflicts';
+import { useEffect, useRef } from 'react';
+import { serverProgressPage, type ConflictView, type ProgressChoice } from '../../lib/offline/conflicts';
 
 /**
  * Accessible, keyboard-operable conflict resolution surface (Task 12).
@@ -27,9 +28,8 @@ export interface ConflictPanelProps {
   readonly error?: string | null;
 }
 
-function readField(value: unknown, key: string): string | null {
-  if (!value || typeof value !== 'object') return null;
-  const field = (value as Record<string, unknown>)[key];
+function readField(value: Record<string, unknown> | null | undefined, key: string): string | null {
+  const field = value?.[key];
   if (typeof field === 'string') return field;
   if (typeof field === 'number') return String(field);
   return null;
@@ -149,19 +149,27 @@ function ProgressActions({
   readonly onResolveProgress?: (conflict: ConflictView, choice: ProgressChoice) => void;
 }) {
   if (!onResolveProgress) return null;
+  const serverPageKnown = serverProgressPage(conflict) !== null;
   return (
-    <div className="flex flex-wrap gap-2">
-      <ChoiceButton
-        label="Resume at my page"
-        tone="primary"
-        disabled={busy}
-        onClick={() => onResolveProgress(conflict, 'LOCAL')}
-      />
-      <ChoiceButton
-        label="Resume at server page"
-        disabled={busy}
-        onClick={() => onResolveProgress(conflict, 'SERVER')}
-      />
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-2">
+        <ChoiceButton
+          label="Resume at my page"
+          tone="primary"
+          disabled={busy}
+          onClick={() => onResolveProgress(conflict, 'LOCAL')}
+        />
+        <ChoiceButton
+          label="Resume at server page"
+          disabled={busy || !serverPageKnown}
+          onClick={() => onResolveProgress(conflict, 'SERVER')}
+        />
+      </div>
+      {!serverPageKnown ? (
+        <p role="status" aria-live="polite" className="font-small text-small text-on-surface-variant">
+          The server position is not available yet; you can still resume at your page.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -253,18 +261,34 @@ export function ConflictPanel({
   statusMessage = null,
   error = null,
 }: ConflictPanelProps) {
-  if (conflicts.length === 0) return null;
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const previousCount = useRef(conflicts.length);
+
+  useEffect(() => {
+    // When a conflict resolves, its focused control unmounts. Move focus to the
+    // panel so keyboard users are not dropped back to <body>.
+    if (conflicts.length < previousCount.current) {
+      sectionRef.current?.focus();
+    }
+    previousCount.current = conflicts.length;
+  }, [conflicts.length]);
+
+  if (conflicts.length === 0 && !statusMessage && !error) return null;
 
   return (
     <section
+      ref={sectionRef}
+      tabIndex={-1}
       aria-label="Conflicts needing resolution"
       role="region"
       data-testid="conflict-panel"
       className="flex flex-col gap-3 rounded-xl border border-outline-variant bg-surface-container-low p-4"
     >
-      <h2 className="font-display text-headline-h4 text-on-surface">
-        {conflicts.length === 1 ? '1 conflict' : `${conflicts.length} conflicts`} need your decision
-      </h2>
+      {conflicts.length > 0 ? (
+        <h2 className="font-display text-headline-h4 text-on-surface">
+          {conflicts.length === 1 ? '1 conflict' : `${conflicts.length} conflicts`} need your decision
+        </h2>
+      ) : null}
 
       {statusMessage ? (
         <p role="status" aria-live="polite" className="font-small text-small text-primary" data-testid="conflict-status">
@@ -277,19 +301,21 @@ export function ConflictPanel({
         </p>
       ) : null}
 
-      <ul className="flex flex-col gap-3">
-        {conflicts.map((conflict) => (
-          <ConflictCard
-            key={conflict.operationId}
-            conflict={conflict}
-            busy={busy}
-            onChooseServer={onChooseServer}
-            onKeepOfflineCopy={onKeepOfflineCopy}
-            onRetarget={onRetarget}
-            onResolveProgress={onResolveProgress}
-          />
-        ))}
-      </ul>
+      {conflicts.length > 0 ? (
+        <ul className="flex flex-col gap-3">
+          {conflicts.map((conflict) => (
+            <ConflictCard
+              key={conflict.operationId}
+              conflict={conflict}
+              busy={busy}
+              onChooseServer={onChooseServer}
+              onKeepOfflineCopy={onKeepOfflineCopy}
+              onRetarget={onRetarget}
+              onResolveProgress={onResolveProgress}
+            />
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }

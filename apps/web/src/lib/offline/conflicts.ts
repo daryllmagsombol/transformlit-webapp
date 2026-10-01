@@ -46,7 +46,8 @@ export type ConflictKind = 'ANNOTATION' | 'BOOKMARK' | 'PROGRESS';
 /** The authoritative server record (or progress) for a conflicted entity. */
 export interface ConflictServerValue {
   readonly revision: number | null;
-  readonly value: unknown;
+  /** The opaque server record/progress object; null when unavailable. */
+  readonly value: Record<string, unknown> | null;
 }
 
 /** A `ConflictCopyRecord` reduced to the identity/provenance a panel needs. */
@@ -80,7 +81,8 @@ export interface ConflictView {
   readonly entityKey: string;
   readonly sourceEntityId: string | null;
   readonly serverRevision: number | null;
-  readonly serverValue: unknown | null;
+  /** The authoritative server record/progress, or null when not loaded. */
+  readonly serverValue: Record<string, unknown> | null;
   readonly offlineEdit: Readonly<Record<string, unknown>>;
   readonly conflictCopy: ConflictCopyView | null;
   readonly reason: ConflictReason | null;
@@ -134,10 +136,15 @@ function conflictKindOf(kind: OutboxOperationKind): ConflictKind {
   return 'ANNOTATION';
 }
 
-function readString(payload: unknown, key: string): string | null {
-  if (!payload || typeof payload !== 'object') return null;
-  const value = (payload as Record<string, unknown>)[key];
+function readString(payload: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = payload?.[key];
   return typeof value === 'string' ? value : null;
+}
+
+/** Reads a finite page number from an opaque progress/server payload. */
+export function readPage(payload: Record<string, unknown> | null | undefined): number | null {
+  const value = payload?.currentPage;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function toCopyView(record: StoredConflictCopyRecord | undefined): ConflictCopyView | null {
@@ -228,6 +235,21 @@ export function listConflictViews(
 
 function namespacedId(context: ConflictPlanContext, operationId: string): string {
   return qualifyKey(context.subject, 'outbox', operationId);
+}
+
+/** The server's resume page for a progress conflict, or null when unknown. */
+export function serverProgressPage(conflict: ConflictView): number | null {
+  return readPage(conflict.serverValue);
+}
+
+/**
+ * The resume position of an explicit PROGRESS choice. `LOCAL` is the offline
+ * page; `SERVER` is the authoritative server page (null when unavailable, in
+ * which case the control must not be offered as if it worked).
+ */
+export function progressChoicePage(conflict: ConflictView, choice: ProgressChoice): number | null {
+  if (choice === 'LOCAL') return readPage(conflict.offlineEdit);
+  return serverProgressPage(conflict);
 }
 
 /** The value a later edit contributes on top of the conflict copy's content. */
@@ -403,8 +425,8 @@ export function planProgressChoice(
     return { removeIds: [conflict.outboxId], upserts: [], enqueuedOperationIds: [] };
   }
   const operationId = context.newId();
-  const currentPage = conflict.offlineEdit.currentPage;
-  const scrollY = conflict.offlineEdit.scrollY ?? null;
+  const currentPage = readPage(conflict.offlineEdit) ?? 1;
+  const scrollY = typeof conflict.offlineEdit.scrollY === 'number' ? conflict.offlineEdit.scrollY : null;
   const operation: OutboxOperationRecord = {
     id: namespacedId(context, operationId),
     subject: context.subject,

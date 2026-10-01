@@ -106,6 +106,39 @@ describe('ConflictPanel', () => {
     expect(onResolveProgress).toHaveBeenNthCalledWith(2, expect.objectContaining({ operationId: 'op-a' }), 'SERVER');
   });
 
+  it('does NOT offer the server resume position when it is unknown (no no-op control)', () => {
+    renderPanel({
+      conflicts: [conflict({
+        kind: 'PROGRESS_SET',
+        conflictKind: 'PROGRESS',
+        serverValue: null,
+        offlineEdit: { currentPage: 2, scrollY: null },
+        conflictCopy: null,
+      })],
+    });
+    expect(screen.getByRole('button', { name: /resume at server page/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /resume at my page/i })).toBeEnabled();
+    expect(screen.getByRole('status')).toHaveTextContent(/server position is not available/i);
+  });
+
+  it('restores focus to the panel after a conflict resolves (focused control unmounts)', () => {
+    const props = {
+      onChooseServer: jest.fn(),
+      onKeepOfflineCopy: jest.fn(),
+      onRetarget: jest.fn(),
+      onResolveProgress: jest.fn(),
+    };
+    const { rerender } = render(<ConflictPanel conflicts={[conflict()]} {...props} />);
+    const button = screen.getByRole('button', { name: /use server version/i });
+    button.focus();
+    expect(button).toHaveFocus();
+
+    rerender(<ConflictPanel conflicts={[]} statusMessage="Resolved: kept the server version" {...props} />);
+
+    expect(screen.getByRole('region', { name: /conflicts/i })).toHaveFocus();
+    expect(screen.getByRole('status')).toHaveTextContent(/kept the server version/i);
+  });
+
   it('announces resolution status and surfaces errors accessibly', () => {
     renderPanel({ statusMessage: 'Resolved: kept the server version', error: 'Could not resolve' });
     expect(screen.getByRole('status')).toHaveTextContent(/kept the server version/i);
