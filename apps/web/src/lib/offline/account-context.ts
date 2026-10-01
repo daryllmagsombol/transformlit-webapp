@@ -98,7 +98,13 @@ export class AccountContext {
     const record = await this.persistence.readState();
     if (record?.subject) {
       this.owner = { subject: record.subject, epoch: record.epoch };
-      this.ownerMismatch = verifiedSubject !== null && verifiedSubject !== record.subject;
+      // Only a KNOWN verified subject can update the flag. A `null` bootstrap
+      // (e.g. completeLocalAuth/hydrateAccountLifecycle) must not clear a sticky
+      // mismatch, or a stale owner would authorize writes under a different
+      // cookie subject.
+      if (verifiedSubject !== null) {
+        this.ownerMismatch = verifiedSubject !== record.subject;
+      }
     }
     return this.owner;
   }

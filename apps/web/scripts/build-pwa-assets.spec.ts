@@ -236,6 +236,30 @@ describe('build-pwa-assets', () => {
     expect(offlineRsc.handled).toBe(false);
   });
 
+  it('serves an offline shell-asset cache miss without rejecting (falls back to /offline)', async () => {
+    fixture = createFixture();
+    generate(fixture);
+    const harness = createWorkerHarness(readGeneratedWorker(fixture));
+    const inventory = readGeneratedInventory(fixture);
+    harness.setNetwork((url) =>
+      url.endsWith('pwa-assets.json') ? { status: 200, body: JSON.stringify(inventory) } : { status: 200, body: 'asset' },
+    );
+    await harness.install();
+
+    // Model cache eviction of one allowlisted chunk, then go offline. A missing
+    // shell-asset cache entry must resolve to the cached document fallback, never
+    // reject `respondWith` (which surfaces as a network error to the page).
+    const cacheName = `transformlit-shell-${inventory.releaseId}`;
+    const evicted = '/_next/static/chunks/runtime.js';
+    expect(inventory.assets).toContain(evicted);
+    await harness.deleteCacheEntry(cacheName, evicted);
+    harness.setNetwork(() => 'offline');
+
+    const result = await harness.dispatch({ url: evicted });
+    expect(result.handled).toBe(true);
+    expect(result.body).toBe('asset');
+  });
+
   it('never writes private or non-allowlisted responses into the cache', async () => {
     fixture = createFixture();
     generate(fixture);

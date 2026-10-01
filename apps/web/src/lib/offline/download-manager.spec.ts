@@ -514,6 +514,86 @@ describe('download manager', () => {
       // v2 was not referenced and is gone.
       expect(await harness.database.getBookVersion(SUBJECT, BOOK_ID, 2)).toBeNull();
     });
+
+    it('does NOT promote a retained STAGED version to READY', async () => {
+      await seedLifecycle(harness.database);
+      // An interrupted replacement leaves a STAGED descriptor behind (as
+      // `stageBook` does before verification) while an annotation pins it.
+      await harness.database.putAccountRecord(SUBJECT, EPOCH, 'bookVersions', {
+        id: qualifyKey(SUBJECT, 'bookversion', BOOK_ID, 9),
+        subject: SUBJECT,
+        bookId: BOOK_ID,
+        contentVersion: 9,
+        status: 'STAGED',
+        active: false,
+        title: 'Interrupted',
+        author: null,
+        description: null,
+        coverAssetId: null,
+        totalPages: 1,
+        toc: [],
+        provenance: 'test',
+        createdAt: 1,
+      });
+      await harness.database.putAccountRecord(SUBJECT, EPOCH, 'bookPages', {
+        id: qualifyKey(SUBJECT, 'bookpage', BOOK_ID, 9, 1),
+        subject: SUBJECT,
+        bookId: BOOK_ID,
+        contentVersion: 9,
+        pageNumber: 1,
+        imageAssetId: 'a',
+        textLayerAssetId: 'b',
+        image: null,
+        text: '{}',
+        textItems: null,
+        verified: true,
+      });
+      await harness.database.putAccountRecord(SUBJECT, EPOCH, 'readerRecords', {
+        id: qualifyKey(SUBJECT, 'highlight', 'h9'),
+        subject: SUBJECT,
+        bookId: BOOK_ID,
+        contentVersion: 9,
+      });
+
+      await harness.manager.removeBookDownload(BOOK_ID);
+
+      // The retained STAGED descriptor must keep its real status and never be
+      // surfaced as an openable READY version.
+      const retained = await harness.database.getBookVersion(SUBJECT, BOOK_ID, 9);
+      expect(retained?.status).toBe('STAGED');
+      expect(retained?.active).toBe(false);
+      expect(await harness.database.getActiveBookVersion(SUBJECT, BOOK_ID)).toBeNull();
+
+      const manifest = await harness.manager.getBookStatus(BOOK_ID);
+      expect(manifest?.status).not.toBe('READY');
+      expect(manifest?.activeVersion ?? null).toBeNull();
+    });
+
+    it('does not create a phantom READY manifest for a retained version with no stored row', async () => {
+      await seedLifecycle(harness.database);
+      await harness.manager.startBookDownload(BOOK_ID);
+
+      // An annotation pins content version 999, which was never stored (e.g. a
+      // download interrupted before its descriptor landed).
+      await harness.database.putAccountRecord(SUBJECT, EPOCH, 'readerRecords', {
+        id: qualifyKey(SUBJECT, 'highlight', 'h999'),
+        subject: SUBJECT,
+        bookId: BOOK_ID,
+        contentVersion: 999,
+      });
+
+      await harness.manager.removeBookDownload(BOOK_ID);
+
+      // v1 was not referenced and is gone; the manifest must not point READY at
+      // a version that has no complete stored row.
+      expect(await harness.database.getBookVersion(SUBJECT, BOOK_ID, 1)).toBeNull();
+      expect(await harness.database.getActiveBookVersion(SUBJECT, BOOK_ID)).toBeNull();
+
+      const manifest = await harness.manager.getBookStatus(BOOK_ID);
+      expect(manifest).not.toBeNull();
+      expect(manifest?.status).not.toBe('READY');
+      expect(manifest?.activeVersion).toBeNull();
+    });
   });
 
   describe('account fencing', () => {

@@ -194,6 +194,89 @@ describe('open cache discipline (I1)', () => {
   });
 });
 
+describe('schema upgrade safety (I3)', () => {
+  afterEach(() => {
+    resetOfflineDatabaseHandle();
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  /**
+   * A minimal upgrade-capable fake whose `createObjectStore` throws the way real
+   * IndexedDB does when the store already exists. This is the exact failure a
+   * naive first version bump would hit.
+   */
+  function createUpgradeFake(oldVersion: number, existingStores: readonly string[] = []) {
+    type Handler = ((event?: unknown) => void) | null;
+    const existing = new Set(existingStores);
+    const created: string[] = [];
+    const db = {
+      close: jest.fn(),
+      createObjectStore: jest.fn((name: string) => {
+        if (existing.has(name)) throw new DOMException(`store ${name} already exists`, 'ConstraintError');
+        existing.add(name);
+        created.push(name);
+        return { createIndex: jest.fn() };
+      }),
+      objectStoreNames: { contains: (name: string) => existing.has(name) },
+    } as unknown as IDBDatabase;
+    const request: {
+      result: IDBDatabase;
+      error: Error | null;
+      onupgradeneeded: Handler;
+      onsuccess: Handler;
+      onerror: Handler;
+      onblocked: Handler;
+    } = {
+      result: db,
+      error: null,
+      onupgradeneeded: null,
+      onsuccess: null,
+      onerror: null,
+      onblocked: null,
+    };
+    const openMock = jest.fn(() => {
+      queueMicrotask(() => {
+        request.onupgradeneeded?.({ oldVersion });
+        request.onsuccess?.({});
+      });
+      return request;
+    });
+    return {
+      indexedDB: { open: openMock as unknown as (name: string, version?: number) => unknown },
+      openMock,
+      created,
+    };
+  }
+
+  it('creates every store on a fresh database', async () => {
+    const fake = createUpgradeFake(0);
+    (globalThis as { indexedDB?: unknown }).indexedDB = fake.indexedDB;
+
+    await expect(openOfflineDatabase()).resolves.toBeDefined();
+    expect(fake.created).toEqual(OFFLINE_STORES.map((store) => store.name));
+  });
+
+  it('opens at a higher version over an existing store set without throwing', async () => {
+    // Every store from version 1 already exists; the bump must not re-create
+    // any of them or the ConstraintError aborts the upgrade and bricks the DB.
+    const existing = OFFLINE_STORES.map((store) => store.name);
+    const fake = createUpgradeFake(1, existing);
+    (globalThis as { indexedDB?: unknown }).indexedDB = fake.indexedDB;
+
+    await expect(openOfflineDatabase()).resolves.toBeDefined();
+    expect(fake.created).toEqual([]);
+  });
+
+  it('skips stores that already exist even when a migration replays from zero', async () => {
+    const existing = OFFLINE_STORES.map((store) => store.name);
+    const fake = createUpgradeFake(0, existing);
+    (globalThis as { indexedDB?: unknown }).indexedDB = fake.indexedDB;
+
+    await expect(openOfflineDatabase()).resolves.toBeDefined();
+    expect(fake.created).toEqual([]);
+  });
+});
+
 describe('subject integrity guards (I2)', () => {
   const subject = 'user-a';
   const epoch = 1;

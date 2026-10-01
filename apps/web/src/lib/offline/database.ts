@@ -151,13 +151,62 @@ const PRIVATE_SUBJECT_STORES: readonly string[] = [
 
 let cachedDatabase: Promise<IDBDatabase> | null = null;
 
-function createSchema(db: IDBDatabase): void {
+/** Creates the store/index layout, skipping anything the database already has. */
+function ensureStores(db: IDBDatabase): void {
   for (const schema of OFFLINE_STORES) {
+    // Never re-create a present store: on a version bump the upgrade runs over
+    // the existing database, and `createObjectStore` on an existing name throws
+    // `ConstraintError`, aborting the whole upgrade and bricking the offline DB.
+    if (db.objectStoreNames?.contains(schema.name)) continue;
     const store = db.createObjectStore(schema.name, { keyPath: schema.keyPath });
     for (const index of schema.indexes ?? []) {
       store.createIndex(index.name, index.keyPath, { unique: index.unique ?? false });
     }
   }
+}
+
+/**
+ * Additive, ordered schema migrations. Each entry runs when opening a database
+ * whose stored version is strictly below `version`, so a future bump replays
+ * only the steps it has not applied. Version 1 is the initial layout.
+ */
+const SCHEMA_MIGRATIONS: readonly { readonly version: number; readonly apply: (db: IDBDatabase) => void }[] = [
+  { version: 1, apply: ensureStores },
+];
+
+/** Applies every migration newer than `oldVersion`, idempotently. */
+function createSchema(db: IDBDatabase, oldVersion: number): void {
+  for (const migration of SCHEMA_MIGRATIONS) {
+    if (oldVersion < migration.version) migration.apply(db);
+  }
+}
+
+/**
+ * The highest retained content version that is genuinely openable: its stored
+ * descriptor is `READY` and every declared page is present and verified.
+ *
+ * `retainVersions` is derived from annotation/pending-op references and can name
+ * a version with no stored row or an interrupted `STAGED` row. Such a version
+ * must never be promoted or surfaced, so it is excluded here and the manifest
+ * falls back to a recoverable state instead of advertising a phantom READY.
+ */
+function highestCompleteReadyRetained(
+  versions: readonly BookVersionRecord[],
+  pages: readonly BookPageRecord[],
+  retain: ReadonlySet<number>,
+): number | null {
+  const verifiedPages = new Map<number, number>();
+  for (const page of pages) {
+    if (!retain.has(page.contentVersion) || !page.verified) continue;
+    verifiedPages.set(page.contentVersion, (verifiedPages.get(page.contentVersion) ?? 0) + 1);
+  }
+  let highest: number | null = null;
+  for (const version of versions) {
+    if (!retain.has(version.contentVersion) || version.status !== 'READY') continue;
+    if ((verifiedPages.get(version.contentVersion) ?? 0) < version.totalPages) continue;
+    if (highest === null || version.contentVersion > highest) highest = version.contentVersion;
+  }
+  return highest;
 }
 
 /**
@@ -193,7 +242,10 @@ function openDatabaseAttempt(): Promise<IDBDatabase> {
     const request = globalThis.indexedDB.open(OFFLINE_DB_NAME, OFFLINE_DB_VERSION);
     let settled = false;
 
-    request.onupgradeneeded = () => createSchema(request.result);
+    request.onupgradeneeded = (event) => {
+      const oldVersion = (event as IDBVersionChangeEvent | undefined)?.oldVersion ?? 0;
+      createSchema(request.result, oldVersion);
+    };
     request.onblocked = () => {
       // Another connection holds an older version. Fail closed now rather than
       // hanging; if the request later succeeds it is closed without being used.
@@ -766,39 +818,42 @@ export class OfflineDatabase {
         guardWrite(tx, subject, epoch, fail, () => {
           const versionStore = tx.objectStore('bookVersions');
           const pageStore = tx.objectStore('bookPages');
-          // The highest retained version becomes the single active/READY version
-          // IN THE SAME TRANSACTION as the removal + manifest repoint, so a
-          // pinned version that a newer download had demoted is openable again
-          // (otherwise getActiveBookVersion returns null despite content being
-          // present, and the offline reader throws BookNotReadyError).
-          const pinned = retain.size > 0 ? Math.max(...retain) : null;
+          // Only a retained version whose stored descriptor is genuinely READY
+          // may become the single active/READY version. `retainVersions` also
+          // carries version numbers that have no stored row (or an interrupted
+          // STAGED row) because a saved annotation/pending op references them;
+          // promoting one of those would expose unverified content through
+          // `getActiveBookVersion()` and bypass `verifyCompleteBook`.
+          const pinned = highestCompleteReadyRetained(versions, pages, retain);
           for (const version of versions) {
             if (!retain.has(version.contentVersion)) {
               versionStore.delete(version.id);
               continue;
             }
             const shouldBeActive = version.contentVersion === pinned;
-            versionStore.put({
-              ...version,
-              active: shouldBeActive,
-              status: shouldBeActive ? 'READY' : version.status,
-            });
+            versionStore.put({ ...version, active: shouldBeActive });
           }
           for (const page of pages) {
             if (!retain.has(page.contentVersion)) pageStore.delete(page.id);
           }
-          this.handleRemovalManifest(tx, manifestId, retain);
+          this.handleRemovalManifest(tx, manifestId, retain, pinned);
           done(undefined);
         });
       },
     );
   }
 
-  /** Deletes the manifest, or repoints it at the highest pinned version. */
+  /**
+   * Deletes the manifest, or repoints it at the highest complete pinned version.
+   * When no retained version is genuinely openable, the manifest is moved to a
+   * recoverable `INTERRUPTED` state with a null `activeVersion` rather than
+   * advertising a READY version whose content is missing or unverified.
+   */
   private handleRemovalManifest(
     tx: IDBTransaction,
     manifestId: string,
     retain: ReadonlySet<number>,
+    pinned: number | null,
   ): void {
     const manifests = tx.objectStore('downloadManifests');
     if (retain.size === 0) {
@@ -809,7 +864,10 @@ export class OfflineDatabase {
     request.onsuccess = () => {
       const manifest = request.result as DownloadManifestRecord | undefined;
       if (!manifest) return;
-      const pinned = [...retain].sort((a, b) => b - a)[0];
+      if (pinned === null) {
+        manifests.put({ ...manifest, status: 'INTERRUPTED', activeVersion: null });
+        return;
+      }
       manifests.put({ ...manifest, status: 'READY', activeVersion: pinned });
     };
   }

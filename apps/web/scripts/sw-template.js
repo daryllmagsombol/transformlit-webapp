@@ -108,10 +108,17 @@ async function respondWithDocumentFallback(request) {
 }
 
 async function respondWithShellAsset(url) {
-  const cache = await caches.open(RELEASE_CACHE);
-  const cached = await cache.match(url.pathname);
-  if (cached) return cached;
-  return fetch(url.pathname, { credentials: 'omit' });
+  try {
+    const cache = await caches.open(RELEASE_CACHE);
+    const cached = await cache.match(url.pathname);
+    if (cached) return cached;
+    return await fetch(url.pathname, { credentials: 'omit' });
+  } catch {
+    const cache = await caches.open(RELEASE_CACHE);
+    const fallback = await cache.match(OFFLINE_URL);
+    if (!fallback) throw new Error('Offline shell is not available');
+    return fallback;
+  }
 }
 
 self.addEventListener('install', (event) => {

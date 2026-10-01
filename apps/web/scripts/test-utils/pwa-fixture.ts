@@ -229,6 +229,8 @@ export interface WorkerHarness {
   skipWaitingCalls(): number;
   cacheNames(): Promise<string[]>;
   cacheEntries(name: string): Promise<string[]>;
+  /** Drops one cached entry to model browser cache eviction/partial caches. */
+  deleteCacheEntry(name: string, path: string): Promise<void>;
 }
 
 const ORIGIN = 'https://app.example';
@@ -353,6 +355,9 @@ export function createWorkerHarness(workerSource: string): WorkerHarness {
     skipWaitingCalls: () => skipWaitingCalls,
     cacheNames: async () => [...cacheStore.keys()],
     cacheEntries: async (name) => [...(cacheStore.get(name)?.keys() ?? [])],
+    deleteCacheEntry: async (name, path) => {
+      cacheStore.get(name)?.delete(path);
+    },
     dispatch: async (input) => {
       const request = new FakeRequest(new URL(input.url, ORIGIN).toString(), {
         method: input.method ?? 'GET',

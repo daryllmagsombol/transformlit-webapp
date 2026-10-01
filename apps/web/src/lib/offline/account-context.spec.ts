@@ -90,4 +90,23 @@ describe('account context', () => {
     expect(context.hasOwnerMismatch()).toBe(false);
     expect(context.getOwner()).toEqual({ subject: 'user-a', epoch: 2 });
   });
+
+  it('keeps a sticky mismatch when a later restore runs without a verified subject (I-1)', async () => {
+    const persistence = new MemoryLifecyclePersistence();
+    persistence.state = { id: 'lifecycle', state: 'ACTIVE', subject: 'user-a', epoch: 2, updatedAt: 1 };
+    const context = new AccountContext(persistence);
+
+    await context.restore('user-b');
+    expect(context.hasOwnerMismatch()).toBe(true);
+
+    // A null bootstrap (completeLocalAuth/hydrateAccountLifecycle) has no
+    // verified subject and must not silently authorize the stale owner.
+    await context.restore(null);
+    expect(context.hasOwnerMismatch()).toBe(true);
+    expect(() => assertWriteEligibility(context.getOwner(), 'user-b', 2)).toThrow(SubjectMismatchError);
+
+    // Default-argument restore is equivalent to restore(null): still sticky.
+    await context.restore();
+    expect(context.hasOwnerMismatch()).toBe(true);
+  });
 });
