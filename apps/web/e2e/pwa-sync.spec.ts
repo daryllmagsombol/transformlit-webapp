@@ -136,4 +136,96 @@ test.describe('ordered foreground synchronization', () => {
     await expect(secondPage.getByText('sync acceptance').first()).toBeVisible({ timeout: 15_000 });
     await second.close();
   });
+
+  /**
+   * Explicit conflict resolution (Task 12). A durable `FAILED` operation plus
+   * its linked conflict copy must surface a comparison + resolution control; the
+   * user's explicit "use server version" choice removes the conflicted op and
+   * never silently discards the offline edit or the server record.
+   */
+  test('surfaces a conflict and resolves it only on an explicit user choice', async ({ page, origin, loginAs, ids }) => {
+    await loginAs(0);
+    await page.goto(`${origin}/books`);
+
+    const operationId = await page.evaluate(async ({ subject, bookId }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('transformlit-offline');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const id = crypto.randomUUID();
+      const clientEntityId = crypto.randomUUID();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(['readerRecords', 'outbox', 'conflicts'], 'readwrite');
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.objectStore('outbox').put({
+          id: `${subject}\u0000outbox\u0000${id}`,
+          subject,
+          epoch: 1,
+          operationId: id,
+          entityKey: `${subject}\u0000highlight\u0000${clientEntityId}`,
+          bookId,
+          contentVersion: 1,
+          kind: 'ANNOTATION_UPDATE',
+          seq: 1,
+          dependsOn: null,
+          baseRevision: 1,
+          dispatchState: 'FAILED',
+          attemptCount: 1,
+          payload: { entityId: 'server-1', page: 1, text: 'my offline edit', anchor: { version: 1, page: 1, startOffset: 0, endOffset: 15 } },
+          createdAt: Date.now(),
+        });
+        tx.objectStore('conflicts').put({
+          id: `${subject}\u0000conflict\u0000cc-e2e`,
+          serverId: 'cc-e2e',
+          subject,
+          operationId: id,
+          sourceEntityId: 'server-1',
+          bookId,
+          contentVersion: 1,
+          page: 1,
+          text: 'my offline edit',
+          note: null,
+          color: null,
+          anchor: { version: 1, page: 1, startOffset: 0, endOffset: 15 },
+          revision: 1,
+          reason: 'STALE_REVISION',
+          createdAt: Date.now(),
+        });
+      });
+      db.close();
+      return id;
+    }, { subject: ids.readerId, bookId: ids.readableBookId });
+
+    await page.goto(`${origin}/books/${ids.readableBookId}/read?page=1`);
+
+    // The unresolved conflict is visible and offers an explicit comparison.
+    const panel = page.getByRole('region', { name: /conflicts needing resolution/i });
+    await expect(panel).toBeVisible({ timeout: 15_000 });
+    await expect(panel).toContainText('my offline edit');
+
+    // Resolution only happens on the explicit choice.
+    await panel.getByRole('button', { name: /use server version/i }).click();
+    await expect(page.getByTestId('conflict-status')).toContainText(/kept the server version/i);
+
+    const remaining = await page.evaluate(async ({ subject, operationId: id }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('transformlit-offline');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const rows = await new Promise<Array<{ operationId: string }>>((resolve, reject) => {
+        const tx = db.transaction('outbox', 'readonly');
+        const request = tx.objectStore('outbox').index('subject').getAll(subject);
+        request.onsuccess = () => resolve(request.result as Array<{ operationId: string }>);
+        request.onerror = () => reject(request.error);
+      });
+      db.close();
+      return rows.filter((row) => row.operationId === id).length;
+    }, { subject: ids.readerId, operationId });
+
+    // The conflicted operation was removed; the server record was never overwritten.
+    expect(remaining).toBe(0);
+  });
 });

@@ -3,17 +3,10 @@
 import { OfflineDatabase, createIndexedDbLeasePersistence } from './database';
 import { accountLifecycle } from './account-activation';
 import { createSyncLock } from './coordination';
-import { qualifyKey, type ConflictCopyRecord, type TombstoneRecord } from './contracts';
+import { qualifyKey, type TombstoneRecord } from './contracts';
+import type { StoredConflictCopyRecord } from './conflicts';
 
-/**
- * A persisted conflict copy. `id` is the subject-namespaced storage key
- * (required by the `conflicts` store and its subject guard); `serverId` retains
- * the conflict copy's STABLE server identity, which a retarget
- * (`ANNOTATION_UPDATE` with `targetKind: CONFLICT_COPY`) must send.
- */
-export interface StoredConflictCopyRecord extends ConflictCopyRecord {
-  readonly serverId: string;
-}
+export type { StoredConflictCopyRecord } from './conflicts';
 import { dispatchReaderOperation } from '../reader/api';
 import { fetchAnnotationSnapshot } from '../reader/api';
 import {

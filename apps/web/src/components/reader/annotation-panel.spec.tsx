@@ -206,3 +206,36 @@ describe('AnnotationPanel', () => {
     expect(await screen.findByText(/saved on this device/i)).toBeInTheDocument();
   });
 });
+
+describe('AnnotationPanel content-version provenance', () => {
+  function highlight(contentVersion: number) {
+    return {
+      id: 'hl-1',
+      clientEntityId: 'client-1',
+      bookId: 'book-1',
+      contentVersion,
+      page: 2,
+      text: 'Hello',
+      note: 'old note',
+      color: null,
+      anchor: { version: 1, page: 2, startOffset: 0, endOffset: 5 },
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+    };
+  }
+
+  it('marks an annotation unresolved when its content version is no longer downloaded', () => {
+    renderPanel(makeHarness(), { highlights: [highlight(6)], availableContentVersions: [7] });
+    expect(screen.getByTestId('annotation-unresolved')).toHaveTextContent(/no longer|unresolved/i);
+    // Editing would reinterpret the anchor against new content, so it is disabled.
+    expect(screen.getByRole('button', { name: /edit note/i })).toBeDisabled();
+  });
+
+  it('leaves a pinned annotation editable', () => {
+    renderPanel(makeHarness(), { highlights: [highlight(7)], availableContentVersions: [7] });
+    expect(screen.queryByTestId('annotation-unresolved')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /edit note/i })).toBeEnabled();
+  });
+});

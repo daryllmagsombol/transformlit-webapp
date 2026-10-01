@@ -461,11 +461,11 @@ export class SyncCoordinator {
         summary.conflict += 1;
         return { removed: false, paused: true, ackRevision: null };
       case 'ACCESS_DENIED':
-        await this.retainTerminal(operation);
+        await this.retainTerminal(operation, 'ACCESS_DENIED');
         summary.accessDenied += 1;
         return { removed: false, paused: false, ackRevision: null };
       case 'INCOMPATIBLE_VERSION':
-        await this.retainTerminal(operation);
+        await this.retainTerminal(operation, 'INCOMPATIBLE_VERSION');
         summary.incompatibleVersion += 1;
         return { removed: false, paused: false, ackRevision: null };
       default:
@@ -511,8 +511,16 @@ export class SyncCoordinator {
    * from conflict `FAILED`, so it is never offered as "discard conflicting
    * changes" nor counted as a conflict.
    */
-  private async retainTerminal(operation: OutboxOperationRecord): Promise<void> {
-    await this.deps.store.update({ ...operation, dispatchState: 'TERMINAL', attemptCount: operation.attemptCount + 1 });
+  private async retainTerminal(
+    operation: OutboxOperationRecord,
+    terminalReason: 'ACCESS_DENIED' | 'INCOMPATIBLE_VERSION',
+  ): Promise<void> {
+    await this.deps.store.update({
+      ...operation,
+      dispatchState: 'TERMINAL',
+      terminalReason,
+      attemptCount: operation.attemptCount + 1,
+    });
   }
 
   /**

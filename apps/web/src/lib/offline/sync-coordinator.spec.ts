@@ -489,6 +489,7 @@ describe('SyncCoordinator', () => {
     expect(result.summary.accessDenied).toBe(1);
     expect(harness.store.rows).toHaveLength(1);
     expect(harness.store.rows[0].dispatchState).toBe('TERMINAL');
+    expect(harness.store.rows[0].terminalReason).toBe('ACCESS_DENIED');
     const status = harness.coordinator.getStatus();
     expect(status?.terminal).toBe(1);
     expect(status?.conflicts).toBe(0);
@@ -508,6 +509,7 @@ describe('SyncCoordinator', () => {
     expect(result.summary.incompatibleVersion).toBe(1);
     expect(harness.store.rows).toHaveLength(1);
     expect(harness.store.rows[0].dispatchState).toBe('TERMINAL');
+    expect(harness.store.rows[0].terminalReason).toBe('INCOMPATIBLE_VERSION');
     const status = harness.coordinator.getStatus();
     expect(status?.terminal).toBe(1);
     expect(status?.conflicts).toBe(0);

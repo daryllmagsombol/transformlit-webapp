@@ -4,7 +4,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { gql, type TypedDocumentNode } from '@apollo/client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apolloClient } from '../../../../../lib/apollo-client';
-import { fetchReadProgress, networkReaderTransport, type PdfTextItem } from '../../../../../lib/reader/api';
+import {
+  fetchAnnotationSnapshot,
+  fetchReadProgress,
+  networkReaderTransport,
+  type PdfTextItem,
+} from '../../../../../lib/reader/api';
 import {
   BookRepository,
   type BookConversionStatus,
@@ -13,9 +18,18 @@ import {
 } from '../../../../../lib/reader/repository';
 import { OfflineDatabase } from '../../../../../lib/offline/database';
 import { accountLifecycle } from '../../../../../lib/offline/account-activation';
+import {
+  conflictResolver,
+  type ConflictResolutionResult,
+  type ConflictServerValue,
+  type ConflictView,
+  type ProgressChoice,
+} from '../../../../../lib/offline/conflicts';
+import type { BookVersionRecord } from '../../../../../lib/offline/contracts';
 import { readerRecords, useReaderAnnotations } from '../../../../../lib/hooks/use-reader-records';
 import { BookReaderView } from '../../../../../components/reader/book-reader-view';
 import { AnnotationPanel } from '../../../../../components/reader/annotation-panel';
+import { ConflictPanel } from '../../../../../components/reader/conflict-panel';
 import { useReaderStore } from '../../../../../store';
 
 const BOOK_MANIFEST_QUERY: TypedDocumentNode<{ book: Manifest }, { id: string }> = gql`
@@ -94,6 +108,37 @@ function createReaderRepository(): BookRepository {
   });
 }
 
+/** Authoritative server records keyed by entity id, best-effort for comparison. */
+async function loadServerValues(bookId: string): Promise<Record<string, ConflictServerValue>> {
+  try {
+    const snapshot = await fetchAnnotationSnapshot(bookId);
+    const values: Record<string, ConflictServerValue> = {};
+    for (const row of snapshot.annotations) {
+      values[row.id] = { revision: row.revision, value: row };
+    }
+    return values;
+  } catch {
+    return {};
+  }
+}
+
+/** Downloaded content versions for the book, or undefined when unavailable. */
+async function loadAvailableContentVersions(bookId: string): Promise<readonly number[] | undefined> {
+  if (typeof globalThis.indexedDB === 'undefined' || typeof IDBKeyRange === 'undefined') return undefined;
+  const owner = accountLifecycle().getOwner();
+  if (!owner) return undefined;
+  const range = IDBKeyRange.bound(
+    [owner.subject, bookId],
+    [owner.subject, bookId, Number.MAX_SAFE_INTEGER],
+  );
+  const versions = await new OfflineDatabase().getAllByIndex<BookVersionRecord>(
+    'bookVersions',
+    'subjectBookVersion',
+    range,
+  );
+  return versions.map((version) => version.contentVersion);
+}
+
 export function ReaderClient({ bookId, initialPage }: { readonly bookId: string; readonly initialPage?: number }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -109,6 +154,81 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
   const annotations = useMemo(
     () => ({ highlights, bookmarks, refresh }),
     [highlights, bookmarks, refresh],
+  );
+  const [conflicts, setConflicts] = useState<ConflictView[]>([]);
+  const [availableContentVersions, setAvailableContentVersions] = useState<readonly number[] | undefined>(undefined);
+  const [conflictBusy, setConflictBusy] = useState(false);
+  const [conflictStatus, setConflictStatus] = useState<string | null>(null);
+  const [conflictError, setConflictError] = useState<string | null>(null);
+
+  const loadConflicts = useCallback(async () => {
+    const serverValues = await loadServerValues(bookId);
+    setConflicts(await conflictResolver().listConflicts(bookId, serverValues));
+  }, [bookId]);
+
+  useEffect(() => {
+    loadConflicts().catch(() => undefined);
+  }, [loadConflicts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadAvailableContentVersions(bookId)
+      .then((versions) => {
+        if (!cancelled) setAvailableContentVersions(versions);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId]);
+
+  const applyResolution = useCallback(
+    async (run: () => Promise<ConflictResolutionResult>, message: string) => {
+      setConflictBusy(true);
+      setConflictError(null);
+      try {
+        const result = await run();
+        if (result.status === 'RESOLVED') {
+          setConflictStatus(message);
+          refresh();
+          await loadConflicts();
+        } else {
+          setConflictError(result.error ?? 'Could not resolve the conflict');
+        }
+      } catch {
+        setConflictError('Could not resolve the conflict');
+      } finally {
+        setConflictBusy(false);
+      }
+    },
+    [loadConflicts, refresh],
+  );
+
+  const chooseServer = useCallback(
+    (conflict: ConflictView) =>
+      applyResolution(() => conflictResolver().chooseServer(conflict), 'Kept the server version'),
+    [applyResolution],
+  );
+  const keepOfflineCopy = useCallback(
+    (conflict: ConflictView) =>
+      applyResolution(() => conflictResolver().keepOfflineCopy(conflict), 'Kept your offline version'),
+    [applyResolution],
+  );
+  const retarget = useCallback(
+    (conflict: ConflictView, successorOperationIds: readonly string[]) =>
+      applyResolution(
+        () => conflictResolver().retarget(conflict, successorOperationIds),
+        'Retargeted your later edits',
+      ),
+    [applyResolution],
+  );
+  const resolveProgress = useCallback(
+    (conflict: ConflictView, choice: ProgressChoice) =>
+      applyResolution(
+        () => conflictResolver().resolveProgress(conflict, choice),
+        choice === 'LOCAL' ? 'Resumed at your page' : 'Resumed at the server page',
+      ),
+    [applyResolution],
   );
 
   useEffect(() => {
@@ -259,6 +379,20 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
       onBack={() => router.push('/books')}
       theme={theme}
       pageError={pageError}
+      conflicts={
+        conflicts.length > 0 ? (
+          <ConflictPanel
+            conflicts={conflicts}
+            busy={conflictBusy}
+            statusMessage={conflictStatus}
+            error={conflictError}
+            onChooseServer={chooseServer}
+            onKeepOfflineCopy={keepOfflineCopy}
+            onRetarget={retarget}
+            onResolveProgress={resolveProgress}
+          />
+        ) : null
+      }
       annotations={
         <AnnotationPanel
           bookId={bookId}
@@ -268,6 +402,7 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
           highlights={annotations.highlights}
           bookmarks={annotations.bookmarks}
           records={readerRecords()}
+          availableContentVersions={availableContentVersions}
           onRecordsChanged={annotations.refresh}
         />
       }

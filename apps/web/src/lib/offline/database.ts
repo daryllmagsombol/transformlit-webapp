@@ -648,11 +648,23 @@ export class OfflineDatabase {
 
   /**
    * Removes a whole book download's content (version descriptor + pages +
-   * manifest) for one subject. It never touches `readerRecords`, `outbox`,
-   * `receipts`, `tombstones`, or `conflicts`, so annotations and pending edits
-   * survive a removal.
+   * manifest) for one subject, EXCEPT versions in `retainVersions`. A version
+   * still referenced by a saved/pending annotation is pinned so its anchor is
+   * never reinterpreted against newer content. It never touches
+   * `readerRecords`, `outbox`, `receipts`, `tombstones`, or `conflicts`, so
+   * annotations and pending edits survive a removal.
    */
-  async removeBookDownload(subject: string, epoch: number, bookId: string, manifestId: string): Promise<void> {
+  async removeBookDownload(
+    subject: string,
+    epoch: number,
+    bookId: string,
+    manifestId: string,
+    retainVersions: readonly number[] = [],
+  ): Promise<void> {
+    const retain = new Set(retainVersions);
+    const range = IDBKeyRange.bound([subject, bookId], [subject, bookId, Number.MAX_SAFE_INTEGER]);
+    const versions = await this.getAllByIndex<BookVersionRecord>('bookVersions', 'subjectBookVersion', range);
+    const pages = await this.getAllByIndex<BookPageRecord>('bookPages', 'subjectBookVersion', range);
     const db = await this.db();
     await runTransaction<void>(
       db,
@@ -660,29 +672,39 @@ export class OfflineDatabase {
       'readwrite',
       (tx, done, fail) => {
         guardWrite(tx, subject, epoch, fail, () => {
-          const range = IDBKeyRange.bound([subject, bookId], [subject, bookId, Number.MAX_SAFE_INTEGER]);
-          let pending = 2;
-          const after = () => {
-            pending -= 1;
-            if (pending === 0) done(undefined);
-          };
-          for (const storeName of ['bookVersions', 'bookPages'] as const) {
-            const cursorRequest = tx.objectStore(storeName).index('subjectBookVersion').openCursor(range);
-            cursorRequest.onsuccess = () => {
-              const cursor = cursorRequest.result;
-              if (cursor) {
-                cursor.delete();
-                cursor.continue();
-                return;
-              }
-              after();
-            };
-            cursorRequest.onerror = () => fail(cursorRequest.error ?? new OfflineStorageError('Removal failed'));
+          const versionStore = tx.objectStore('bookVersions');
+          const pageStore = tx.objectStore('bookPages');
+          for (const version of versions) {
+            if (!retain.has(version.contentVersion)) versionStore.delete(version.id);
           }
-          tx.objectStore('downloadManifests').delete(manifestId);
+          for (const page of pages) {
+            if (!retain.has(page.contentVersion)) pageStore.delete(page.id);
+          }
+          this.handleRemovalManifest(tx, manifestId, retain);
+          done(undefined);
         });
       },
     );
+  }
+
+  /** Deletes the manifest, or repoints it at the highest pinned version. */
+  private handleRemovalManifest(
+    tx: IDBTransaction,
+    manifestId: string,
+    retain: ReadonlySet<number>,
+  ): void {
+    const manifests = tx.objectStore('downloadManifests');
+    if (retain.size === 0) {
+      manifests.delete(manifestId);
+      return;
+    }
+    const request = manifests.get(manifestId);
+    request.onsuccess = () => {
+      const manifest = request.result as DownloadManifestRecord | undefined;
+      if (!manifest) return;
+      const pinned = [...retain].sort((a, b) => b - a)[0];
+      manifests.put({ ...manifest, status: 'READY', activeVersion: pinned });
+    };
   }
 
   /** Removes one saved Bible chapter and its manifest; never touches reader state. */

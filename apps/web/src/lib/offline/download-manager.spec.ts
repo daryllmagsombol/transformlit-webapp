@@ -446,6 +446,43 @@ describe('download manager', () => {
       expect(records).toHaveLength(1);
       expect(outbox).toHaveLength(1);
     });
+
+    it('pins a downloaded version still referenced by a saved annotation', async () => {
+      await seedLifecycle(harness.database);
+      await harness.manager.startBookDownload(BOOK_ID);
+      await harness.database.putAccountRecord(SUBJECT, EPOCH, 'readerRecords', {
+        id: qualifyKey(SUBJECT, 'highlight', 'h1'),
+        subject: SUBJECT,
+        bookId: BOOK_ID,
+        contentVersion: 1,
+      });
+
+      await harness.manager.removeBookDownload(BOOK_ID);
+
+      // The referenced version stays available so the anchor is never
+      // reinterpreted against newer content.
+      const active = await harness.database.getActiveBookVersion(SUBJECT, BOOK_ID);
+      expect(active?.contentVersion).toBe(1);
+      expect(await harness.database.getBookPages(SUBJECT, BOOK_ID, 1)).not.toHaveLength(0);
+    });
+
+    it('pins a downloaded version still referenced by a pending operation', async () => {
+      await seedLifecycle(harness.database);
+      await harness.manager.startBookDownload(BOOK_ID);
+      await harness.database.commitOutbox(SUBJECT, EPOCH, {
+        id: qualifyKey(SUBJECT, 'outbox', 'o1'),
+        subject: SUBJECT,
+        epoch: EPOCH,
+        bookId: BOOK_ID,
+        contentVersion: 1,
+        dispatchState: 'PENDING',
+      });
+
+      await harness.manager.removeBookDownload(BOOK_ID);
+
+      const active = await harness.database.getActiveBookVersion(SUBJECT, BOOK_ID);
+      expect(active?.contentVersion).toBe(1);
+    });
   });
 
   describe('account fencing', () => {

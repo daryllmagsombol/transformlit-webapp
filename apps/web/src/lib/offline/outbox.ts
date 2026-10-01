@@ -39,6 +39,12 @@ export interface OutboxOperationRecord {
   readonly dispatchState: OutboxDispatchState;
   readonly attemptCount: number;
   /**
+   * For a `TERMINAL` operation, why it is terminal. Durable so the recovery UX
+   * can surface an explicit incompatible-version result distinctly from an
+   * access denial. Null/absent for non-terminal operations.
+   */
+  readonly terminalReason?: OutboxTerminalReason | null;
+  /**
    * Advisory durable backoff scheduling metadata (wall-clock ms). Kept OUT of
    * `payload` so a retry delay can never leak into the dispatched server input.
    */
@@ -56,6 +62,18 @@ export type OutboxOperationKind =
   | 'ANNOTATION_DELETE';
 
 export type OutboxDispatchState = 'PENDING' | 'DISPATCHING' | 'DISPATCHED' | 'FAILED' | 'TERMINAL';
+
+/** Why a `TERMINAL` operation is terminal (both are re-evaluable, not conflicts). */
+export type OutboxTerminalReason = 'ACCESS_DENIED' | 'INCOMPATIBLE_VERSION';
+
+/** Terminal operations whose content version was unavailable/incompatible. */
+export function incompatibleVersionOperations(
+  operations: readonly OutboxOperationRecord[],
+): OutboxOperationRecord[] {
+  return operations.filter(
+    (operation) => operation.dispatchState === 'TERMINAL' && operation.terminalReason === 'INCOMPATIBLE_VERSION',
+  );
+}
 
 export class OutboxError extends Error {
   constructor(message: string) {

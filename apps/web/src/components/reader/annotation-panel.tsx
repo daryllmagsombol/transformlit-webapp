@@ -3,6 +3,7 @@
 import { useCallback, useState } from 'react';
 import type { PdfTextItem } from '../../lib/reader/api';
 import type { BookmarkRecord, HighlightRecord } from '../../lib/offline/contracts';
+import { annotationProvenance } from '../../lib/offline/conflicts';
 import type { ReaderSaveResult } from '../../lib/offline/reader-records';
 
 /**
@@ -60,6 +61,13 @@ export interface AnnotationPanelProps {
   readonly bookmarks: readonly BookmarkRecord[];
   readonly records: AnnotationRecords;
   readonly onRecordsChanged: () => void;
+  /**
+   * Content versions still downloaded locally. When provided, an annotation
+   * whose version is gone is shown as UNRESOLVED and cannot be edited (editing
+   * would reinterpret its anchor against newer page content). Omit to disable
+   * the check.
+   */
+  readonly availableContentVersions?: readonly number[];
 }
 
 type SaveStatus = 'IDLE' | 'SAVING' | 'SAVED' | 'FAILED';
@@ -189,6 +197,7 @@ export function AnnotationPanel({
   bookmarks,
   records,
   onRecordsChanged,
+  availableContentVersions,
 }: AnnotationPanelProps) {
   const textItems = items ?? [];
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -390,7 +399,11 @@ export function AnnotationPanel({
 
       {highlights.length > 0 ? (
         <ul className="flex flex-col gap-2" data-testid="annotation-highlights">
-          {highlights.map((highlight) => (
+          {highlights.map((highlight) => {
+            const unresolved =
+              availableContentVersions !== undefined &&
+              annotationProvenance(highlight, availableContentVersions) !== 'PINNED';
+            return (
             <li
               key={highlight.id}
               className="flex items-start justify-between gap-3 rounded-lg border border-outline-variant bg-surface px-3 py-2"
@@ -400,13 +413,24 @@ export function AnnotationPanel({
                 {highlight.note ? (
                   <p className="font-small text-small text-on-surface-variant">{highlight.note}</p>
                 ) : null}
+                {unresolved ? (
+                  <p
+                    role="alert"
+                    data-testid="annotation-unresolved"
+                    className="font-small text-small text-error"
+                  >
+                    Unresolved: content version {highlight.contentVersion} is no longer downloaded. Its
+                    original anchor is preserved.
+                  </p>
+                ) : null}
               </div>
               <div className="flex shrink-0 gap-2">
                 <button
                   type="button"
                   onClick={() => beginEdit(highlight)}
+                  disabled={unresolved}
                   aria-label={`Edit note for ${highlight.text}`}
-                  className="font-small text-small font-semibold text-primary underline"
+                  className="font-small text-small font-semibold text-primary underline disabled:opacity-50"
                 >
                   Edit note
                 </button>
@@ -420,7 +444,8 @@ export function AnnotationPanel({
                 </button>
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
       ) : null}
     </section>

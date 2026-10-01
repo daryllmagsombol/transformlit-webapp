@@ -74,4 +74,28 @@ describe('BookReaderView', () => {
     );
     expect(screen.getByTestId('reader-status-notice')).toHaveTextContent('Saved offline');
   });
+
+  it('renders a conflict region when conflicts are supplied', () => {
+    render(
+      <BookReaderView
+        title="Test Book"
+        page={1}
+        pageCount={1}
+        items={null}
+        frame={frame('blob:local')}
+        capabilities={LOCAL_CAPABILITIES}
+        onPageChange={jest.fn()}
+        onBack={jest.fn()}
+        conflicts={<div data-testid="inline-conflicts">conflict panel</div>}
+      />,
+    );
+    expect(screen.getByTestId('reader-conflicts')).toContainElement(
+      screen.getByTestId('inline-conflicts'),
+    );
+  });
+
+  it('omits the conflict region when there are none', () => {
+    renderView(NETWORK_CAPABILITIES);
+    expect(screen.queryByTestId('reader-conflicts')).not.toBeInTheDocument();
+  });
 });

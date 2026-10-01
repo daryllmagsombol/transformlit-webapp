@@ -24,6 +24,7 @@ import {
   qualifyKey,
 } from './contracts';
 import { OfflineDatabase } from './database';
+import { referencedContentVersions } from './conflicts';
 import { getStorageStatus, type StorageStatus } from './storage-status';
 import {
   isOfflineDownloadAllowed,
@@ -833,7 +834,11 @@ export class DownloadManager {
     });
   }
 
-  /** Removes downloaded content only; reader records/outbox are never touched. */
+  /**
+   * Removes downloaded content only; reader records/outbox are never touched.
+   * Versions still referenced by a saved annotation or a pending operation are
+   * PINNED (retained) so an anchor is never reinterpreted against newer content.
+   */
   async removeBookDownload(bookId: string): Promise<void> {
     const owner = this.permitOwner();
     await this.database.removeBookDownload(
@@ -841,6 +846,25 @@ export class DownloadManager {
       owner.epoch,
       bookId,
       bookDownloadKey(owner.subject, bookId),
+      await this.referencedVersions(owner.subject, bookId),
+    );
+  }
+
+  /** Content versions still referenced by saved records or pending operations. */
+  async referencedVersions(subject: string, bookId: string): Promise<number[]> {
+    const records = await this.database.getAllByIndex<{ contentVersion?: number }>(
+      'readerRecords',
+      'subjectBook',
+      [subject, bookId],
+    );
+    const operations = await this.database.getAllByIndex<{ contentVersion?: number; bookId?: string }>(
+      'outbox',
+      'subject',
+      subject,
+    );
+    return referencedContentVersions(
+      records,
+      operations.filter((operation) => operation.bookId === bookId),
     );
   }
 

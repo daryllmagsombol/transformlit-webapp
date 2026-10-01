@@ -3,6 +3,7 @@ import {
   activeOperations,
   coalesceProgress,
   dispatchStateOf,
+  incompatibleVersionOperations,
   isCoalescable,
   nextLocalSequence,
   orderForDispatch,
@@ -92,5 +93,22 @@ describe('outbox ordering and state', () => {
     const error = new OutboxError('bad');
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe('OutboxError');
+  });
+
+  it('surfaces explicit incompatible-version terminal operations (not conflicts)', () => {
+    const incompatible = operation({
+      id: 'v',
+      seq: 1,
+      dispatchState: 'TERMINAL',
+      terminalReason: 'INCOMPATIBLE_VERSION',
+      contentVersion: 7,
+    });
+    const denied = operation({ id: 'd', seq: 2, dispatchState: 'TERMINAL', terminalReason: 'ACCESS_DENIED' });
+    const conflict = operation({ id: 'c', seq: 3, dispatchState: 'FAILED' });
+
+    const surfaced = incompatibleVersionOperations([incompatible, denied, conflict]);
+    expect(surfaced.map((row) => row.id)).toEqual(['v']);
+    // The original pending content version is preserved for recovery.
+    expect(surfaced[0].contentVersion).toBe(7);
   });
 });

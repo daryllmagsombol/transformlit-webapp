@@ -41,6 +41,12 @@ export interface BookReaderViewProps {
    * local-first mutation wiring; the view stays presentational.
    */
   readonly annotations?: ReactNode;
+  /**
+   * Conflict resolution surface. When provided, it renders as a full-width
+   * region above the page so an unresolved sync conflict is always visible and
+   * cannot be silently ignored. Callers own the resolution wiring.
+   */
+  readonly conflicts?: ReactNode;
 }
 
 /**
@@ -112,6 +118,7 @@ export function BookReaderView({
   statusNotice = null,
   pageError = null,
   annotations = null,
+  conflicts = null,
 }: BookReaderViewProps) {
   const [annotationsOpen, setAnnotationsOpen] = useState(false);
   const toggleAnnotations = useCallback(() => setAnnotationsOpen((open) => !open), []);
@@ -137,6 +144,14 @@ export function BookReaderView({
         </p>
       ) : null}
       <UnavailableFeatures capabilities={capabilities} />
+      {conflicts ? (
+        <div
+          data-testid="reader-conflicts"
+          className="border-b border-outline-variant bg-surface-container-low px-4 py-3"
+        >
+          {conflicts}
+        </div>
+      ) : null}
       <div className="flex flex-1 flex-col lg:flex-row">
         <main className="flex flex-1 items-start justify-center overflow-auto p-4">
           <ReaderSurface frame={frame} items={items} pageError={pageError} />
