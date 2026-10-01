@@ -125,9 +125,13 @@ export interface BuildResult {
   readonly stderr: string;
 }
 
-export function runBuildScript(fixture: Fixture, env: Record<string, string> = {}): BuildResult {
+export function runBuildScript(
+  fixture: Fixture,
+  env: Record<string, string> = {},
+  args: readonly string[] = [],
+): BuildResult {
   try {
-    const stdout = execFileSync(process.execPath, [buildScriptPath], {
+    const stdout = execFileSync(process.execPath, [buildScriptPath, ...args], {
       env: { ...process.env, PWA_WEB_ROOT: fixture.root, ...env },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],

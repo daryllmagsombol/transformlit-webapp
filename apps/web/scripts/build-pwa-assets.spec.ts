@@ -278,4 +278,52 @@ describe('build-pwa-assets', () => {
     await harness.activate();
     expect(await harness.cacheNames()).toEqual([`transformlit-shell-${inventory.releaseId}`]);
   });
+
+  describe('--verify', () => {
+    it('accepts artifacts that match the current build output', () => {
+      fixture = createFixture({ buildId: 'build-a' });
+      generate(fixture);
+
+      const result = runBuildScript(fixture, {}, ['--verify']);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(result.stdout).toMatch(/Verified pwa-assets\.json/);
+    });
+
+    it('rejects a stale inventory whose buildId does not match .next/BUILD_ID', () => {
+      fixture = createFixture({ buildId: 'build-a' });
+      generate(fixture);
+
+      // A new `next build` changes BUILD_ID but a cached/stale public tree is
+      // restored: the artifacts no longer describe the current build.
+      writeFileSync(join(fixture.nextDir, 'BUILD_ID'), 'build-b');
+      const result = runBuildScript(fixture, {}, ['--verify']);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/Stale PWA inventory/i);
+    });
+
+    it('rejects a worker whose embedded release does not match the inventory', () => {
+      fixture = createFixture();
+      generate(fixture);
+
+      const inventory = readGeneratedInventory(fixture);
+      const worker = readGeneratedWorker(fixture);
+      const tamperedWorker = worker.replaceAll(inventory.inventoryDigest, '0'.repeat(inventory.inventoryDigest.length));
+      writeFileSync(join(fixture.publicDir, 'sw.js'), tamperedWorker);
+
+      const result = runBuildScript(fixture, {}, ['--verify']);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/does not match/i);
+    });
+
+    it('rejects a missing or empty worker artifact', () => {
+      fixture = createFixture();
+      generate(fixture);
+      writeFileSync(join(fixture.publicDir, 'sw.js'), '');
+
+      const result = runBuildScript(fixture, {}, ['--verify']);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/empty/i);
+    });
+  });
 });

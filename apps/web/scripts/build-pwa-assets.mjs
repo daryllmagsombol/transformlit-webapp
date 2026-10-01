@@ -165,7 +165,90 @@ function writeAtomic(filePath, contents) {
   renameSync(temporaryPath, filePath);
 }
 
+/** Reads the release payload embedded in the served worker bytes. */
+function embeddedPayload(workerSource) {
+  const marker = `${BUILD_MARKER} `;
+  const markerIndex = workerSource.indexOf(marker);
+  if (markerIndex === -1) throw new Error('Served worker is missing its embedded release payload');
+
+  // Scan the JSON object that follows the marker, tracking string/escape state
+  // so braces inside string values cannot terminate the object early.
+  const start = workerSource.indexOf('{', markerIndex);
+  if (start === -1) throw new Error('Served worker payload is not a JSON object');
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < workerSource.length; index += 1) {
+    const char = workerSource[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return JSON.parse(workerSource.slice(start, index + 1));
+    }
+  }
+  throw new Error('Served worker payload is not valid JSON');
+}
+
+/**
+ * `--verify` guards a cached/packaged build: it asserts the generated artifacts
+ * match the current `.next` output instead of merely existing. A stale worker
+ * paired with a fresh `.next/BUILD_ID` must fail loudly.
+ */
+function verifyArtifacts() {
+  const expectedBuildId = readFileSync(join(nextDirectory, 'BUILD_ID'), 'utf8').trim();
+  if (!expectedBuildId) throw new Error('Next build id is empty');
+
+  const inventoryPath = join(publicDirectory, INVENTORY_FILENAME);
+  const workerPath = join(publicDirectory, WORKER_FILENAME);
+  if (!existsSync(inventoryPath)) throw new Error(`Generated ${INVENTORY_FILENAME} is missing`);
+  if (!existsSync(workerPath)) throw new Error(`Generated ${WORKER_FILENAME} is missing`);
+
+  const worker = readFileSync(workerPath, 'utf8');
+  if (worker.trim().length === 0) throw new Error(`Generated ${WORKER_FILENAME} is empty`);
+
+  const inventory = JSON.parse(readFileSync(inventoryPath, 'utf8'));
+  if (inventory.buildId !== expectedBuildId) {
+    throw new Error(
+      `Stale PWA inventory: buildId ${inventory.buildId} does not match .next/BUILD_ID ${expectedBuildId}`,
+    );
+  }
+  if (typeof inventory.releaseId !== 'string' || inventory.releaseId.length === 0) {
+    throw new Error('PWA inventory is missing its release id');
+  }
+
+  const embedded = embeddedPayload(worker);
+  if (embedded.releaseId !== inventory.releaseId) {
+    throw new Error(
+      `Served worker release ${embedded.releaseId} does not match inventory release ${inventory.releaseId}`,
+    );
+  }
+  if (embedded.inventoryDigest !== inventory.inventoryDigest) {
+    throw new Error('Served worker digest does not match the generated inventory');
+  }
+
+  // The embedded allowlist must be exactly the inventory's approved assets.
+  if (JSON.stringify(embedded.assets) !== JSON.stringify(inventory.assets)) {
+    throw new Error('Served worker allowlist does not match the generated inventory');
+  }
+
+  process.stdout.write(
+    `Verified ${INVENTORY_FILENAME} and ${WORKER_FILENAME} match .next/BUILD_ID ${expectedBuildId} (release ${inventory.releaseId})\n`,
+  );
+}
+
 function main() {
+  if (process.argv.includes('--verify')) {
+    verifyArtifacts();
+    return;
+  }
+
   const buildId = readFileSync(join(nextDirectory, 'BUILD_ID'), 'utf8').trim();
   if (!buildId) throw new Error('Next build id is empty');
 

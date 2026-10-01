@@ -20,8 +20,11 @@ COPY . .
 
 RUN pnpm exec turbo run build --filter=@transformlit/web...
 
-# Fail the build loudly if the postbuild PWA asset generation did not run.
-RUN test -f apps/web/public/sw.js && test -f apps/web/public/pwa-assets.json
+# Fail loudly if the generated PWA artifacts do not describe the current build.
+# `--verify` compares pwa-assets.json's buildId against .next/BUILD_ID and checks
+# that the served worker is non-empty and embeds the matching release/digest, so
+# a stale public tree can never be packaged beside a fresh .next output.
+RUN node apps/web/scripts/build-pwa-assets.mjs --verify
 
 FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
 WORKDIR /workspace

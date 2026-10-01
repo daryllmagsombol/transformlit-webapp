@@ -132,3 +132,95 @@ TYPECHECK_EXIT=0
 - Subject: `feat(pwa): add static-only worker and update prompt`
 - Files: `.gitignore`, `apps/web/Dockerfile`, `apps/web/package.json`, `apps/web/playwright.pwa.config.ts`, `apps/web/src/app/layout.tsx`, `apps/web/e2e/pwa-install.spec.ts`, `apps/web/e2e/pwa-worker.spec.ts`, `apps/web/scripts/**`, `apps/web/src/components/pwa/**`, `.superpowers/sdd/2026-10-01-pwa/task-3-report.md`
 - Excluded intentionally: `apps/web/next-env.d.ts` (build-generated churn), `apps/web/public/sw.js` + `pwa-assets.json` (git-ignored generated output).
+
+---
+
+## Round 1 fix — Important review findings
+
+An independent review raised three Important issues. All three were fixed in this round; minors were left deferred per instruction. Committed separately as `fix(pwa): harden worker e2e and build outputs`.
+
+### Finding 1 — E2E worker spec could not reach the owned TLS harness
+
+**Problem.** `pwa-worker.spec.ts` imported the default `test`/`expect` from `@playwright/test`, so cells ran under `playwright.pwa.config.ts` with `baseURL: https://localhost:3443` and `ignoreHTTPSErrors: false` — but the harness origin is only reachable through the SPKI-pinned persistent Chromium context in `apps/web/e2e/pwa-fixtures.ts`. The default page/`request` would reject the self-signed certificate. `pwa-install.spec.ts` had the same pattern.
+
+**Fix.**
+- `pwa-worker.spec.ts` now consumes `test`/`expect` from `./pwa-fixtures.js` and issues every HTTP call from the page itself (browser-origin `fetch`), mirroring `pwa-smoke.pwa.spec.ts`. An off-harness `beforeEach` guard (`!harnessConfigured`) calls `testInfo.skip()` before any fixture — including the SPKI context — is set up.
+- `pwa-install.spec.ts` runs under both the PWA config and the plain dev config, so it selects the fixture by harness env: `harnessTest` when `PWA_BROWSER_PROFILE`+`PWA_TLS_SPKI` are present, else `devTest`. A `beforeEach` skips when the config points at the harness origin without trust. Its honest dev-harness 200/404 tolerance is preserved.
+
+**RED/GREEN (skip semantics).** A throwaway probe with an overridden `context` fixture that throws proved `testInfo.skip()` in `beforeEach` prevents fixture setup (test reports `1 skipped`, no context error). A second probe proved the conditional `harnessTest : devTest` selection resolves before fixture setup. Both probes were deleted after use. Discovery after the fix:
+
+```
+$ playwright test --config playwright.pwa.config.ts e2e/pwa-install.spec.ts e2e/pwa-worker.spec.ts --list
+Total: 7 tests in 2 files
+```
+(was 7 after the Round-0 `testMatch` fix; the worker suite is now harness-only and honest.)
+
+### Finding 2 — RSC e2e assertion was wrong
+
+**Problem.** The test fetched `/offline?_rsc=1` online and asserted the body lacked `A little room to read offline`. Online the App Router returns a `text/x-component` flight payload that *contains* that string, so the assertion would fail even with the harness available.
+
+**Fix.** Rewrote `never answers an RSC request with the precached shell HTML` to prove the worker left the request unhandled:
+- Read the precached `/offline` shell bytes from Cache Storage and assert they contain the heading (a positive control that the shell really is cached).
+- Assert the RSC response `content-type` is `text/x-component` (the flight type, not HTML).
+- Assert the RSC body does **not** start with `<!DOCTYPE html>` and is **not** byte-identical to the cached shell.
+
+**Evidence.** Verified by source inspection of the generated worker: `hasRscIndicators` early-returns before the fallback branch, so an RSC request is never answered with the shell. Browser execution remains BLOCKED (below).
+
+### Finding 3 — PWA artifacts not turbo outputs; Docker guard only checked existence
+
+**Problem (a).** `turbo.json` declared web build outputs as only `dist/**`, `.next/**`, `build/**`, so `public/sw.js` and `public/pwa-assets.json` were not restored/validated on a cache hit.
+**Problem (b).** The Dockerfile guard `test -f apps/web/public/sw.js && test -f .../pwa-assets.json` passed on a stale artifact, potentially pairing a fresh `.next/BUILD_ID` with an old worker release.
+
+**Fix (a).** Added `apps/web/turbo.json` (same override pattern as `packages/graphql/turbo.json`):
+```json
+{ "extends": ["//"], "tasks": { "build": { "outputs": ["dist/**", ".next/**", "build/**", "public/sw.js", "public/pwa-assets.json"] } } }
+```
+Verified: `turbo run build --dry=json` now reports web build `outputs=[".next/**","build/**","dist/**","public/pwa-assets.json","public/sw.js"]`.
+
+**Fix (b).** Added a `--verify` mode to `build-pwa-assets.mjs` and replaced the Docker check with `RUN node apps/web/scripts/build-pwa-assets.mjs --verify`. `--verify` is fail-loud and checks: `pwa-assets.json.buildId === .next/BUILD_ID`; `sw.js` exists and is non-empty; the worker's embedded release id and digest match the inventory; and the embedded allowlist equals the inventory assets. The embedded payload is parsed with a brace/escape-aware scan (not a naive substring) so it is robust to characters inside JSON strings.
+
+**RED/GREEN.**
+- Unit RED: removing the buildId staleness check made `--verify › rejects a stale inventory whose buildId does not match .next/BUILD_ID` fail (`1 failed, 18 passed`); restored → `19 passed`.
+- Integration RED: with a fresh `.next/BUILD_ID` and a stale public tree:
+  ```
+  Error: Stale PWA inventory: buildId QOnRAiJLY836XdmnZNsEs does not match .next/BUILD_ID stale-build-id-xyz
+  VERIFY_EXIT=1
+  ```
+  After restoring the real `BUILD_ID`: `Verified ... (release 242c00e8628dbebf)` / `VERIFY_EXIT_AFTER_RESTORE=0`.
+- Post-build: `node apps/web/scripts/build-pwa-assets.mjs --verify` → `Verified pwa-assets.json and sw.js match .next/BUILD_ID pEepMXcKF78wbxoOumIZ_ (release 8f70929cd178faf2)`, `EXIT=0`.
+
+### Round 1 verification
+
+```
+$ pnpm --filter @transformlit/web test --runInBand --runTestsByPath scripts/build-pwa-assets.spec.ts src/components/pwa/pwa-provider.spec.tsx
+Test Suites: 2 passed, 2 total
+Tests:       29 passed, 29 total        (was 25; +4 --verify tests)
+```
+```
+$ pnpm --filter @transformlit/web test --runInBand
+Test Suites: 103 passed, 103 total
+Tests:       776 passed, 776 total
+```
+```
+$ pnpm --filter @transformlit/web exec tsc --noEmit -p tsconfig.json
+TYPECHECK_EXIT=0
+```
+```
+$ pnpm --filter @transformlit/web build
+Generated pwa-assets.json (23 assets, release 8f70929cd178faf2) and sw.js
+```
+```
+$ git diff --check
+(clean)
+```
+
+### Round 1 blockers (unchanged)
+
+- **Docker:** unavailable — the Dockerfile `--verify` step and container E2E were **not executed**; BLOCKED.
+- **Playwright Chrome / owned harness:** absent — `e2e/pwa-install.spec.ts` and `e2e/pwa-worker.spec.ts` are authored and **discovery-verified only** (`--list`), **not executed**; BLOCKED.
+- Deferred minors (not fixed, per instruction): redundant `testMatch` globs, `role=status`+`aria-live` redundancy, focus management, module-level `updateBarriers` test leakage, external Google Fonts in cached shell, shell fallback covering protected routes.
+
+### Round 1 commit
+
+- Subject: `fix(pwa): harden worker e2e and build outputs`
+- Files: `apps/web/Dockerfile`, `apps/web/scripts/build-pwa-assets.mjs`, `apps/web/scripts/build-pwa-assets.spec.ts`, `apps/web/scripts/test-utils/pwa-fixture.ts`, `apps/web/e2e/pwa-worker.spec.ts`, `apps/web/e2e/pwa-install.spec.ts`, `apps/web/turbo.json`, `.superpowers/sdd/2026-10-01-pwa/task-3-report.md`
