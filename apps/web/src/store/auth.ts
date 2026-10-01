@@ -1,13 +1,21 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { GraphQLUser } from '@transformlit/shared';
-import { setAccessToken, clearAuth as clearAuthStorage } from '../lib/auth';
+import { clearAuth as clearAuthStorage, setAccessToken } from '../lib/auth';
+import {
+  type AuthInstallTicket,
+  isAuthInstallTicket,
+} from '../lib/offline/install-ticket';
 
 interface AuthStore {
   user: GraphQLUser | null;
   isHydrated: boolean;
-  setAuth: (user: GraphQLUser, accessToken: string) => void;
-  setUser: (user: GraphQLUser) => void;
+  /**
+   * Installs an authenticated user. Requires a lifecycle-issued ticket so a
+   * component cannot bypass the account-lifecycle gate. Returns false (and
+   * installs nothing) when the ticket is missing or invalid.
+   */
+  installAuth: (user: GraphQLUser, accessToken: string, ticket: AuthInstallTicket) => boolean;
   clearAuth: () => void;
 }
 
@@ -16,12 +24,17 @@ export const useAuthStore = create<AuthStore>()(
     (set) => ({
       user: null,
       isHydrated: false,
-      setAuth: (user, accessToken) => {
+      installAuth: (user, accessToken, ticket) => {
+        if (!isAuthInstallTicket(ticket)) {
+          // Fail closed: no ticket means the caller did not pass the lifecycle
+          // gate, so no token or user is installed.
+          return false;
+        }
         // Access token lives in browser memory ONLY (never persisted).
         setAccessToken(accessToken);
         set({ user });
+        return true;
       },
-      setUser: (user) => set({ user }),
       clearAuth: () => {
         clearAuthStorage();
         set({ user: null });
@@ -34,9 +47,9 @@ export const useAuthStore = create<AuthStore>()(
       merge: (persistedState, currentState) => {
         const persisted = persistedState as Partial<AuthStore>;
 
-        // If the current state already has a user (set by setAuth before
-        // rehydration completed), prefer it over persisted state to avoid
-        // overwriting fresh auth data.
+        // A persisted `user` is display-only: it is never treated as proof of
+        // ownership or as a valid session. Ownership is re-established through
+        // the lifecycle gate on bootstrap.
         if (currentState.user) {
           return { ...currentState, ...persisted, user: currentState.user, isHydrated: true };
         }

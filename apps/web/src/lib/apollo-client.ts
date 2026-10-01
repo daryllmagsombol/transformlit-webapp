@@ -14,11 +14,21 @@ import { createClient } from 'graphql-ws';
 import type { GraphQLUser } from '@transformlit/shared';
 import { useAuthStore } from '../store';
 import {
+  AuthHttpError,
   clearAuth,
+  decodeJwt,
   getAccessToken,
   isTokenExpiringSoon,
-  setAccessToken,
 } from './auth';
+import {
+  captureOriginEpoch,
+  hydrateAccountLifecycle,
+  installEpochTaggedAuth,
+  markAuthRequired,
+  markTransient,
+} from './offline/account-activation';
+import { classifyAuthError } from './offline/account-lifecycle';
+import type { AuthFailureClassification } from './offline/contracts';
 import { API_BASE } from './constants';
 
 const httpUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/graphql';
@@ -39,12 +49,26 @@ interface RestRefreshPayload {
   user: GraphQLUser;
 }
 
-function redirectToLogin() {
+/** Clears the in-memory token and persisted display profile on genuine 401. */
+function clearAuthSession(): void {
   clearAuth();
   useAuthStore.getState().clearAuth();
+}
+
+type AuthRedirect = () => void;
+
+function defaultAuthRedirect(): void {
   if (!isServer) {
     globalThis.window.location.href = '/login';
   }
+}
+
+// Navigation is a side-effecting boundary; tests inject a recorder so the
+// transient-vs-401 policy can be asserted without driving jsdom navigation.
+let redirectOnAuthRequired: AuthRedirect = defaultAuthRedirect;
+
+export function setAuthRedirectForTests(redirect: AuthRedirect | null): void {
+  redirectOnAuthRequired = redirect ?? defaultAuthRedirect;
 }
 
 /**
@@ -60,10 +84,47 @@ async function callRestRefresh(): Promise<RestRefreshPayload> {
   });
 
   if (!response.ok) {
-    throw new Error(`Refresh failed: ${response.status}`);
+    // Carry the HTTP status so callers can distinguish a genuine 401 from a
+    // transient 5xx without destructive local cleanup.
+    throw new AuthHttpError(response.status, `Refresh failed: ${response.status}`);
   }
 
   return (await response.json()) as RestRefreshPayload;
+}
+
+/**
+ * Verifies the immutable subject from the access token and installs the
+ * session through the lifecycle gate. Returns false (installing nothing) when
+ * the token has no verifiable subject or the gate rejects it.
+ */
+async function installVerifiedSession(payload: RestRefreshPayload, originEpoch: number): Promise<boolean> {
+  const subject = decodeJwt(payload.accessToken)?.sub;
+  if (!subject) return false;
+
+  const outcome = await installEpochTaggedAuth(
+    { epoch: originEpoch, subject, value: payload },
+    (ticket) => useAuthStore.getState().installAuth(payload.user, payload.accessToken, ticket),
+  );
+  return outcome.status === 'INSTALLED';
+}
+
+/**
+ * Handles a failed refresh/bootstrap according to classification. Only a
+ * genuine `AUTH_REQUIRED` failure may clear the session and redirect to login;
+ * a `TRANSIENT` network/5xx failure preserves the in-memory token, the
+ * persisted profile, and the current route, returning false so callers simply
+ * pause auth-dependent work. Returns the classification for callers.
+ */
+function handleRefreshFailure(error: unknown): AuthFailureClassification {
+  const classification = classifyAuthError(error);
+  if (classification === 'AUTH_REQUIRED') {
+    markAuthRequired();
+    clearAuthSession();
+    redirectOnAuthRequired();
+  } else {
+    markTransient();
+  }
+  return classification;
 }
 
 async function doRefreshTokens(): Promise<boolean> {
@@ -74,20 +135,39 @@ async function doRefreshTokens(): Promise<boolean> {
   }
 
   lastRefreshAttempt = Date.now();
+  const originEpoch = await captureOriginEpoch();
   try {
     const payload = await callRestRefresh();
-    setAccessToken(payload.accessToken);
-    useAuthStore.getState().setAuth(payload.user, payload.accessToken);
-    return true;
-  } catch {
-    redirectToLogin();
+    return await installVerifiedSession(payload, originEpoch);
+  } catch (error) {
+    handleRefreshFailure(error);
     return false;
   }
 }
 
+interface AuthLockManager {
+  request<T>(name: string, options: { mode?: 'exclusive' | 'shared' }, callback: () => Promise<T>): Promise<T>;
+}
+
+function authLockManager(): AuthLockManager | null {
+  const nav = globalThis.navigator as (Navigator & { locks?: AuthLockManager }) | undefined;
+  return nav?.locks ?? null;
+}
+
+/**
+ * Serializes cookie-rotating refreshes across tabs via the Web Locks API.
+ * The lock only coordinates concurrent refresh calls; tokens never leave the
+ * response body and are never carried by any notification.
+ */
+async function withCookieRefreshLock(run: () => Promise<boolean>): Promise<boolean> {
+  const locks = authLockManager();
+  if (!locks) return run();
+  return locks.request('transformlit-auth-refresh', { mode: 'exclusive' }, run);
+}
+
 export function refreshTokens(): Promise<boolean> {
   if (refreshPromise) return refreshPromise;
-  refreshPromise = doRefreshTokens().finally(() => {
+  refreshPromise = withCookieRefreshLock(doRefreshTokens).finally(() => {
     refreshPromise = null;
   });
   return refreshPromise;
@@ -99,15 +179,18 @@ export function refreshTokens(): Promise<boolean> {
  * refresh endpoint using the httpOnly cookie. On failure the user is treated
  * as signed out (no hard redirect — callers decide).
  */
-export async function bootstrapAuth(): Promise<boolean> {
-  const hadTokenAtStart = getAccessToken() !== null;
-  if (hadTokenAtStart) return true;
+async function bootstrapAttempt(): Promise<boolean> {
+  const originEpoch = await captureOriginEpoch();
   try {
     const payload = await callRestRefresh();
-    setAccessToken(payload.accessToken);
-    useAuthStore.getState().setAuth(payload.user, payload.accessToken);
-    return true;
-  } catch {
+    return await installVerifiedSession(payload, originEpoch);
+  } catch (error) {
+    const classification = handleRefreshFailure(error);
+    if (classification === 'TRANSIENT') {
+      // A cold-start network/5xx outage must preserve the persisted profile so
+      // the user is not silently signed out; only a genuine 401 clears state.
+      return false;
+    }
     // A concurrent manual login (or another refresh) may have established a
     // session while this bootstrap call was in flight. Never clear a session
     // that did not exist when we began — otherwise a slow failing refresh can
@@ -118,6 +201,17 @@ export async function bootstrapAuth(): Promise<boolean> {
     }
     return false;
   }
+}
+
+export async function bootstrapAuth(): Promise<boolean> {
+  // Restore an established local owner on cold start so the different-subject
+  // fail-closed guard applies across restarts.
+  await hydrateAccountLifecycle();
+  const hadTokenAtStart = getAccessToken() !== null;
+  if (hadTokenAtStart) return true;
+  // Share the cookie-rotation lock so a bootstrap cannot race a refresh in
+  // another tab and double-rotate the refresh cookie.
+  return withCookieRefreshLock(bootstrapAttempt);
 }
 
 /**

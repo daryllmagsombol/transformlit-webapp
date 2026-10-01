@@ -6,7 +6,9 @@ import {
   decodeJwt,
   getTokenExpiry,
   isTokenExpiringSoon,
+  AuthHttpError,
 } from './auth';
+import { issueAuthInstallTicket, isAuthInstallTicket } from './offline/install-ticket';
 
 function buildJwt(payload: Record<string, unknown>): string {
   const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
@@ -116,6 +118,33 @@ describe('auth utilities', () => {
       const token = buildJwt({ sub: 'u', exp, iat: 0 });
       expect(isTokenExpiringSoon(token, 5)).toBe(false);
       expect(isTokenExpiringSoon(token, 30)).toBe(true);
+    });
+  });
+
+  describe('auth install tickets', () => {
+    it('recognizes a ticket minted by the issuer', () => {
+      const ticket = issueAuthInstallTicket('user-a', 3);
+      expect(isAuthInstallTicket(ticket)).toBe(true);
+      expect(ticket).toEqual({ subject: 'user-a', epoch: 3 });
+    });
+
+    it('rejects a plain forged object that never passed the gate', () => {
+      expect(isAuthInstallTicket({ subject: 'user-a', epoch: 3 })).toBe(false);
+      expect(isAuthInstallTicket(null)).toBe(false);
+      expect(isAuthInstallTicket(undefined)).toBe(false);
+    });
+
+    it('issues distinct ticket objects for the same identity', () => {
+      expect(issueAuthInstallTicket('user-a', 1)).not.toBe(issueAuthInstallTicket('user-a', 1));
+    });
+  });
+
+  describe('AuthHttpError', () => {
+    it('carries the HTTP status for classification', () => {
+      const error = new AuthHttpError(401, 'unauthorized');
+      expect(error).toBeInstanceOf(Error);
+      expect(error.status).toBe(401);
+      expect(error.name).toBe('AuthHttpError');
     });
   });
 });

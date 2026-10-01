@@ -40,6 +40,12 @@ jest.mock('../../lib/apollo-client', () => ({
   resetApolloState: jest.fn(),
 }));
 
+const mockCompleteLocalAuth = jest.fn();
+
+jest.mock('../../lib/offline/account-activation', () => ({
+  completeLocalAuth: (user: unknown, token: string) => mockCompleteLocalAuth(user, token),
+}));
+
 const mockAddToast = jest.fn();
 
 jest.mock('../../components/ui', () => ({
@@ -109,6 +115,8 @@ describe('LoginForm', () => {
     mockSetAuth.mockClear();
     mockBootstrapAuth.mockReset();
     mockBootstrapAuth.mockResolvedValue(false);
+    mockCompleteLocalAuth.mockReset();
+    mockCompleteLocalAuth.mockResolvedValue(true);
     mockAddToast.mockClear();
     mockFetch.mockReset();
     mockAuthState = {
@@ -272,7 +280,7 @@ describe('LoginForm', () => {
       });
     });
 
-    it('calls setAuth with user and access token on success', async () => {
+    it('routes installation through the account-lifecycle gate', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({ accessToken: 'access-tok', user: loginUser }),
@@ -283,8 +291,9 @@ describe('LoginForm', () => {
       submit();
 
       await waitFor(() => {
-        expect(mockSetAuth).toHaveBeenCalledWith(loginUser, 'access-tok');
+        expect(mockCompleteLocalAuth).toHaveBeenCalledWith(loginUser, 'access-tok');
       });
+      expect(mockSetAuth).not.toHaveBeenCalled();
     });
 
     it('shows success toast on login', async () => {

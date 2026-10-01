@@ -12,6 +12,7 @@ import { useToast, TextInput, SpinnerIcon, MailIcon, LockIcon, EyeIcon, EyeOffIc
 import { Footer } from '../../components/layout';
 import { API_BASE } from '../../lib/constants';
 import { bootstrapAuth } from '../../lib/apollo-client';
+import { completeLocalAuth } from '../../lib/offline/account-activation';
 
 /* ------------------------------------------------------------------ */
 /*  Zod schema                                                        */
@@ -54,7 +55,6 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
 export default function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const setAuth = useAuthStore((s) => s.setAuth);
   const user = useAuthStore((s) => s.user);
   const isHydrated = useAuthStore((s) => s.isHydrated);
   const { addToast } = useToast();
@@ -149,7 +149,10 @@ export default function LoginForm() {
         }
 
         const data = (await res.json()) as { accessToken: string; user: GraphQLUser };
-        setAuth(data.user, data.accessToken);
+        // Route installation through the account-lifecycle gate so ownership is
+        // established for the verified subject and account-scoped state resets.
+        const installed = await completeLocalAuth(data.user, data.accessToken);
+        if (!installed) throw new Error('Could not activate this account. Please try again.');
 
         addToast('Welcome back!', 'success');
         router.push(redirectTargetRef.current);
@@ -160,7 +163,7 @@ export default function LoginForm() {
         setLoading(false);
       }
     },
-    [router, setAuth, addToast],
+    [router, addToast],
   );
 
   /* ---------- Social login handlers ---------- */
