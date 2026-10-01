@@ -20,6 +20,9 @@ describe('OfflineClient', () => {
     expect(screen.getByRole('heading', { name: 'A little room to read offline' })).toBeInTheDocument();
     expect(screen.getByText(/save reading for offline use once that capability is available/i)).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(/saved for you|hello,|your bookshelf/i);
+    expect(screen.getByText('A quieter place to return to')).toHaveClass('text-on-surface-variant');
+    expect(screen.getByRole('link', { name: 'Return to Transform Lit' })).toHaveClass('text-primary');
+    expect(screen.getByRole('status')).toHaveClass('bg-surface-container', 'text-on-surface');
   });
 
   it('reports online and offline changes accessibly', async () => {
@@ -27,8 +30,10 @@ describe('OfflineClient', () => {
 
     fireEvent(globalThis.window, new Event('online'));
     expect(screen.getByRole('status')).toHaveTextContent(/online/i);
+    expect(screen.getByRole('status')).toHaveClass('bg-surface-container', 'text-on-surface');
     fireEvent(globalThis.window, new Event('offline'));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/offline/i));
+    expect(screen.getByRole('status')).toHaveClass('bg-surface-container', 'text-on-surface');
   });
 
   it('offers the native install prompt when the browser provides it', async () => {

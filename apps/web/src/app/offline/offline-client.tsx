@@ -56,7 +56,6 @@ export default function OfflineClient() {
   };
 
   const statusLabel = connectionLabel(isOnline);
-  const statusTone = isOnline === false ? 'border-outline-variant bg-surface-container-low text-on-surface-variant' : 'border-secondary/30 bg-secondary-container/45 text-on-secondary-container';
 
   return (
     <main className="min-h-dvh px-5 py-8 sm:px-8 sm:py-12">
@@ -71,7 +70,7 @@ export default function OfflineClient() {
             </span>
             <span className="font-display text-lg font-semibold tracking-tight">Transform Lit</span>
           </a>
-          <span aria-live="polite" role="status" className={`inline-flex min-h-11 items-center gap-2 rounded-full border px-4 font-small text-sm font-medium ${statusTone}`}>
+          <span aria-live="polite" role="status" className="inline-flex min-h-11 items-center gap-2 rounded-full border border-outline-variant bg-surface-container px-4 font-small text-sm font-medium text-on-surface">
             <span aria-hidden="true" className={`size-2 rounded-full ${isOnline === false ? 'bg-outline' : 'bg-secondary'}`} />
             {statusLabel}
           </span>
@@ -79,7 +78,7 @@ export default function OfflineClient() {
 
         <section className="grid flex-1 items-center gap-12 py-16 md:grid-cols-[1.05fr_0.95fr] md:gap-16 md:py-20">
           <div className="max-w-xl">
-            <p className="mb-5 font-small text-xs font-semibold uppercase tracking-[0.2em] text-secondary">A quieter place to return to</p>
+            <p className="mb-5 font-small text-xs font-semibold uppercase tracking-[0.2em] text-on-surface-variant">A quieter place to return to</p>
             <h1 className="max-w-lg font-display text-4xl font-semibold leading-[1.08] tracking-[-0.045em] text-on-surface sm:text-5xl md:text-6xl">
               A little room to read offline
             </h1>
@@ -96,7 +95,7 @@ export default function OfflineClient() {
                   {installMessage}
                 </p>
               )}
-              <a href="/" className="inline-flex min-h-11 items-center justify-center rounded-full px-5 py-3 font-small text-sm font-semibold text-secondary underline decoration-secondary/50 underline-offset-4 transition-colors hover:bg-secondary-container/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary motion-reduce:transition-none">
+              <a href="/" className="inline-flex min-h-11 items-center justify-center rounded-full px-5 py-3 font-small text-sm font-semibold text-primary underline decoration-primary/50 underline-offset-4 transition-colors hover:bg-secondary-container/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary motion-reduce:transition-none">
                 Return to Transform Lit
               </a>
             </div>
