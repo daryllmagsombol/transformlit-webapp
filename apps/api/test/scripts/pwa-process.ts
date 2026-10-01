@@ -66,13 +66,16 @@ export interface HarnessProbes {
   api(): Promise<boolean>;
   web(): Promise<boolean>;
   proxy(): Promise<boolean>;
+  proxyV4?(): Promise<boolean>;
 }
 
 export async function waitForHarnessReady(probes: HarnessProbes, attempts = 30, intervalMs = 500): Promise<void> {
-  const names = ['api', 'web', 'proxy'] as const;
+  const names = ['api', 'web', 'proxy', 'proxyV4'] as const;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const results = await Promise.all(names.map(async (name) => {
-      try { return [name, await probes[name]()] as const; }
+      const probe = probes[name];
+      if (!probe) return [name, true] as const;
+      try { return [name, await probe()] as const; }
       catch { return [name, false] as const; }
     }));
     const failed = results.filter(([, ready]) => !ready).map(([name]) => name);

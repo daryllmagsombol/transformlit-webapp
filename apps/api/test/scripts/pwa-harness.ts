@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, X509Certificate } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdir, readFile, rename, rm, access, writeFile, chmod, lstat, unlink, readdir } from 'node:fs/promises';
+import { closeSync, openSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Server } from 'node:net';
 import { request as httpsRequest } from 'node:https';
@@ -48,6 +49,43 @@ async function writeMetadata(metadata: PwaMetadata): Promise<void> {
   const temporaryPath = `${metadataPath}.${metadata.id}.tmp`;
   await writeFile(temporaryPath, `${JSON.stringify(metadata, null, 2)}\n`, { mode: 0o600 });
   await rename(temporaryPath, metadataPath);
+}
+
+function writeMetadataSync(metadata: PwaMetadata) {
+  const temporaryPath = `${metadataPath}.${metadata.id}.crash.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(metadata, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporaryPath, metadataPath);
+}
+
+function formatFailure(reason: string, detail: unknown): string {
+  if (detail instanceof Error) return `${reason}: ${detail.message}\n${detail.stack ?? ''}`;
+  return `${reason}: ${String(detail)}`;
+}
+
+// Tier 2: the supervisor must record its own crash synchronously. Metadata is
+// written before exiting so the parent `up`/`down` flows can distinguish a dead
+// supervisor from an assertion failure, and the log fd (installed by `up`)
+// keeps the reason diagnosable instead of silently swallowed.
+function installCrashHandlers(owner: PwaMetadata) {
+  const crash = (reason: string, detail: unknown): void => {
+    owner.state = 'failed';
+    owner.failure = formatFailure(reason, detail);
+    try { writeMetadataSync(owner); }
+    catch (error) { console.error(`PWA supervisor could not persist crash metadata: ${String(error)}`); }
+    console.error(owner.failure);
+    process.exit(1);
+  };
+  process.on('uncaughtException', (error) => crash('Uncaught exception in PWA supervisor', error));
+  process.on('unhandledRejection', (reason) => crash('Unhandled rejection in PWA supervisor', reason));
+}
+
+function recordDependencyError(owner: PwaMetadata, label: string, detail: unknown) {
+  if (owner.state === 'failed' && owner.failure) return;
+  owner.state = 'failed';
+  owner.failure = formatFailure(label, detail);
+  try { writeMetadataSync(owner); }
+  catch (error) { console.error(`PWA supervisor could not persist ${label}: ${String(error)}`); }
+  console.error(owner.failure);
 }
 
 async function ensurePrivateDirectory(path: string): Promise<void> {
@@ -235,6 +273,7 @@ async function waitForEndpoints(cert: Buffer): Promise<void> {
       return status >= 200 && status < 400;
     },
     proxy: async () => (await request('https://localhost:3443/', cert)).status === 200,
+    proxyV4: async () => (await request('https://127.0.0.1:3443/', cert)).status === 200,
   }, 60, 1000);
 }
 
@@ -252,6 +291,7 @@ async function supervise(id: string, nonce: string): Promise<void> {
   let proxy: ReturnType<typeof createPwaProxy> | undefined;
   let control: Server | undefined;
   let storageDir = '';
+  installCrashHandlers(owner);
   try {
     await verifyOwnerDirectory(owner);
     await writeMetadata(owner);
@@ -305,7 +345,10 @@ async function supervise(id: string, nonce: string): Promise<void> {
     owner.artifacts.push(keyPath, certPath);
     owner.tlsSpkiFingerprint = spkiPin(cert);
     proxy = createPwaProxy({ keyPath, certPath, apiPort: apiHostPort, webPort: webHostPort });
-    proxy.listen(3443, '::1');
+    proxy.on('error', (error) => recordDependencyError(owner, 'PWA proxy error', error));
+    // Bind dual-stack so both `localhost` (IPv6 ::1) and `127.0.0.1` reach the
+    // same listener; the proxy rejects non-loopback peers at accept time.
+    proxy.listen(3443, '::');
     await once(proxy, 'listening');
     await waitForEndpoints(cert);
     let shutdownStarted = false;
@@ -339,6 +382,7 @@ async function supervise(id: string, nonce: string): Promise<void> {
       }
     });
     control = controlServer;
+    control.on('error', (error) => recordDependencyError(owner, 'PWA control IPC error', error));
     const serverState = new Promise<void | Error>((resolveState) => {
       controlServer.once('close', () => resolveState());
       controlServer.once('error', (error) => {
@@ -381,6 +425,15 @@ function sendSupervisor(metadata: PwaMetadata, command: string, bookId?: string)
   return requestPwaSupervisorControl(metadata.socketPath, metadata.nonce, command, bookId);
 }
 
+async function isSupervisorAlive(metadata: PwaMetadata): Promise<boolean> {
+  try {
+    const response = await requestPwaSupervisorControl(metadata.socketPath, metadata.nonce, 'ping') as { ok?: boolean };
+    return response.ok === true;
+  } catch {
+    return false;
+  }
+}
+
 async function up(): Promise<void> {
   try { run('docker', ['info', '--format', '{{.ServerVersion}}']); } catch { throw new Error('Docker runtime is unavailable; refusing PWA harness startup'); }
   try { await access(metadataPath); throw new Error('Existing PWA owner metadata found; run down first'); }
@@ -401,7 +454,20 @@ async function up(): Promise<void> {
     throw error;
   }
   const scriptPath = join(root, 'apps/api/test/scripts/pwa-harness.ts');
-  const child = spawn(process.execPath, ['--import', 'tsx', scriptPath, 'supervise', id, nonce], { cwd: join(root, 'apps/api'), detached: true, stdio: 'ignore' });
+  const supervisorLogPath = join(stateDir, id, 'supervisor.log');
+  let supervisorLog: number;
+  try {
+    supervisorLog = openSync(supervisorLogPath, 'a', 0o600);
+  } catch (error) {
+    boot.state = 'failed';
+    boot.failure = `Unable to open supervisor log: ${error instanceof Error ? error.message : 'unknown error'}`;
+    await writeMetadata(boot);
+    throw error;
+  }
+  boot.artifacts.push(supervisorLogPath);
+  await writeMetadata(boot);
+  const child = spawn(process.execPath, ['--import', 'tsx', scriptPath, 'supervise', id, nonce], { cwd: join(root, 'apps/api'), detached: true, stdio: ['ignore', supervisorLog, supervisorLog] });
+  closeSync(supervisorLog);
   let spawnFailure: Error | undefined;
   let supervisorExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
   child.once('error', (error) => { spawnFailure = error; });
@@ -442,7 +508,24 @@ async function test(): Promise<void> {
     PWA_FIXTURE_CREDENTIALS: JSON.stringify(owner.fixtureCredentials ?? []),
     PWA_FIXTURE_IDS: JSON.stringify(owner.fixtureIds ?? {}),
   };
-  run('pnpm', ['exec', 'playwright', 'test', '-c', 'playwright.pwa.config.ts'], join(root, 'apps/web'), testEnv);
+  try {
+    run('pnpm', ['exec', 'playwright', 'test', '-c', 'playwright.pwa.config.ts'], join(root, 'apps/web'), testEnv);
+  } catch (error) {
+    if (await isSupervisorAlive(owner)) throw error;
+    throw new Error(`supervisor died during test: ${owner.failure ?? 'no recorded failure'}`, { cause: error });
+  }
+}
+
+async function cleanupExternalOwner(owner: PwaMetadata): Promise<void> {
+  owner.containers = [...new Set([...owner.containers, ...discoverLabeledContainers(owner.id)])];
+  await writeMetadata(owner);
+  await cleanupOwnedResources(containerCleanupOrder(owner), owner.id, dockerRuntime());
+  await removePublicAssetRoot(owner);
+  for (const artifact of owner.artifacts) assertOwnedArtifactPath(stateDir, owner.id, artifact);
+  await verifyOwnerDirectory(owner);
+  await unlinkOwnedStaleSocket(owner);
+  await rm(join(stateDir, owner.id), { recursive: true, force: true });
+  await rm(metadataPath, { force: true });
 }
 
 async function down(): Promise<void> {
@@ -453,19 +536,29 @@ async function down(): Promise<void> {
     try {
       await sendSupervisor(owner, 'ping');
       throw new Error('Failed supervisor is still live; refusing external cleanup');
-    } catch (error) { if (error instanceof Error && error.message.includes('still live')) throw error; }
-    owner.containers = [...new Set([...owner.containers, ...discoverLabeledContainers(owner.id)])];
-    await writeMetadata(owner);
-    await cleanupOwnedResources(containerCleanupOrder(owner), owner.id, dockerRuntime());
-    await removePublicAssetRoot(owner);
-    for (const artifact of owner.artifacts) assertOwnedArtifactPath(stateDir, owner.id, artifact);
-    await verifyOwnerDirectory(owner);
-    await unlinkOwnedStaleSocket(owner);
-    await rm(join(stateDir, owner.id), { recursive: true, force: true });
-    await rm(metadataPath, { force: true });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('still live')) throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ECONNREFUSED' && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    await cleanupExternalOwner(owner);
     return;
   }
-  const result = await sendSupervisor(owner, 'shutdown') as { ok?: boolean };
+  let result: { ok?: boolean };
+  try {
+    result = await sendSupervisor(owner, 'shutdown') as { ok?: boolean };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (owner.state === 'ready' && (code === 'ECONNREFUSED' || code === 'ENOENT')) {
+      // The supervisor crashed between readiness and shutdown; its metadata is
+      // stale but ownership-verified cleanup remains safe.
+      owner.state = 'failed';
+      owner.failure = `Supervisor control socket unavailable during shutdown (${code})`;
+      await writeMetadata(owner);
+      await cleanupExternalOwner(owner);
+      return;
+    }
+    throw error;
+  }
   if (!result.ok) throw new Error('Supervisor refused shutdown');
   await waitForSupervisorExit(async () => {
     try { await access(metadataPath); return true; }
