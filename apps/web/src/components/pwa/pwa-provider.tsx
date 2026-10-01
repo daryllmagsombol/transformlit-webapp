@@ -12,6 +12,10 @@ import {
 } from 'react';
 import { UpdatePrompt } from './update-prompt';
 import { syncCoordinator } from '../../lib/offline/sync-service';
+import {
+  installAccountExit,
+  resumeAccountExit,
+} from '../../lib/offline/account-exit';
 
 /**
  * A barrier that must resolve before a waiting worker is allowed to activate.
@@ -74,6 +78,14 @@ function reloadApplication(): void {
  * activates after a controlled drain reports no outstanding work.
  */
 function useForegroundSync(registerBarrier: boolean, enabled: boolean): void {
+  // Boot: install the REAL account-exit deps + cross-tab listener exactly once
+  // so a cold start can resume a persisted exit barrier (the lifecycle cannot
+  // import the exit module without a cycle).
+  useEffect(() => {
+    installAccountExit();
+    resumeAccountExit().catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     if (!enabled) return;
     const browser = globalThis.window;

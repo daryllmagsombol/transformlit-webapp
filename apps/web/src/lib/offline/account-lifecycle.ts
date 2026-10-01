@@ -158,8 +158,16 @@ export interface AuthLifecycle {
   completeExit(options?: CompleteExitOptions): Promise<ExitDecision>;
   /** Retries a deferred remote invalidation; unblocks activation on success. */
   resolveDeferredLogout(): Promise<ExitDecision>;
+  /**
+   * Explicit, informed escape for an unconfirmable deferred logout: clears the
+   * deferred marker + barrier after destructive cleanup, without server
+   * confirmation. Used only on explicit user confirmation.
+   */
+  abandonDeferredLogout(): Promise<void>;
   /** True when no barrier/deferred-logout blocks a new activation. */
   activationEligible(): Promise<boolean>;
+  /** Persists a durable exit barrier (used by the exit flow and tests). */
+  persistBarrier(subject: string, epoch: number, reason: BarrierReason): Promise<void>;
 }
 
 /**
@@ -543,6 +551,27 @@ export class AccountLifecycle implements AuthLifecycle {
     if (await this.persistence.readDeferredLogout()) return false;
     if (await this.persistence.readBarrier()) return false;
     return true;
+  }
+
+  /**
+   * Explicit informed escape: clears the deferred marker and barrier after
+   * cleanup WITHOUT server confirmation. Only invoked on explicit user consent
+   * (a genuinely cookie-less client cannot be auto-confirmed).
+   */
+  async abandonDeferredLogout(): Promise<void> {
+    const barrier = await this.persistence.readBarrier();
+    const deferred = await this.persistence.readDeferredLogout();
+    const subject = (deferred ?? barrier)?.subject;
+    if (subject) {
+      try {
+        await this.exitDeps.clearLocalData(subject);
+      } catch {
+        // Cleanup is best effort; the marker is cleared explicitly below.
+      }
+    }
+    await this.persistence.clearDeferredLogout();
+    await this.persistence.clearBarrier();
+    this.notify();
   }
 
   /** Persists a durable barrier that must survive restart. */

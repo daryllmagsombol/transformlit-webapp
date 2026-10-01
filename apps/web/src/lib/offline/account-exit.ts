@@ -65,25 +65,37 @@ export async function readExitWork(): Promise<ExitWorkSummary> {
  * "timed out" is not proof the old cookie is gone, so the caller persists a
  * deferred-logout barrier rather than assuming success.
  */
+/**
+ * Invalidates the remote session. IMPORTANT: this must NOT acquire the shared
+ * auth-lifecycle lock itself. It is reached from `hydrate()` → `resumeExit()`,
+ * and `hydrate()` is called from inside the lock held by login/registration/
+ * refresh; Web Locks is not reentrant, so a nested acquisition would deadlock
+ * every login on a profile with a durable barrier. Serialization of the actual
+ * cookie-clearing fetch is provided by the OUTER lock held at the public exit
+ * entrypoints (`completeAccountExit`, `retryDeferredLogout`, `resumeAccountExit`)
+ * and by the login/refresh flows.
+ *
+ * Returns true ONLY when the server explicitly confirmed the session
+ * invalidation (`{ revoked: true }`). A 200 with an explicit unconfirmable
+ * signal (e.g. `no-credential`) is NOT success — the caller keeps the barrier.
+ */
 async function invalidateSession(): Promise<boolean> {
-  // Hold the shared auth-lifecycle lock so a concurrent login/refresh cannot
-  // interleave with this cookie-clearing round-trip.
-  return withAuthLifecycleLock(async () => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), LOGOUT_TIMEOUT_MS);
-    try {
-      const response = await fetch(`${API_BASE}/auth/logout`, {
-        method: 'POST',
-        credentials: 'include',
-        signal: controller.signal,
-      });
-      return response.ok;
-    } catch {
-      return false;
-    } finally {
-      clearTimeout(timer);
-    }
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOGOUT_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_BASE}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      signal: controller.signal,
+    });
+    if (!response.ok) return false;
+    const body = (await response.json()) as { revoked?: unknown } | null;
+    return body?.revoked === true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Destructive local cleanup for the exited subject; runs after the barrier. */
@@ -145,6 +157,30 @@ export function resetAccountExitListenerForTests(): void {
   exitListenerInstalled = false;
 }
 
+let bootInstalled = false;
+
+/**
+ * Boot initializer: installs the REAL exit deps + cross-tab listener exactly
+ * once, so a cold `hydrate()` can resume a persisted barrier/deferred logout
+ * without any exit entrypoint having run. MUST be called from app bootstrap
+ * (e.g. `PwaProvider`) because the lifecycle cannot import this module (cycle).
+ */
+export function installAccountExit(): void {
+  configureAccountExit();
+  bootInstalled = true;
+}
+
+/** Test seam: reset the boot-installed flag and the listener. */
+export function resetAccountExitForTests(): void {
+  bootInstalled = false;
+  exitListenerInstalled = false;
+}
+
+/** True once the app has installed the exit deps at boot. */
+export function accountExitInstalled(): boolean {
+  return bootInstalled;
+}
+
 /**
  * Wires the lifecycle exit seams. Idempotent in effect (a plain reassignment of
  * module-level deps) and re-run on every entry, so a reset of the lifecycle
@@ -189,7 +225,11 @@ export async function requestAccountExit(): Promise<ExitRequest> {
  */
 export async function completeAccountExit(discard: boolean, drained = false): Promise<ExitDecision> {
   configureAccountExit();
-  return accountLifecycle().completeExit({ discard, drained, reason: 'SIGN_OUT' });
+  // Hold the lifecycle lock around the whole exit so its logout fetch cannot
+  // interleave with a concurrent login/refresh cookie rotation.
+  return withAuthLifecycleLock(() =>
+    accountLifecycle().completeExit({ discard, drained, reason: 'SIGN_OUT' }),
+  );
 }
 
 /** Cancels a begun-but-uncommitted exit, restoring writes + replay. */
@@ -200,13 +240,25 @@ export function cancelAccountExit(): void {
 /** Retries a deferred remote invalidation (e.g. after connectivity returns). */
 export async function retryDeferredLogout(): Promise<ExitDecision> {
   configureAccountExit();
-  return accountLifecycle().resolveDeferredLogout();
+  return withAuthLifecycleLock(() => accountLifecycle().resolveDeferredLogout());
 }
 
 /** Resumes an interrupted exit after restart (barrier-only or deferred). */
 export async function resumeAccountExit(): Promise<ExitDecision> {
   configureAccountExit();
-  return accountLifecycle().resumeExit();
+  return withAuthLifecycleLock(() => accountLifecycle().resumeExit());
+}
+
+/**
+ * Explicit, informed escape for a genuinely unconfirmable deferred logout: the
+ * user accepts that the old session could not be server-verified and signs out
+ * locally anyway. Clears the deferred marker + barrier after running cleanup.
+ * This is the documented escape that prevents a permanent block for a
+ * cookie-less client (which cannot be auto-confirmed).
+ */
+export async function abandonDeferredLogout(): Promise<void> {
+  configureAccountExit();
+  await accountLifecycle().abandonDeferredLogout();
 }
 
 /** True when no durable barrier blocks a new activation. */

@@ -42,11 +42,30 @@ export function resetAccountLifecycleForTests(): void {
 }
 
 /**
+ * Installs the real account-exit deps exactly once, via a DYNAMIC import to
+ * avoid an `account-activation` ↔ `account-exit` static import cycle. This makes
+ * a cold `hydrate()` able to resume a persisted exit barrier with the real
+ * invalidation/cleanup seams (not the fail-closed defaults).
+ */
+let exitWiring: Promise<void> | null = null;
+
+async function ensureAccountExitWired(): Promise<void> {
+  exitWiring ??= import('./account-exit')
+    .then((mod) => {
+      mod.installAccountExit();
+    })
+    .catch(() => undefined);
+  await exitWiring;
+}
+
+/**
  * Restores the persisted local owner after a restart. Idempotent, so it is safe
  * to call on every bootstrap; this is what makes the different-subject
- * fail-closed guard apply across restarts.
+ * fail-closed guard apply across restarts. It first installs the real exit deps
+ * so an interrupted exit is retried rather than left blocking activation.
  */
 export async function hydrateAccountLifecycle(): Promise<void> {
+  await ensureAccountExitWired();
   await lifecycle.hydrate();
 }
 
