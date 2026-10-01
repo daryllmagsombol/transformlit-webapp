@@ -4,10 +4,14 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import type { GraphQLUser } from '@transformlit/shared';
 import { UserAvatar } from './user-avatar';
-import { useAuthStore } from '../../store';
-import { clearAuth } from '../../lib/auth';
-import { resetApolloState } from '../../lib/apollo-client';
-import { API_BASE } from '../../lib/constants';
+import { AccountExitDialog } from '../offline/account-exit-dialog';
+import {
+  EMPTY_EXIT_WORK,
+  beginAccountExit,
+  completeAccountExit,
+  readExitWork,
+  type ExitWorkSummary,
+} from '../../lib/offline/account-exit';
 
 interface UserMenuProps {
   readonly user: GraphQLUser | null;
@@ -15,6 +19,10 @@ interface UserMenuProps {
 
 export function UserMenu({ user }: UserMenuProps) {
   const [open, setOpen] = useState(false);
+  const [exitOpen, setExitOpen] = useState(false);
+  const [exitWork, setExitWork] = useState<ExitWorkSummary>(EMPTY_EXIT_WORK);
+  const [exitBusy, setExitBusy] = useState(false);
+  const [exitError, setExitError] = useState<string | null>(null);
   const router = useRouter();
   const pathname = usePathname();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -23,28 +31,53 @@ export function UserMenu({ user }: UserMenuProps) {
 
   const handleClose = useCallback(() => setOpen(false), []);
 
+  /**
+   * Runs the account exit through the lifecycle gate. A controlled drain gates
+   * un-synced sign-out; undrained work opens the informed dialog instead.
+   */
+  const runExit = useCallback(
+    async (discard: boolean) => {
+      setExitBusy(true);
+      setExitError(null);
+      try {
+        const decision = await completeAccountExit(discard);
+        if (decision.status === 'SYNC_REQUIRED') {
+          setExitWork(await readExitWork());
+          setExitError('Some changes still need to sync.');
+          return;
+        }
+        // PROCEED, or BLOCKED/DEFERRED_LOGOUT (local UI stays signed out while
+        // remote invalidation is retried) — both end at the login screen.
+        router.push('/login');
+      } catch {
+        setExitError('Could not sign out. Please try again.');
+      } finally {
+        setExitBusy(false);
+      }
+    },
+    [router],
+  );
+
   const handleLogout = useCallback(() => {
     handleClose();
-    // Best-effort server-side session invalidation (clears the httpOnly
-    // refresh cookie). Failure must not block the client-side logout.
     void (async () => {
-      try {
-        await fetch(`${API_BASE}/auth/logout`, {
-          method: 'POST',
-          credentials: 'include',
-        });
-      } catch {
-        // Ignore: client state is cleared regardless.
+      const decision = await beginAccountExit();
+      const work = await readExitWork();
+      if (decision.status === 'PROCEED' || work.fullyDrained) {
+        await runExit(false);
+        return;
       }
+      setExitWork(work);
+      setExitOpen(true);
     })();
-    clearAuth();
-    useAuthStore.getState().clearAuth();
-    // Reset the Apollo cache so data from this session cannot leak into the
-    // next login. Best-effort: resetApolloState swallows errors and the
-    // navigation below is not gated on it.
-    void resetApolloState();
-    router.push('/login');
-  }, [handleClose, router]);
+  }, [handleClose, runExit]);
+
+  const handleSync = useCallback(() => void runExit(false), [runExit]);
+  const handleConfirmDiscard = useCallback(() => void runExit(true), [runExit]);
+  const handleCancelExit = useCallback(() => {
+    setExitOpen(false);
+    setExitError(null);
+  }, []);
 
   // Close when the route changes so the menu doesn't persist across pages.
   useEffect(() => {
@@ -168,6 +201,16 @@ export function UserMenu({ user }: UserMenuProps) {
           </button>
         </div>
       )}
+
+      <AccountExitDialog
+        open={exitOpen}
+        work={exitWork}
+        busy={exitBusy}
+        error={exitError}
+        onSync={handleSync}
+        onConfirmDiscard={handleConfirmDiscard}
+        onCancel={handleCancelExit}
+      />
     </div>
   );
 }
