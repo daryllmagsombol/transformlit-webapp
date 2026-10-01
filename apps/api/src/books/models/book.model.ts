@@ -453,6 +453,17 @@ export const ReaderServerValue = createUnionType({
   resolveType: (value: { __typename?: string }) => value?.__typename,
 });
 
+/**
+ * The annotation-only union for the authoritative snapshot. Progress is
+ * intentionally excluded: it is a separate revisioned `readProgress` endpoint,
+ * so it can never be mistaken for part of a complete annotation snapshot.
+ */
+export const ReaderAnnotationValue = createUnionType({
+  name: 'ReaderAnnotationValue',
+  types: () => [BookmarkRecord, HighlightRecord] as const,
+  resolveType: (value: { __typename?: string }) => value?.__typename,
+});
+
 @ObjectType()
 export class ReaderOperationApplied {
   @Field(() => OperationResultKind) kind: OperationResultKind;
@@ -518,4 +529,31 @@ export class ReaderOperationResult {
   @Field() operationId: string;
 
   @Field(() => ReaderOperationResultVariant) result: typeof ReaderOperationResultVariant;
+}
+
+// ── Authoritative annotation snapshot (Task 9) ──────────────────────────────
+
+/**
+ * One transactionally consistent per-book view of the current annotation set.
+ *
+ * `annotations` contains the present (non-deleted) bookmarks and highlights;
+ * `tombstones` carries deleted identities so a client can prune local records
+ * without treating absence as authoritative; `conflictCopies` carries linked,
+ * revisioned conflict records. Reading progress is deliberately NOT included:
+ * per the approved contract it is a separate revisioned
+ * `readProgress(bookId)` endpoint, so this snapshot is never described as a
+ * complete all-reader snapshot. `snapshotRevision` is the highest annotation
+ * revision observed at this boundary and never increments from progress writes.
+ */
+@ObjectType()
+export class BookReaderAnnotationSnapshot {
+  @Field(() => ID) bookId: string;
+
+  @Field(() => Int) snapshotRevision: number;
+
+  @Field(() => [ReaderAnnotationValue]) annotations: Array<typeof ReaderAnnotationValue>;
+
+  @Field(() => [ReaderTombstone]) tombstones: ReaderTombstone[];
+
+  @Field(() => [ConflictCopy]) conflictCopies: ConflictCopy[];
 }

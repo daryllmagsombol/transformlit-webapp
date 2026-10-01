@@ -1,0 +1,179 @@
+# Authoritative per-book reader documents (Task 9).
+#
+# `bookReaderAnnotationSnapshot` is the ONE transactionally-consistent
+# annotation view: present bookmarks/highlights (`annotations`), deletions
+# (`tombstones`), and linked, revisioned `conflictCopies`, sharing one
+# `snapshotRevision` boundary. Reading progress is intentionally NOT part of it:
+# progress is a separate revisioned `readProgress(bookId)` document so a partial
+# annotation dataset can never be mistaken for an all-reader snapshot.
+query BookReaderAnnotationSnapshot($bookId: ID!) {
+  bookReaderAnnotationSnapshot(bookId: $bookId) {
+    bookId
+    snapshotRevision
+    annotations {
+      __typename
+      ... on BookmarkRecord {
+        id
+        clientEntityId
+        bookId
+        page
+        label
+        color
+        contentVersion
+        revision
+        createdAt
+        deletedAt
+        anchor {
+          version
+          page
+          startOffset
+          endOffset
+        }
+      }
+      ... on HighlightRecord {
+        id
+        clientEntityId
+        bookId
+        page
+        text
+        note
+        color
+        contentVersion
+        revision
+        createdAt
+        updatedAt
+        deletedAt
+        anchor {
+          version
+          page
+          startOffset
+          endOffset
+        }
+      }
+    }
+    tombstones {
+      entityId
+      kind
+      revision
+      deletedAt
+    }
+    conflictCopies {
+      id
+      operationId
+      sourceEntityId
+      bookId
+      contentVersion
+      page
+      text
+      note
+      color
+      revision
+      reason
+      createdAt
+      anchor {
+        version
+        page
+        startOffset
+        endOffset
+      }
+    }
+  }
+}
+
+# Separate revisioned progress read. Never folded into the annotation snapshot.
+query BookReadProgress($bookId: String!) {
+  readProgress(bookId: $bookId) {
+    bookId
+    currentPage
+    scrollY
+    lastReadAt
+  }
+}
+
+# Replay-safe queued reader mutation. The server returns a typed
+# APPLIED/CONFLICT/INCOMPATIBLE_VERSION/ACCESS_DENIED result.
+mutation ApplyBookReaderOperation($input: ReaderOperationInput!) {
+  applyBookReaderOperation(input: $input) {
+    operationId
+    result {
+      __typename
+      ... on ReaderOperationApplied {
+        kind
+        entityId
+        revision
+        receiptId
+      }
+      ... on ReaderOperationConflict {
+        kind
+        entityId
+        serverRevision
+        conflictCopy {
+          id
+          operationId
+          sourceEntityId
+          bookId
+          contentVersion
+          page
+          text
+          note
+          color
+          revision
+          reason
+          createdAt
+        }
+        serverValue {
+          __typename
+          ... on BookmarkRecord {
+            id
+            bookId
+            page
+            label
+            color
+            contentVersion
+            revision
+          }
+          ... on HighlightRecord {
+            id
+            bookId
+            page
+            text
+            note
+            color
+            contentVersion
+            revision
+          }
+          ... on ConflictCopy {
+            id
+            operationId
+            sourceEntityId
+            bookId
+            contentVersion
+            page
+            text
+            note
+            color
+            revision
+            reason
+          }
+          ... on ProgressRecord {
+            bookId
+            currentPage
+            scrollY
+            revision
+            lastReadAt
+          }
+        }
+      }
+      ... on ReaderOperationIncompatibleVersion {
+        kind
+        requestedContentVersion
+        supportedContentVersions
+      }
+      ... on ReaderOperationAccessDenied {
+        kind
+        resourceId
+        reason
+      }
+    }
+  }
+}

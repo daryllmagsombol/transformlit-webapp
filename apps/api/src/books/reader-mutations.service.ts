@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -27,6 +27,15 @@ export type OperationResultPayload =
 export interface ReaderOperationOutcome {
   operationId: string;
   result: OperationResultPayload;
+}
+
+/** One transactionally consistent, annotation-only per-book snapshot. */
+export interface AnnotationSnapshot {
+  bookId: string;
+  snapshotRevision: number;
+  annotations: Record<string, unknown>[];
+  tombstones: Record<string, unknown>[];
+  conflictCopies: Record<string, unknown>[];
 }
 
 /** Canonical UUID v4-style check; client identity must be well-formed. */
@@ -144,6 +153,77 @@ export class ReaderMutationsService {
       if (replay) return replay;
       throw error;
     }
+  }
+
+  /**
+   * Authoritative, transactionally-consistent, annotation-only snapshot.
+   *
+   * Reading is one `RepeatableRead` transaction, so all three collections share
+   * a single boundary. Present bookmarks/highlights are returned as
+   * `annotations`; deleted identities are returned as `tombstones` (scoped to
+   * this book by joining the tombstone `entityId` to the book's rows, since the
+   * tombstone model carries no `bookId`); linked conflict copies are returned
+   * with their current revision. Progress is intentionally excluded — it is a
+   * separate revisioned endpoint — so this is never a complete all-reader
+   * snapshot.
+   *
+   * `snapshotRevision` is a monotonic per-book annotation watermark: the highest
+   * revision observed among this book's annotations, tombstones, and conflict
+   * copies (0 when there are none). It never decreases and never advances from a
+   * progress write. Clients still merge by stable entity ID/revision; the
+   * watermark alone is not a change detector.
+   */
+  async getSnapshot(subject: string, bookId: string): Promise<AnnotationSnapshot> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const book = await tx.book.findUnique({ where: { id: bookId } });
+        if (!book || book.deletedAt) throw new NotFoundException('Book not available');
+        if (!(await this.books.canRead(book, subject))) {
+          throw new ForbiddenException('You do not have access to this book');
+        }
+
+        const [bookmarks, highlights, copies] = await Promise.all([
+          tx.bookmark.findMany({ where: { userId: subject, bookId, deletedAt: null } }),
+          tx.highlight.findMany({ where: { userId: subject, bookId, deletedAt: null } }),
+          tx.conflictCopy.findMany({ where: { subject, bookId } }),
+        ]);
+
+        // Tombstones are keyed by subject + entityId only; scope them to this
+        // book by the ids of its (including soft-deleted) rows.
+        const [deletedBookmarks, deletedHighlights] = await Promise.all([
+          tx.bookmark.findMany({ where: { userId: subject, bookId, deletedAt: { not: null } }, select: { id: true } }),
+          tx.highlight.findMany({ where: { userId: subject, bookId, deletedAt: { not: null } }, select: { id: true } }),
+        ]);
+        const scopedEntityIds = [...deletedBookmarks, ...deletedHighlights].map((row) => row.id);
+        const tombstones = scopedEntityIds.length === 0
+          ? []
+          : await tx.readerTombstone.findMany({ where: { subject, entityId: { in: scopedEntityIds } } });
+
+        const annotations = [
+          ...bookmarks.map((row) => this.bookmarkValue(row as unknown as Record<string, unknown>)),
+          ...highlights.map((row) => this.highlightValue(row as unknown as Record<string, unknown>)),
+        ];
+        const tombstoneValues = tombstones.map((row) => ({
+          __typename: 'ReaderTombstone',
+          entityId: row.entityId,
+          kind: row.kind,
+          revision: row.revision,
+          deletedAt: row.deletedAt,
+        }));
+        const copyValues = copies.map((row) => this.conflictCopyValue(row as unknown as Record<string, unknown>));
+
+        const revisions = [
+          ...bookmarks.map((row) => row.revision),
+          ...highlights.map((row) => row.revision),
+          ...tombstones.map((row) => row.revision),
+          ...copies.map((row) => row.revision),
+        ];
+        const snapshotRevision = revisions.length === 0 ? 0 : Math.max(...revisions);
+
+        return { bookId, snapshotRevision, annotations, tombstones: tombstoneValues, conflictCopies: copyValues };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
   }
 
   private async execute(

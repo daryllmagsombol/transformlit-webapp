@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ReaderMutationsService, CONCURRENT_OPERATION_CODE } from './reader-mutations.service';
 import {
@@ -19,9 +19,17 @@ function uniqueViolation(): Prisma.PrismaClientKnownRequestError {
   return new Prisma.PrismaClientKnownRequestError('duplicate', { code: 'P2002', clientVersion: 'test' });
 }
 
-/** Prisma-like `where` matching: equality plus `{ increment: n }` on data. */
+/** Prisma-like `where` matching: equality, `{ not }`, `{ in }`, `{ increment }` on data. */
 function matches(row: Row, where: Row): boolean {
-  return Object.entries(where).every(([key, value]) => value === undefined || row[key] === value);
+  return Object.entries(where).every(([key, value]) => {
+    if (value === undefined) return true;
+    if (value && typeof value === 'object') {
+      const operator = value as { not?: unknown; in?: unknown[] };
+      if ('not' in operator) return row[key] !== operator.not;
+      if ('in' in operator) return (operator.in ?? []).includes(row[key]);
+    }
+    return row[key] === value;
+  });
 }
 
 /** Applies `{ increment: n }` operators the way Prisma's updateMany does. */
@@ -89,6 +97,8 @@ function createFakePrisma() {
         state.bookmark.find((r) => r.userId === where.userId_clientEntityId.userId && r.clientEntityId === where.userId_clientEntityId.clientEntityId) ?? null),
       findFirst: jest.fn(async ({ where }: { where: Row }) =>
         state.bookmark.find((r) => matches(r, where)) ?? null),
+      findMany: jest.fn(async ({ where }: { where: Row }) =>
+        state.bookmark.filter((r) => matches(r, where))),
       create: jest.fn(async ({ data }: { data: Row }) => {
         const duplicate = state.bookmark.find((r) => r.userId === data.userId && r.clientEntityId === data.clientEntityId);
         if (duplicate) throw uniqueViolation();
@@ -107,6 +117,8 @@ function createFakePrisma() {
         state.highlight.find((r) => r.userId === where.userId_clientEntityId.userId && r.clientEntityId === where.userId_clientEntityId.clientEntityId) ?? null),
       findFirst: jest.fn(async ({ where }: { where: Row }) =>
         state.highlight.find((r) => matches(r, where)) ?? null),
+      findMany: jest.fn(async ({ where }: { where: Row }) =>
+        state.highlight.filter((r) => matches(r, where))),
       create: jest.fn(async ({ data }: { data: Row }) => {
         const duplicate = state.highlight.find((r) => r.userId === data.userId && r.clientEntityId === data.clientEntityId);
         if (duplicate) throw uniqueViolation();
@@ -128,6 +140,8 @@ function createFakePrisma() {
       }),
       findFirst: jest.fn(async ({ where }: { where: Row }) =>
         state.conflictCopy.find((r) => matches(r, where)) ?? null),
+      findMany: jest.fn(async ({ where }: { where: Row }) =>
+        state.conflictCopy.filter((r) => matches(r, where))),
       updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
         const rows = state.conflictCopy.filter((r) => matches(r, where));
         for (const row of rows) applyIncrements(row, data);
@@ -153,6 +167,8 @@ function createFakePrisma() {
         state.tombstone.push(row);
         return row;
       }),
+      findMany: jest.fn(async ({ where }: { where: Row }) =>
+        state.tombstone.filter((r) => matches(r, where))),
     },
     $transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(api)),
   };
@@ -540,6 +556,56 @@ describe('ReaderMutationsService', () => {
       expect(error).toBeInstanceOf(ConflictException);
       // A clearly retryable, stable code so clients retry rather than discard.
       expect((error as ConflictException).getResponse()).toMatchObject({ code: CONCURRENT_OPERATION_CODE });
+    });
+  });
+
+  describe('authoritative annotation snapshot', () => {
+    it('returns only present annotations, tombstones, and conflict copies for one book', async () => {
+      const { service, state } = build();
+      // A present bookmark, a present highlight, a soft-deleted bookmark with a
+      // tombstone, and a linked conflict copy — all in the same snapshotted book.
+      state.bookmark.push({ id: 'bm-present', userId: SUBJECT, bookId: BOOK_ID, page: 1, revision: 3, deletedAt: null, createdAt: new Date(), clientEntityId: CLIENT_ID, contentVersion: 2 });
+      state.highlight.push({ id: 'hl-present', userId: SUBJECT, bookId: BOOK_ID, page: 2, text: 'kept', revision: 4, deletedAt: null, createdAt: new Date(), updatedAt: new Date(), clientEntityId: OTHER_CLIENT_ID, contentVersion: 2 });
+      state.bookmark.push({ id: 'bm-deleted', userId: SUBJECT, bookId: BOOK_ID, page: 3, revision: 2, deletedAt: new Date(), createdAt: new Date(), clientEntityId: 'deadbeef-0000-4000-8000-000000000000', contentVersion: 2 });
+      state.tombstone.push({ id: 't1', subject: SUBJECT, entityId: 'bm-deleted', kind: 'BOOKMARK', revision: 2, deletedAt: new Date() });
+      state.conflictCopy.push({ id: 'cc-1', subject: SUBJECT, bookId: BOOK_ID, operationId: OPERATION_ID, sourceEntityId: 'hl-present', page: 2, text: 'offline', revision: 5, reason: 'STALE_REVISION', contentVersion: 2, createdAt: new Date() });
+      // A row in a different book must not leak into this book's snapshot.
+      state.bookmark.push({ id: 'bm-other', userId: SUBJECT, bookId: 'other-book', page: 1, revision: 9, deletedAt: null, createdAt: new Date(), clientEntityId: 'aaaaaaaa-0000-4000-8000-000000000000', contentVersion: 2 });
+
+      const snapshot = await service.getSnapshot(SUBJECT, BOOK_ID);
+
+      expect(snapshot.bookId).toBe(BOOK_ID);
+      const annotationIds = snapshot.annotations.map((row) => row.id);
+      expect(annotationIds).toEqual(expect.arrayContaining(['bm-present', 'hl-present']));
+      expect(annotationIds).not.toContain('bm-deleted');
+      expect(annotationIds).not.toContain('bm-other');
+      expect(snapshot.tombstones.map((row) => row.entityId)).toEqual(['bm-deleted']);
+      expect(snapshot.conflictCopies.map((row) => row.id)).toEqual(['cc-1']);
+      // The snapshot revision is the annotation-only watermark (max revision).
+      expect(snapshot.snapshotRevision).toBe(5);
+    });
+
+    it('never includes reading progress in the annotation snapshot', async () => {
+      const { service, state } = build();
+      state.bookProgress.push({ id: 'p1', userId: SUBJECT, bookId: BOOK_ID, currentPage: 42, revision: 99, lastReadAt: new Date() });
+      const snapshot = await service.getSnapshot(SUBJECT, BOOK_ID);
+      expect(snapshot.snapshotRevision).toBe(0);
+      expect(JSON.stringify(snapshot.annotations)).not.toContain('ProgressRecord');
+    });
+
+    it('rejects a subject without read access and never returns another account data', async () => {
+      const { service, books } = build();
+      books.canRead.mockResolvedValue(false);
+      await expect(service.getSnapshot(SUBJECT, BOOK_ID)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('reports an empty snapshot with revision 0 when nothing is stored', async () => {
+      const { service } = build();
+      const snapshot = await service.getSnapshot(SUBJECT, BOOK_ID);
+      expect(snapshot).toMatchObject({ bookId: BOOK_ID, snapshotRevision: 0 });
+      expect(snapshot.annotations).toEqual([]);
+      expect(snapshot.tombstones).toEqual([]);
+      expect(snapshot.conflictCopies).toEqual([]);
     });
   });
 });

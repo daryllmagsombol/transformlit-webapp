@@ -1,19 +1,46 @@
-import { gql, type TypedDocumentNode } from '@apollo/client';
+import { gql } from '@apollo/client';
+import {
+  BookReaderAnnotationSnapshotDocument,
+  BookReadProgressDocument,
+  ApplyBookReaderOperationDocument,
+  type BookReaderAnnotationSnapshotQuery,
+  type BookReaderAnnotationSnapshotQueryVariables,
+  type BookReadProgressQuery,
+  type BookReadProgressQueryVariables,
+  type ApplyBookReaderOperationMutation,
+  type ApplyBookReaderOperationMutationVariables,
+} from '@transformlit/graphql';
 import { apolloClient, refreshTokens } from '../apollo-client';
 import { API_BASE } from '../constants';
 import { getAccessToken } from '../auth';
 
-export const READ_PROGRESS_QUERY: TypedDocumentNode<
-  { readProgress: { currentPage: number } | null },
-  { bookId: string }
-> = gql`
-  query ReadProgress($bookId: String!) {
-    readProgress(bookId: $bookId) {
-      currentPage
-    }
-  }
-`;
+/**
+ * Generated, schema-verified reader documents from `@transformlit/graphql`.
+ *
+ * These are the authoritative wire contracts (see Task 9): the annotation
+ * snapshot, the SEPARATE revisioned progress read, and the queued reader
+ * mutation. Consumers must not maintain competing handwritten GraphQL snapshot
+ * or operation definitions.
+ */
+export const BOOK_READER_ANNOTATION_SNAPSHOT_QUERY = BookReaderAnnotationSnapshotDocument;
+export const BOOK_READ_PROGRESS_QUERY = BookReadProgressDocument;
+export const APPLY_BOOK_READER_OPERATION_MUTATION = ApplyBookReaderOperationDocument;
 
+export type {
+  BookReaderAnnotationSnapshotQuery,
+  BookReaderAnnotationSnapshotQueryVariables,
+  BookReadProgressQuery,
+  BookReadProgressQueryVariables,
+  ApplyBookReaderOperationMutation,
+  ApplyBookReaderOperationMutationVariables,
+};
+
+/**
+ * Legacy progress write document. Task 8 makes the server `saveProgress`
+ * mutation reject with UPGRADE_REQUIRED; Task 11 migrates the online reader to
+ * the `applyBookReaderOperation` operation envelope. Until then this remains the
+ * only handwritten reader document.
+ */
 export const SAVE_PROGRESS_MUTATION = gql`
   mutation SaveReaderProgress($input: SaveProgressInput!) {
     saveProgress(input: $input) {
@@ -110,8 +137,8 @@ export async function fetchPageText(bookId: string, page: number): Promise<PdfPa
 
 /** Server-side reading position, used to resume when the URL has no `?page`. */
 export async function fetchReadProgress(bookId: string): Promise<{ currentPage: number } | null> {
-  const result = await apolloClient.query({
-    query: READ_PROGRESS_QUERY,
+  const result = await apolloClient.query<BookReadProgressQuery, BookReadProgressQueryVariables>({
+    query: BOOK_READ_PROGRESS_QUERY,
     variables: { bookId },
     fetchPolicy: 'no-cache',
   });
@@ -124,4 +151,39 @@ export async function saveReaderProgress(bookId: string, currentPage: number): P
     mutation: SAVE_PROGRESS_MUTATION,
     variables: { input: { bookId, currentPage } },
   });
+}
+
+/**
+ * Loads the authoritative, annotation-only per-book snapshot. Reading progress
+ * is fetched separately via `fetchReadProgress` — it is never part of this
+ * snapshot (see docs/superpowers/specs/2026-10-01-pwa-contracts.md).
+ */
+export async function fetchAnnotationSnapshot(
+  bookId: string,
+): Promise<BookReaderAnnotationSnapshotQuery['bookReaderAnnotationSnapshot']> {
+  const result = await apolloClient.query<
+    BookReaderAnnotationSnapshotQuery,
+    BookReaderAnnotationSnapshotQueryVariables
+  >({
+    query: BOOK_READER_ANNOTATION_SNAPSHOT_QUERY,
+    variables: { bookId },
+    fetchPolicy: 'no-cache',
+  });
+  if (!result.data) throw new Error('Annotation snapshot returned no data');
+  return result.data.bookReaderAnnotationSnapshot;
+}
+
+/** Sends one queued, replay-safe reader operation and returns its typed result. */
+export async function applyReaderOperation(
+  input: ApplyBookReaderOperationMutationVariables['input'],
+): Promise<ApplyBookReaderOperationMutation['applyBookReaderOperation']> {
+  const result = await apolloClient.mutate<
+    ApplyBookReaderOperationMutation,
+    ApplyBookReaderOperationMutationVariables
+  >({
+    mutation: APPLY_BOOK_READER_OPERATION_MUTATION,
+    variables: { input },
+  });
+  if (!result.data) throw new Error('Reader operation returned no result');
+  return result.data.applyBookReaderOperation;
 }

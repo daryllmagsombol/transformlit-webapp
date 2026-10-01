@@ -84,6 +84,14 @@ type BookProgress {
   scrollY: Float
 }
 
+type BookReaderAnnotationSnapshot {
+  annotations: [ReaderAnnotationValue!]!
+  bookId: ID!
+  conflictCopies: [ConflictCopy!]!
+  snapshotRevision: Int!
+  tombstones: [ReaderTombstone!]!
+}
+
 enum BookStatus {
   COMING_SOON
   DRAFT
@@ -451,6 +459,7 @@ type Query {
   announcement(id: String!): Announcement
   announcements: [Announcement!]!
   book(id: String!): Book!
+  bookReaderAnnotationSnapshot(bookId: ID!): BookReaderAnnotationSnapshot!
   bookToc(bookId: String!): [BookTocEntry!]!
   bookmarks(bookId: String!): [Bookmark!]!
   books: [Book!]!
@@ -478,6 +487,14 @@ type Query {
   userProfile(id: String!): UserProfile!
   users: [User!]!
   verseOfDay: VerseOfDay!
+}
+
+union ReaderAnnotationValue = BookmarkRecord | HighlightRecord
+
+enum ReaderEntityKind {
+  ANNOTATION
+  BOOKMARK
+  PROGRESS
 }
 
 type ReaderOperationAccessDenied {
@@ -534,6 +551,13 @@ type ReaderOperationResult {
 union ReaderOperationResultVariant = ReaderOperationAccessDenied | ReaderOperationApplied | ReaderOperationConflict | ReaderOperationIncompatibleVersion
 
 union ReaderServerValue = BookmarkRecord | ConflictCopy | HighlightRecord | ProgressRecord
+
+type ReaderTombstone {
+  deletedAt: DateTime!
+  entityId: ID!
+  kind: ReaderEntityKind!
+  revision: Int!
+}
 
 input RegisterLocalInput {
   displayName: String!

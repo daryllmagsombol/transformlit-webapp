@@ -305,4 +305,152 @@ describe('Reader sync idempotency', () => {
     expect(crossBook.result.kind).toBe(OperationResultKind.ACCESS_DENIED);
     expect(await prisma.bookmark.findUnique({ where: { id: entityId } })).toMatchObject({ deletedAt: null });
   });
+
+  it('returns one annotation-only snapshot with deletions as tombstones and linked conflict copies', async () => {
+    const book = await prisma.book.create({
+      data: { title: `Snapshot ${Date.now()}`, status: 'PUBLISHED', conversionStatus: 'READY', accessLevel: 'FREE', contentVersion: 1 },
+    });
+
+    // Present bookmark + present highlight.
+    await mutations.applyOperation(subject, {
+      operationId: 'dddddddd-0000-4000-8000-000000000001',
+      bookId: book.id,
+      contentVersion: 1,
+      kind: OperationKind.BOOKMARK_ADD,
+      clientEntityId: 'dddddddd-0000-4000-8000-000000000011',
+      page: 1,
+      label: 'one',
+      color: null,
+      anchor: null,
+    } as never);
+    const highlight = await mutations.applyOperation(subject, {
+      operationId: 'dddddddd-0000-4000-8000-000000000002',
+      bookId: book.id,
+      contentVersion: 1,
+      kind: OperationKind.ANNOTATION_CREATE,
+      clientEntityId: 'dddddddd-0000-4000-8000-000000000012',
+      page: 2,
+      text: 'kept',
+      note: null,
+      color: null,
+      anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 },
+    } as never);
+    const highlightId = (highlight.result as { entityId: string }).entityId;
+
+    // A soft-deleted bookmark becomes a tombstone, not an annotation.
+    const bookmark = await mutations.applyOperation(subject, {
+      operationId: 'dddddddd-0000-4000-8000-000000000003',
+      bookId: book.id,
+      contentVersion: 1,
+      kind: OperationKind.BOOKMARK_ADD,
+      clientEntityId: 'dddddddd-0000-4000-8000-000000000013',
+      page: 3,
+      label: null,
+      color: null,
+      anchor: null,
+    } as never);
+    const bookmarkId = (bookmark.result as { entityId: string }).entityId;
+    await mutations.applyOperation(subject, {
+      operationId: 'dddddddd-0000-4000-8000-000000000004',
+      bookId: book.id,
+      contentVersion: 1,
+      kind: OperationKind.BOOKMARK_REMOVE,
+      entityId: bookmarkId,
+      baseRevision: 1,
+    } as never);
+
+    // A stale edit creates a linked conflict copy.
+    await mutations.applyOperation(subject, {
+      operationId: 'dddddddd-0000-4000-8000-000000000005',
+      bookId: book.id,
+      contentVersion: 1,
+      kind: OperationKind.ANNOTATION_UPDATE,
+      entityId: highlightId,
+      targetKind: OperationTargetKind.ANNOTATION,
+      baseRevision: 99,
+      page: 2,
+      text: 'offline',
+      note: null,
+      color: null,
+      anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 },
+    } as never);
+
+    // A progress write must not appear in or advance the annotation snapshot.
+    await mutations.applyOperation(subject, {
+      operationId: 'dddddddd-0000-4000-8000-000000000006',
+      bookId: book.id,
+      contentVersion: 1,
+      kind: OperationKind.PROGRESS_SET,
+      baseRevision: 0,
+      currentPage: 9,
+      scrollY: null,
+    } as never);
+
+    const snapshot = await mutations.getSnapshot(subject, book.id);
+
+    expect(snapshot.bookId).toBe(book.id);
+    const annotationIds = snapshot.annotations.map((row) => row.id);
+    expect(annotationIds).toContain(highlightId);
+    expect(annotationIds).not.toContain(bookmarkId);
+    expect(snapshot.annotations.map((row) => row.__typename).sort()).toEqual(
+      ['BookmarkRecord', 'HighlightRecord'].sort(),
+    );
+    expect(snapshot.tombstones.map((row) => row.entityId)).toEqual([bookmarkId]);
+    expect(snapshot.conflictCopies).toHaveLength(1);
+    expect(snapshot.conflictCopies[0]).toMatchObject({ sourceEntityId: highlightId, reason: 'STALE_REVISION' });
+    // The watermark equals the max annotation revision and is > 0.
+    const revisions = [
+      ...snapshot.annotations.map((row) => row.revision as number),
+      ...snapshot.tombstones.map((row) => row.revision as number),
+      ...snapshot.conflictCopies.map((row) => row.revision as number),
+    ];
+    expect(snapshot.snapshotRevision).toBe(Math.max(...revisions));
+  });
+
+  it('denies the snapshot for a subject without read access', async () => {
+    const stamp = Date.now();
+    const restricted = await prisma.book.create({
+      data: { title: `Restricted ${stamp}`, status: 'PUBLISHED', conversionStatus: 'READY', accessLevel: 'RESTRICTED', contentVersion: 1 },
+    });
+    await expect(mutations.getSnapshot(subject, restricted.id)).rejects.toThrow();
+  });
+
+  it('reflects a concurrent annotation write exactly once at a single snapshot boundary', async () => {
+    const book = await prisma.book.create({
+      data: { title: `SnapshotRace ${Date.now()}`, status: 'PUBLISHED', conversionStatus: 'READY', accessLevel: 'FREE', contentVersion: 1 },
+    });
+    // Two concurrent creates for distinct client identities must both be visible
+    // and share one monotonic watermark (no lost update, no torn read).
+    const [a, b] = await Promise.all([
+      mutations.applyOperation(subject, {
+        operationId: 'eeeeeeee-0000-4000-8000-000000000001',
+        bookId: book.id,
+        contentVersion: 1,
+        kind: OperationKind.BOOKMARK_ADD,
+        clientEntityId: 'eeeeeeee-0000-4000-8000-000000000011',
+        page: 1,
+        label: null,
+        color: null,
+        anchor: null,
+      } as never),
+      mutations.applyOperation(subject, {
+        operationId: 'eeeeeeee-0000-4000-8000-000000000002',
+        bookId: book.id,
+        contentVersion: 1,
+        kind: OperationKind.ANNOTATION_CREATE,
+        clientEntityId: 'eeeeeeee-0000-4000-8000-000000000012',
+        page: 2,
+        text: 'concurrent',
+        note: null,
+        color: null,
+        anchor: { version: 1, page: 2, startOffset: 0, endOffset: 3 },
+      } as never),
+    ]);
+    expect(a.result.kind).toBe(OperationResultKind.APPLIED);
+    expect(b.result.kind).toBe(OperationResultKind.APPLIED);
+
+    const snapshot = await mutations.getSnapshot(subject, book.id);
+    expect(snapshot.annotations).toHaveLength(2);
+    expect(snapshot.snapshotRevision).toBeGreaterThanOrEqual(1);
+  });
 });
