@@ -132,6 +132,14 @@ describe('PwaProvider', () => {
   beforeEach(() => {
     installServiceWorker(createContainer());
     reloadSpy.mockClear();
+    mockCoordinator.controlledDrain.mockReset();
+    mockCoordinator.controlledDrain.mockResolvedValue({
+      pending: 0,
+      inFlightOrUncertain: 0,
+      blockedSuccessors: 0,
+      conflicts: 0,
+      fullyDrained: true,
+    });
   });
 
   afterEach(() => {
@@ -201,17 +209,78 @@ describe('PwaProvider', () => {
     unregister();
   });
 
-  it('registers a controlled-drain barrier that accounts for outstanding work', async () => {
+  it('registers a controlled-drain barrier that only activates when fully drained', async () => {
     const { waiting } = await setupWaitingWorker();
     mockCoordinator.controlledDrain.mockClear();
+    mockCoordinator.controlledDrain.mockResolvedValue({
+      pending: 0,
+      inFlightOrUncertain: 0,
+      blockedSuccessors: 0,
+      conflicts: 0,
+      fullyDrained: true,
+    });
 
     renderProvider();
     fireEvent.click(await screen.findByRole('button', { name: /update now/i }));
 
-    // Activation waits on the registered controlled-drain barrier; outstanding
-    // work must be inspected (not silently counted as drained).
+    // Activation waits on the registered controlled-drain barrier; a fully
+    // drained report permits the waiting worker to activate.
     await waitFor(() => expect(mockCoordinator.controlledDrain).toHaveBeenCalled());
     await waitFor(() => expect(waiting.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' }));
+  });
+
+  it('does not activate when the controlled drain is not fully drained', async () => {
+    const { waiting } = await setupWaitingWorker();
+    mockCoordinator.controlledDrain.mockClear();
+    mockCoordinator.controlledDrain.mockResolvedValue({
+      pending: 2,
+      inFlightOrUncertain: 1,
+      blockedSuccessors: 0,
+      conflicts: 1,
+      fullyDrained: false,
+    });
+
+    renderProvider();
+    fireEvent.click(await screen.findByRole('button', { name: /update now/i }));
+
+    await waitFor(() => expect(mockCoordinator.controlledDrain).toHaveBeenCalled());
+    // The worker must stay waiting; the update remains available for retry.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(waiting.postMessage).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /update now/i })).toBeInTheDocument();
+  });
+
+  it('lets a barrier veto activation by returning false', async () => {
+    const { waiting } = await setupWaitingWorker();
+    const barrier = jest.fn(() => false);
+    const unregister = registerUpdateBarrier(barrier);
+
+    function Probe() {
+      const update = usePwaUpdate();
+      return <span>{update.updateDeferred ? 'deferred' : 'not-deferred'}</span>;
+    }
+
+    try {
+      render(
+        <PwaProvider reload={reloadSpy}>
+          <Probe />
+        </PwaProvider>,
+      );
+
+      fireEvent.click(await screen.findByRole('button', { name: /update now/i }));
+
+      await waitFor(() => expect(barrier).toHaveBeenCalled());
+      expect(waiting.postMessage).not.toHaveBeenCalled();
+      expect(await screen.findByText('deferred')).toBeInTheDocument();
+      // The user sees why activation was deferred while the prompt stays open.
+      expect(screen.getByText(/finishing your saved work before updating/i)).toBeInTheDocument();
+      // The update stays advertised so the user can retry once work settles.
+      expect(screen.getByRole('button', { name: /update now/i })).toBeInTheDocument();
+    } finally {
+      unregister();
+    }
   });
 
   it('proceeds immediately when no barriers are registered', async () => {

@@ -18,10 +18,13 @@ import {
 } from '../../lib/offline/account-exit';
 
 /**
- * A barrier that must resolve before a waiting worker is allowed to activate.
- * Task 4/11 register barriers so activation waits for local writes/outbox flushing.
+ * A barrier that must permit activation before a waiting worker is told to
+ * activate. Task 4/11 register barriers so activation waits for local writes /
+ * outbox flushing. Returning `false`, or throwing, VETOES activation for this
+ * attempt: the waiting worker is not asked to activate and the update stays
+ * pending so the user can retry once outstanding work settles.
  */
-export type UpdateBarrier = () => Promise<void> | void;
+export type UpdateBarrier = () => boolean | void | Promise<boolean | void>;
 
 const updateBarriers = new Set<UpdateBarrier>();
 
@@ -36,13 +39,33 @@ export function registerUpdateBarrier(waiter: UpdateBarrier): () => void {
   };
 }
 
-async function awaitRegisteredBarriers(): Promise<void> {
-  const pending = [...updateBarriers].map((waiter) => Promise.resolve(waiter()));
-  await Promise.all(pending);
+/**
+ * Runs every registered barrier and reports whether they ALL permitted
+ * activation. A barrier that returns `false` or rejects vetoes the attempt; the
+ * remaining barriers still run so a single failure does not mask the others.
+ */
+async function awaitRegisteredBarriers(): Promise<boolean> {
+  const outcomes = await Promise.all(
+    [...updateBarriers].map(async (barrier) => {
+      try {
+        return (await barrier()) !== false;
+      } catch (error) {
+        console.debug('Update barrier vetoed activation', error);
+        return false;
+      }
+    }),
+  );
+  return outcomes.every((permitted) => permitted);
 }
 
 export interface PwaUpdateValue {
   readonly updateAvailable: boolean;
+  /**
+   * True when the most recent "Update now" attempt was vetoed by a barrier
+   * because local work was outstanding. The waiting worker stays pending and
+   * the prompt remains visible so the user can retry once work settles.
+   */
+  readonly updateDeferred: boolean;
   readonly applyUpdate: () => Promise<void>;
   readonly dismissUpdate: () => void;
 }
@@ -119,10 +142,11 @@ function useForegroundSync(registerBarrier: boolean, enabled: boolean): void {
   useEffect(() => {
     if (!registerBarrier || !enabled) return;
     return registerUpdateBarrier(async () => {
-      // Inspect outstanding work before activation. The barrier completing just
-      // means the attempt ran; Task 13B owns blocking activation when the drain
-      // is not fully complete. Work is never silently treated as drained.
-      await syncCoordinator().controlledDrain();
+      // Inspect outstanding work before activation and REFUSE activation unless
+      // the controlled drain is fully complete. Pending/in-flight/conflict work
+      // keeps the waiting worker pending rather than being silently discarded.
+      const report = await syncCoordinator().controlledDrain();
+      return report.fullyDrained;
     });
   }, [registerBarrier, enabled]);
 }
@@ -137,6 +161,7 @@ interface PwaProviderProps {
 
 export function PwaProvider({ children, reload = reloadApplication, enableSync = true }: PwaProviderProps) {
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updateDeferred, setUpdateDeferred] = useState(false);
   const waitingWorkerRef = useRef<ServiceWorker | null>(null);
   const consentedRef = useRef(false);
   const reloadedRef = useRef(false);
@@ -191,15 +216,23 @@ export function PwaProvider({ children, reload = reloadApplication, enableSync =
   }, [reload]);
 
   const applyUpdate = useCallback(async () => {
-    await awaitRegisteredBarriers();
+    const permitted = await awaitRegisteredBarriers();
+    if (!permitted) {
+      // A barrier vetoed activation (outstanding local work). Keep the worker
+      // waiting and the prompt visible so the user can retry.
+      setUpdateDeferred(true);
+      return;
+    }
     const worker = waitingWorkerRef.current;
     if (!worker) return;
     consentedRef.current = true;
+    setUpdateDeferred(false);
     worker.postMessage({ type: 'SKIP_WAITING' });
     setUpdateAvailable(false);
   }, []);
 
   const dismissUpdate = useCallback(() => {
+    setUpdateDeferred(false);
     setUpdateAvailable(false);
   }, []);
 
@@ -208,13 +241,22 @@ export function PwaProvider({ children, reload = reloadApplication, enableSync =
   }, [applyUpdate]);
 
   const value = useMemo<PwaUpdateValue>(
-    () => ({ updateAvailable, applyUpdate, dismissUpdate }),
-    [updateAvailable, applyUpdate, dismissUpdate],
+    () => ({ updateAvailable, updateDeferred, applyUpdate, dismissUpdate }),
+    [updateAvailable, updateDeferred, applyUpdate, dismissUpdate],
   );
 
   return (
     <PwaUpdateContext.Provider value={value}>
       {children}
+      {updateDeferred ? (
+        <p
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-50 mx-auto mb-[max(1rem,env(safe-area-inset-bottom))] max-w-md rounded-full border border-outline-variant bg-surface-container-high px-4 py-2 text-center font-small text-sm text-on-surface shadow-[0_18px_50px_-24px_rgba(56,38,19,0.55)]"
+        >
+          Finishing your saved work before updating. Try again once it’s done.
+        </p>
+      ) : null}
       <UpdatePrompt open={updateAvailable} onUpdate={handleUpdate} onLater={dismissUpdate} />
     </PwaUpdateContext.Provider>
   );

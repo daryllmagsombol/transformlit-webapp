@@ -36,7 +36,7 @@ test('public offline entry serves install metadata without authenticated content
   expect(response?.headers()['content-security-policy']).toContain("worker-src 'self'");
   await expect(page.getByRole('heading', { name: 'A little room to read offline' })).toBeVisible();
   await expect(page.getByRole('status')).toBeVisible();
-  await expect(page.getByText(/save reading for offline use once that capability is available/i)).toBeVisible();
+  await expect(page.getByText(/sign in while online to save reading for offline use/i)).toBeVisible();
 
   const metadata = await page.evaluate(async () => {
     const manifestResponse = await fetch('/manifest.webmanifest');
