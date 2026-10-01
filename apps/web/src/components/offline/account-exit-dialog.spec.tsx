@@ -79,4 +79,14 @@ describe('AccountExitDialog', () => {
     expect(screen.getByRole('dialog')).toHaveAttribute('aria-busy', 'true');
     expect(screen.getByRole('heading', { name: /sign out/i })).toBeInTheDocument();
   });
+
+  it('uses a native <dialog> element and closes on Escape', () => {
+    const onCancel = jest.fn();
+    renderDialog({ onCancel });
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.tagName).toBe('DIALOG');
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
 });

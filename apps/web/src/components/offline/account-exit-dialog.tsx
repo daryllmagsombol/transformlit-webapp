@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ExitWorkSummary } from '../../lib/offline/account-exit';
 
 /**
@@ -66,26 +66,54 @@ export function AccountExitDialog({
   const headingId = useId();
   const confirmId = useId();
   const [confirmed, setConfirmed] = useState(false);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
 
   // A fresh confirmation is required each time the dialog opens.
   useEffect(() => {
     if (!open) setConfirmed(false);
   }, [open]);
 
+  // Open as a MODAL native dialog (focus trap + Escape handled by the platform),
+  // falling back to the `open` attribute where showModal is unavailable. Focus
+  // returns to the element that opened it when the dialog closes.
+  useEffect(() => {
+    if (!open) return;
+    restoreFocusRef.current = (document.activeElement as HTMLElement | null) ?? null;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (typeof dialog.showModal === 'function' && !dialog.open) {
+      dialog.showModal();
+    } else {
+      dialog.setAttribute('open', '');
+    }
+    return () => {
+      restoreFocusRef.current?.focus?.();
+    };
+  }, [open]);
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDialogElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onCancel();
+    }
+  };
+
   if (!open) return null;
 
   const hasWork = !work.fullyDrained;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={headingId}
-        aria-busy={busy}
-        data-testid="account-exit-dialog"
-        className="w-full max-w-md rounded-xl border border-outline-variant bg-surface p-5 shadow-lg"
-      >
+    <dialog
+      ref={dialogRef}
+      aria-labelledby={headingId}
+      aria-busy={busy}
+      onCancel={onCancel}
+      onKeyDown={handleKeyDown}
+      data-testid="account-exit-dialog"
+      className="w-[calc(100%-2rem)] max-w-md rounded-xl border border-outline-variant bg-surface p-5 text-on-surface shadow-lg backdrop:bg-black/40"
+    >
+      <div>
         <h2 id={headingId} className="font-display text-headline-h4 text-on-surface">
           Sign out
         </h2>
@@ -147,7 +175,7 @@ export function AccountExitDialog({
             Discard and sign out
           </button>
         </div>
-      </section>
-    </div>
+      </div>
+    </dialog>
   );
 }
