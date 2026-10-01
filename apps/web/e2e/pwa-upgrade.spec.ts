@@ -1,24 +1,32 @@
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
+import { OFFLINE_DB_VERSION } from '../src/lib/offline/contracts.js';
 import { test, expect } from './pwa-fixtures.js';
 
 /**
- * Upgrade/rollback acceptance for releases, workers, and IndexedDB (Task 14A).
+ * Upgrade/rollback acceptance for IndexedDB and the static worker (Task 14A).
  *
- * Covers:
- *  - a POPULATED IndexedDB upgrade (downloads/outbox/conflicts) with a
- *    blocked-tab notification, and a safe rollback that never deletes/downgrades;
- *  - worker release A→B: mixed inventory fails without replacing A, consent is
- *    required for activation, and downloads/outbox survive activation;
- *  - an open release-A tab keeps working (lazy reader) once B is deployed.
+ * Genuinely covered here:
+ *  - a POPULATED IndexedDB upgrade (downloads/outbox/conflicts) that preserves
+ *    data, the `versionchange` notification, and a safe rollback where an older
+ *    client fails at a higher schema version without deleting/downgrading;
+ *  - the invariant that worker shell-cache cleanup is independent of account
+ *    data;
+ *  - the CURRENT release's hashed assets resolve.
  *
- * The owned HTTPS harness serves a single release, so A→B scenarios drive the
- * release swap through the served inventory/worker where possible and are
- * otherwise authored against the two-release harness capability. Docker and
- * Playwright Chromium are present, but the detached harness supervisor was
- * reaped before the suite could run against a stable origin, so this suite is
- * authored and discovery-verified only; execution is reported BLOCKED, never
- * claimed passing.
+ * NOT covered by this browser suite (the owned HTTPS harness serves a SINGLE
+ * release; `page.route` cannot rewrite a service-worker-initiated fetch, and no
+ * replacement `/sw.js` bytes are served, so no second worker ever installs):
+ *  - mixed-release install rejection and consent-gated waiting-worker
+ *    activation are proven at the worker/unit level in
+ *    `scripts/build-pwa-assets.spec.ts` and `components/pwa/pwa-provider.spec.tsx`;
+ *  - old-release asset retention for an open A→B tab is a CDN/edge Gate-6 item
+ *    (14C) and is intentionally NOT claimed here.
+ *
+ * Docker and Playwright Chromium are present, but the detached harness
+ * supervisor was reaped before the suite could run against a stable origin, so
+ * this suite is authored and discovery-verified only; execution is reported
+ * BLOCKED, never claimed passing.
  */
 const harnessConfigured = Boolean(process.env.PWA_BROWSER_PROFILE && process.env.PWA_TLS_SPKI);
 
@@ -41,6 +49,32 @@ async function offlineDbVersion(page: Page): Promise<number> {
     const databases = await indexedDB.databases();
     return databases.find((entry) => entry.name === name)?.version ?? 0;
   }, OFFLINE_DB);
+}
+
+/** Names of the shell caches for the active worker release, sorted. */
+function shellCaches(page: Page): Promise<string[]> {
+  return page.evaluate(async () => {
+    const names = await globalThis.caches.keys();
+    return names.filter((name) => name.startsWith('transformlit-shell-')).sort();
+  });
+}
+
+/** Deletes one database (if present) and verifies it is gone. */
+async function deleteDatabase(page: Page, name: string): Promise<void> {
+  await page.evaluate(
+    (dbName) =>
+      new Promise<void>((resolve) => {
+        const request = indexedDB.deleteDatabase(dbName);
+        request.onsuccess = () => resolve();
+        request.onerror = () => resolve();
+        request.onblocked = () => resolve();
+      }),
+    name,
+  );
+  await page.evaluate(async (dbName) => {
+    const databases = await indexedDB.databases();
+    if (databases.some((entry) => entry.name === dbName)) throw new Error(`Database ${dbName} was not deleted`);
+  }, name);
 }
 
 test.describe('populated IndexedDB upgrade and rollback', () => {
@@ -208,136 +242,68 @@ test.describe('populated IndexedDB upgrade and rollback', () => {
 
   test('reports the real offline schema version (window is explicit, never 0)', async ({ page, origin }) => {
     await page.goto(`${origin}/offline`);
-    expect(await offlineDbVersion(page)).toBeGreaterThanOrEqual(1);
+    // The database is opened at the contract's explicit version; the live
+    // database version must match it exactly, not merely be `>= 1`.
+    const version = await offlineDbVersion(page);
+    expect(version).toBe(OFFLINE_DB_VERSION);
   });
 });
 
-test.describe('worker release A to B', () => {
+test.describe('static worker invariants', () => {
   test.beforeEach(({}, testInfo) => {
     if (!harnessConfigured) {
-      testInfo.skip(true, 'Upgrade suite requires the owned production HTTPS harness');
+      testInfo.skip(true, 'Static worker suite requires the owned production HTTPS harness');
     }
   });
 
-  test('rejects a mixed-release inventory during install without replacing the active release', async ({ page, origin }, testInfo) => {
+  test('serves the current release\'s hashed assets (single release only; A→B retention is a CDN gate)', async ({
+    page,
+    origin,
+  }) => {
     await page.goto(`${origin}/offline`);
-    await page.evaluate(() => globalThis.navigator.serviceWorker.ready);
 
-    const before = await page.evaluate(async () => {
-      const names = await globalThis.caches.keys();
-      return names.filter((name) => name.startsWith('transformlit-shell-'));
-    });
-    expect(before).toHaveLength(1);
-
-    // Serve a DIFFERENT release id than the worker embeds: the worker's install
-    // must reject it and the active cache must survive untouched.
-    await page.route('**/pwa-assets.json', async (route) => {
-      const response = await route.fetch();
-      const inventory = (await response.json()) as { releaseId: string };
-      await route.fulfill({
-        response,
-        json: { ...inventory, releaseId: 'mixed-release-deadbeef' },
-      });
-    });
-
-    const rejected = await page.evaluate(async () => {
-      const registration = await globalThis.navigator.serviceWorker.getRegistration();
-      try {
-        await registration?.update();
-      } catch {
-        /* update() rejecting is also an honest failure signal */
-      }
-      const names = await globalThis.caches.keys();
-      return names.filter((name) => name.startsWith('transformlit-shell-'));
-    });
-
-    // Release A is still the only shell cache; the mixed install added none.
-    expect(rejected).toEqual(before);
-  });
-
-  test('does not activate a waiting worker without explicit consent, and keeps local data', async ({ page, origin, loginAs, ids }, testInfo) => {
-    await loginAs(0);
-    await page.goto(`${origin}/offline`);
-    await page.evaluate(() => globalThis.navigator.serviceWorker.ready);
-
-    // Seed private durable data that must survive any worker activation.
-    await page.evaluate(async ({ subject, bookId }) => {
-      const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open('transformlit-offline');
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(['readerRecords', 'outbox'], 'readwrite');
-        tx.objectStore('readerRecords').put({
-          id: `${subject}\u0000highlight\u0000kept`,
-          subject,
-          bookId,
-          contentVersion: 1,
-          deletedAt: null,
-        });
-        tx.objectStore('outbox').put({
-          id: `${subject}\u0000outbox\u0000kept`,
-          subject,
-          bookId,
-          dispatchState: 'PENDING',
-        });
-        tx.oncomplete = () => resolve();
-        tx.onabort = () => reject(tx.error);
-      });
-      db.close();
-    }, { subject: ids.readerId, bookId: ids.readableBookId });
-
-    // Without sending SKIP_WAITING there is no automatic activation: the
-    // registration is not forced to the new worker by the client.
-    const controllerUnchanged = await page.evaluate(async () => {
-      const registration = await globalThis.navigator.serviceWorker.getRegistration();
-      return { waiting: Boolean(registration?.waiting), active: Boolean(registration?.active) };
-    });
-    // A waiting worker (from another release) may exist; it must not be active
-    // until consented. This suite can only assert the client never auto-skips.
-    expect(controllerUnchanged.active).toBe(true);
-
-    const survived = await page.evaluate(async ({ subject }) => {
-      const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open('transformlit-offline');
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-      const records = await new Promise<number>((resolve, reject) => {
-        const tx = db.transaction('readerRecords', 'readonly');
-        const request = tx.objectStore('readerRecords').index('subject').count(subject);
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-      const outbox = await new Promise<number>((resolve, reject) => {
-        const tx = db.transaction('outbox', 'readonly');
-        const request = tx.objectStore('outbox').index('subject').count(subject);
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-      db.close();
-      return { records, outbox };
-    }, { subject: ids.readerId });
-    expect(survived.records).toBeGreaterThanOrEqual(1);
-    expect(survived.outbox).toBeGreaterThanOrEqual(1);
-  });
-
-  test('an open release-A tab can lazily open the reader after release B is deployed', async ({ page, origin, loginAs, ids }, testInfo) => {
-    // Old hashed chunks must remain served after a deploy; an unvisited lazy
-    // chunk is the exact case worker caches alone cannot cover.
-    await loginAs(0);
-    await page.goto(`${origin}/books`);
-
-    // Capture the chunk URLs the shell of this release references, then assert
-    // they still resolve (immutable) — if the origin pruned them, the open tab
-    // would white-screen on a lazy navigation.
+    // This asserts the CURRENT release's inventory chunk resolves immutable. It
+    // does NOT exercise a release A→B swap: the harness serves one release and
+    // no second worker installs, so it cannot prove old-release retention (that
+    // is the CDN/edge Gate-6 item owned by 14C).
     const chunk = await page.evaluate(async () => {
-      const inventory = await (await fetch('/pwa-assets.json', { cache: 'no-store' })).json() as { assets: string[] };
+      const inventory = (await (await fetch('/pwa-assets.json', { cache: 'no-store' })).json()) as {
+        assets: string[];
+      };
       return inventory.assets.find((asset) => asset.startsWith('/_next/static/')) ?? null;
     });
     expect(chunk).not.toBeNull();
     const status = await page.evaluate(async (path) => (await fetch(path as string)).status, chunk);
     expect(status).toBe(200);
+  });
+
+  test('keeps the shell cache across IndexedDB account-data cleanup (worker cache cleanup is independent)', async ({
+    page,
+    origin,
+  }) => {
+    await page.goto(`${origin}/offline`);
+    await page.evaluate(() => globalThis.navigator.serviceWorker.ready);
+
+    const cacheBefore = await shellCaches(page);
+    expect(cacheBefore.length).toBeGreaterThanOrEqual(1);
+
+    // Delete the account-data database; cache cleanup is a separate authority
+    // and must not be triggered by (or trigger) IndexedDB removal.
+    const dbName = syntheticDbName();
+    await page.evaluate(async (name) => {
+      const open = indexedDB.open(name, 1);
+      open.onupgradeneeded = () => open.result.createObjectStore('records', { keyPath: 'id' });
+      await new Promise<void>((resolve, reject) => {
+        open.onsuccess = () => {
+          open.result.close();
+          resolve();
+        };
+        open.onerror = () => reject(open.error);
+      });
+    }, dbName);
+    await deleteDatabase(page, dbName);
+
+    const cacheAfter = await shellCaches(page);
+    expect(cacheAfter).toEqual(cacheBefore);
   });
 });
