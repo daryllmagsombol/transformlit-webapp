@@ -3,7 +3,13 @@
 import { OfflineDatabase, createIndexedDbLeasePersistence } from './database';
 import { accountLifecycle } from './account-activation';
 import { createSyncLock } from './coordination';
-import { qualifyKey, type BookmarkRecord, type HighlightRecord, type TombstoneRecord } from './contracts';
+import {
+  qualifyKey,
+  type AccountOwner,
+  type BookmarkRecord,
+  type HighlightRecord,
+  type TombstoneRecord,
+} from './contracts';
 import type { StoredConflictCopyRecord } from './conflicts';
 
 export type { StoredConflictCopyRecord } from './conflicts';
@@ -20,7 +26,11 @@ import {
   type SnapshotSource,
 } from './sync-coordinator';
 import type { OutboxOperationRecord } from './outbox';
-import type { AuthoritativeSnapshot, MergeAnnotation } from './snapshot-merge';
+import type {
+  AuthoritativeSnapshot,
+  MergeAnnotation,
+  MergePendingOperation,
+} from './snapshot-merge';
 
 /** A stable per-tab identity for the cross-tab sync lease. */
 function tabId(): string {
@@ -107,6 +117,11 @@ export function createOutboxStore(database: OfflineDatabase): OutboxStore {
         syncedAt: Date.now(),
       });
     },
+    // Atomic discard: removing a conflicted predecessor WITHOUT its dependent
+    // successors would leave them dispatching against a stale base revision, so
+    // the whole closure commits in ONE transaction.
+    commitDiscard: (subject, epoch, upserts, removeIds) =>
+      database.commitOutboxChanges(subject, epoch, upserts, removeIds),
   };
 }
 
@@ -114,6 +129,9 @@ export function createOutboxStore(database: OfflineDatabase): OutboxStore {
  * Counts durable local reader records that are NOT acknowledged (local-only):
  * present, not deleted, and never marked synced. These are work the outbox does
  * not represent and would be lost on sign-out, so they gate `fullyDrained`.
+ *
+ * Server-authoritative rows projected from a snapshot carry `syncedAt` (they are
+ * server-confirmed, not local-only), so this counts only genuinely-local work.
  */
 async function countLocalOnlyRecords(database: OfflineDatabase, subject: string): Promise<number> {
   const rows = await database.getAllByIndex<{ deletedAt?: number | null; syncedAt?: number | null }>(
@@ -122,6 +140,11 @@ async function countLocalOnlyRecords(database: OfflineDatabase, subject: string)
     subject,
   );
   return rows.filter((row) => row.deletedAt === null && (row.syncedAt ?? null) === null).length;
+}
+
+/** The coordinator's `countLocalOnly` seam over the real reader records. */
+export function createLocalOnlyCounter(database: OfflineDatabase): (subject: string) => Promise<number> {
+  return (subject) => countLocalOnlyRecords(database, subject);
 }
 
 /**
@@ -134,8 +157,11 @@ async function countLocalOnlyRecords(database: OfflineDatabase, subject: string)
  */
 export function createReceiptStore(database: OfflineDatabase): ReceiptStore {
   return {
-    recordAndRemove: (outboxId, subject, epoch, receipt) =>
-      database.acknowledgeOperation(subject, epoch, outboxId, receipt),
+    // The receipt, the removal, AND the rebased successors commit in ONE
+    // transaction so a crash can never leave a removed predecessor beside a
+    // successor still carrying a stale `baseRevision`.
+    recordAndRemove: (outboxId, subject, epoch, receipt, successors) =>
+      database.acknowledgeOperation(subject, epoch, outboxId, receipt, successors),
     recordRetained: (subject, epoch, receipt) =>
       database.recordReceipt(subject, epoch, receipt),
   };
@@ -212,6 +238,36 @@ function readPage(data: Readonly<Record<string, unknown>>): number {
 }
 
 /**
+ * Provenance timestamp for a projected row. A row that is server-authoritative
+ * (has a `serverEntityId`) and is NOT targeted by a pending local edit is
+ * server-confirmed, so it is stamped `syncedAt` and never counted as local-only
+ * work. A pending-edit row (still in the merge's pending set) keeps its prior
+ * provenance so it still gates `fullyDrained`; a brand-new local-only row is
+ * un-synced (`null`).
+ */
+function projectedSyncedAt(
+  prior: BookmarkRecord | HighlightRecord | undefined,
+  serverEntityId: string | null,
+  annotation: MergeAnnotation,
+  recordKey: string,
+  pending: readonly MergePendingOperation[],
+): number | null {
+  // A pending UPDATE/DELETE carries the local record key in `payload.entityId`;
+  // a pending CREATE carries the raw `clientEntityId`. Either identity proves the
+  // row still has unacknowledged local work and must keep its un-synced stamp.
+  const hasPendingEdit = pending.some(
+    (operation) =>
+      (operation.clientEntityId !== null && operation.clientEntityId === annotation.clientEntityId) ||
+      (operation.entityId !== null &&
+        (operation.entityId === recordKey ||
+          operation.entityId === annotation.id ||
+          operation.entityId === serverEntityId)),
+  );
+  if (serverEntityId === null || hasPendingEdit) return prior?.syncedAt ?? null;
+  return prior?.syncedAt ?? Date.now();
+}
+
+/**
  * Projects the merged annotation set into `readerRecords` for one book:
  * upserts present/soft-deleted merged rows and soft-deletes live local rows
  * whose entity is tombstoned and absent from the merge (i.e. no pending work).
@@ -240,6 +296,10 @@ async function projectAnnotations(
       annotation.clientEntityId !== null && annotation.id === annotation.clientEntityId
         ? null
         : annotation.id;
+    // A projected SERVER row is server-confirmed, so it must not count as
+    // local-only work (which would permanently veto `fullyDrained`). A row still
+    // targeted by a pending local edit keeps its un-synced provenance.
+    const syncedAt = projectedSyncedAt(prior, serverEntityId, annotation, key, result.pending);
     const base = {
       id: key,
       subject: owner.subject,
@@ -249,7 +309,7 @@ async function projectAnnotations(
       contentVersion: readContentVersion(annotation.data),
       revision: annotation.revision,
       deletedAt: annotation.deletedAt,
-      ...(prior ? { syncedAt: prior.syncedAt ?? null } : {}),
+      syncedAt,
     };
     if (annotation.kind === 'BOOKMARK') {
       const record: BookmarkRecord = {
@@ -422,12 +482,70 @@ function createSnapshotSource(): SnapshotSource {
   };
 }
 
+/** True for a positive safe-integer content version. */
+function isPositiveVersion(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+}
+
+/**
+ * Resolves the server-supported content version for an operation's book at
+ * DISPATCH time, so an edit queued with the online reader's fabricated `1`
+ * sentinel is not rejected `INCOMPATIBLE_VERSION`. It consults only sources the
+ * coordinator already has, in preference order:
+ *  1. the locally active downloaded version (the pinned truth for offline read),
+ *  2. the highest content version among server-authoritative local reader
+ *     records for the book (projected from a prior snapshot refresh),
+ *  3. the authoritative snapshot's annotation versions (a network read, used
+ *     only when no local source knows the book),
+ *  4. `null` (the coordinator keeps the stored version) when nothing is known.
+ *
+ * A `null`/failed lookup deliberately leaves the durable operation's version
+ * untouched, so pending provenance is never mutated by dispatch.
+ */
+export function createContentVersionResolver(
+  database: OfflineDatabase,
+  snapshot?: SnapshotSource,
+): (owner: AccountOwner, operation: OutboxOperationRecord) => Promise<number | null> {
+  return async (owner, operation) => {
+    const active = await database.getActiveBookVersion(owner.subject, operation.bookId);
+    if (active && isPositiveVersion(active.contentVersion)) return active.contentVersion;
+
+    const rows = await database.getAllByIndex<{
+      deletedAt?: number | null;
+      serverEntityId?: string | null;
+      contentVersion?: number;
+    }>('readerRecords', 'subjectBook', [owner.subject, operation.bookId]);
+    const localVersions = rows
+      .filter((row) => row.deletedAt === null && row.serverEntityId != null)
+      .map((row) => row.contentVersion)
+      .filter(isPositiveVersion);
+    if (localVersions.length > 0) return Math.max(...localVersions);
+
+    if (snapshot) {
+      // Best-effort: a snapshot fetch fault must not turn a dispatchable edit
+      // into a hard failure; fall through to the stored version.
+      try {
+        const authoritative = await snapshot(operation.bookId);
+        const versions = authoritative.annotations
+          .map((annotation) => annotation.data.contentVersion)
+          .filter(isPositiveVersion);
+        if (versions.length > 0) return Math.max(...versions);
+      } catch {
+        // Ignore and fall through.
+      }
+    }
+
+    return null;
+  };
+}
+
 let shared: SyncCoordinator | null = null;
 
 /** The single account-fenced coordinator for this tab. */
 export function syncCoordinator(): SyncCoordinator {
   if (shared) return shared;
   const database = new OfflineDatabase();
+  const snapshot = createSnapshotSource();
   shared = new SyncCoordinator({
     store: createOutboxStore(database),
     receipts: createReceiptStore(database),
@@ -436,11 +554,15 @@ export function syncCoordinator(): SyncCoordinator {
       getOwner: () => accountLifecycle().getOwner(),
       requireReplayIdentity: () => accountLifecycle().requireReplayIdentity(),
     },
-    snapshot: createSnapshotSource(),
+    snapshot,
     snapshotStore: createSnapshotStore(database),
     readLocalAnnotations: createLocalAnnotationReader(database),
     persistConflictCopy: createConflictCopyPersister(database),
-    countLocalOnly: (subject) => countLocalOnlyRecords(database, subject),
+    countLocalOnly: createLocalOnlyCounter(database),
+    // Resolve the CURRENT server-supported version at dispatch so an online
+    // edit for a never-downloaded book is not stamped the fabricated `1` and
+    // rejected INCOMPATIBLE_VERSION.
+    resolveContentVersion: createContentVersionResolver(database, snapshot),
     // The lease subject is resolved per acquire from the CURRENT owner, so a
     // coordinator built before auth (or surviving an account switch) never
     // holds the wrong subject's lease.

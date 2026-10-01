@@ -3,8 +3,11 @@ import {
   createSnapshotStore,
   createReceiptStore,
   createOutboxStore,
+  createContentVersionResolver,
+  createLocalOnlyCounter,
   toOutcome,
 } from './sync-service';
+import { SyncCoordinator, type OperationOutcome } from './sync-coordinator';
 import { OfflineDatabase, resetOfflineDatabaseHandle } from './database';
 import {
   qualifyKey,
@@ -418,5 +421,238 @@ describe('sync-service durable stores', () => {
     const result = await resolver.keepOfflineCopy(conflicts[0]);
     expect(result.status).toBe('RESOLVED');
     expect(result.enqueuedOperationIds).toEqual(['new-1']);
+  });
+});
+
+/**
+ * The optional coordinator seams (commitDiscard / successors / content-version
+ * resolution) are DEAD IN PRODUCTION unless the REAL stores wire them. These
+ * tests drive each seam end-to-end through the actual IndexedDB primitives
+ * rather than injecting a fake.
+ */
+describe('sync-service production seam wiring', () => {
+  let memory: MemoryIndexedDb;
+
+  beforeAll(() => {
+    if (typeof globalThis.IDBKeyRange === 'undefined') {
+      Object.defineProperty(globalThis, 'IDBKeyRange', { writable: true, value: memoryIdbKeyRange });
+    }
+  });
+
+  beforeEach(async () => {
+    memory = createMemoryIndexedDb();
+    (globalThis as { indexedDB?: unknown }).indexedDB = memory.indexedDB;
+    resetOfflineDatabaseHandle();
+    const database = new OfflineDatabase();
+    await database.writeLifecycle({ id: 'lifecycle', state: 'ACTIVE', subject: OWNER.subject, epoch: OWNER.epoch, updatedAt: 1 });
+  });
+
+  afterEach(() => {
+    resetOfflineDatabaseHandle();
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  function buildCoordinator(
+    database: OfflineDatabase,
+    overrides: Partial<ConstructorParameters<typeof SyncCoordinator>[0]> = {},
+  ): SyncCoordinator {
+    return new SyncCoordinator({
+      store: createOutboxStore(database),
+      receipts: createReceiptStore(database),
+      send: jest.fn(),
+      lifecycle: { getOwner: () => OWNER },
+      snapshot: async () => ({ bookId: BOOK, snapshotRevision: 0, annotations: [], tombstones: [], conflictCopies: [] }),
+      now: () => 1_000,
+      ...overrides,
+    });
+  }
+
+  it('I1: the REAL outbox store commits the discard closure atomically through commitOutboxChanges', async () => {
+    const database = new OfflineDatabase();
+    const base = outboxOp({ id: 'a', seq: 1, dispatchState: 'FAILED' });
+    const successor = outboxOp({ id: 'b', seq: 2, dependsOn: base.id });
+    await database.commitOutbox(OWNER.subject, OWNER.epoch, base);
+    await database.commitOutbox(OWNER.subject, OWNER.epoch, successor);
+
+    const commitSpy = jest.spyOn(database, 'commitOutboxChanges');
+    const coordinator = buildCoordinator(database);
+
+    const discarded = await coordinator.discardConflicts();
+
+    expect(discarded).toBe(1);
+    // The real store routed through the atomic DB primitive, not sequential
+    // `remove` fallbacks.
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    const [, , , removeIds] = commitSpy.mock.calls[0];
+    expect([...removeIds].sort()).toEqual([base.id, successor.id]);
+    // The whole dependent chain is gone: no orphaned successor with a stale base.
+    expect(await database.getAllByIndex('outbox', 'subject', OWNER.subject)).toHaveLength(0);
+  });
+
+  it('I4: the REAL receipt store forwards successors so their base revision rebases in the same commit', async () => {
+    const database = new OfflineDatabase();
+    const create = outboxOp({ id: 'create', seq: 1, kind: 'ANNOTATION_CREATE', dependsOn: null, baseRevision: null });
+    const update = outboxOp({ id: 'update', seq: 2, dependsOn: create.id, baseRevision: 1 });
+    await database.commitOutbox(OWNER.subject, OWNER.epoch, create);
+    await database.commitOutbox(OWNER.subject, OWNER.epoch, update);
+
+    const ackSpy = jest.spyOn(database, 'acknowledgeOperation');
+    const send = jest
+      .fn()
+      .mockResolvedValueOnce({ kind: 'APPLIED' as const, entityId: 'server-1', revision: 7, receiptId: 'r1' })
+      .mockRejectedValueOnce(new Error('Failed to fetch'));
+    const coordinator = buildCoordinator(database, { send });
+
+    const result = await coordinator.drain();
+    expect(result.summary.applied).toBe(1);
+
+    // The 5th argument (rebased successor) was actually forwarded to the atomic
+    // primitive, not dropped.
+    expect(ackSpy).toHaveBeenCalledTimes(1);
+    const successors = ackSpy.mock.calls[0][4] ?? [];
+    expect(successors).toHaveLength(1);
+    expect((successors[0] as OutboxOperationRecord).baseRevision).toBe(7);
+
+    // And the durable successor was rebased in the same commit that removed the
+    // predecessor (it remains queued only because its own dispatch then failed).
+    const rows = await database.getAllByIndex<OutboxOperationRecord>('outbox', 'subject', OWNER.subject);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(update.id);
+    expect(rows[0].baseRevision).toBe(7);
+  });
+
+  it('I3: the REAL resolver dispatches the snapshot-resolved version, never the fabricated 1', async () => {
+    const database = new OfflineDatabase();
+    // An ONLINE, never-downloaded book: no active version, no projected rows.
+    const edit = outboxOp({ id: 'edit', seq: 1, contentVersion: 1, bookId: BOOK });
+    await database.commitOutbox(OWNER.subject, OWNER.epoch, edit);
+
+    const snapshot = jest.fn(async () => ({
+      bookId: BOOK,
+      snapshotRevision: 3,
+      annotations: [
+        {
+          id: 'server-1',
+          kind: 'ANNOTATION' as const,
+          clientEntityId: 'client-1',
+          revision: 2,
+          deletedAt: null,
+          data: { contentVersion: 5, page: 1, text: 'server', note: null, color: null, anchor: null },
+        },
+      ],
+      tombstones: [],
+      conflictCopies: [],
+    }));
+    const send = jest.fn(async () => ({ kind: 'APPLIED' as const, entityId: 'server-1', revision: 2, receiptId: 'r1' }));
+    const coordinator = buildCoordinator(database, {
+      send,
+      snapshot,
+      resolveContentVersion: createContentVersionResolver(database, snapshot),
+    });
+
+    await coordinator.drain();
+
+    const sent = send.mock.calls[0][0] as { contentVersion: number };
+    expect(sent.contentVersion).toBe(5);
+    // The durable operation is never mutated by dispatch-time resolution.
+    const rows = await database.getAllByIndex<OutboxOperationRecord>('outbox', 'subject', OWNER.subject);
+    if (rows.length > 0) expect(rows[0].contentVersion).toBe(1);
+  });
+
+  it('I3: a locally downloaded active version is preferred over the snapshot', async () => {
+    const database = new OfflineDatabase();
+    await database.putDownloadRecord(OWNER.subject, OWNER.epoch, 'bookVersions', {
+      id: qualifyKey(OWNER.subject, 'bookversion', BOOK, 9),
+      subject: OWNER.subject,
+      bookId: BOOK,
+      contentVersion: 9,
+      status: 'READY',
+      active: true,
+      title: 'Downloaded',
+      author: null,
+      description: null,
+      coverAssetId: null,
+      totalPages: 1,
+      toc: [],
+      provenance: 'test',
+      createdAt: 1,
+    });
+    const edit = outboxOp({ id: 'edit', seq: 1, contentVersion: 1, bookId: BOOK });
+    await database.commitOutbox(OWNER.subject, OWNER.epoch, edit);
+
+    const send = jest.fn(async () => ({ kind: 'APPLIED' as const, entityId: 'server-1', revision: 2, receiptId: 'r1' }));
+    const snapshot = jest.fn();
+    const coordinator = buildCoordinator(database, {
+      send,
+      snapshot,
+      resolveContentVersion: createContentVersionResolver(database, snapshot as never),
+    });
+
+    await coordinator.drain();
+
+    expect((send.mock.calls[0][0] as { contentVersion: number }).contentVersion).toBe(9);
+    // No network snapshot was needed for a locally downloaded book.
+    expect(snapshot).not.toHaveBeenCalled();
+  });
+
+  it('NEW-1: a projected server annotation does not force localOnly>0 / fullyDrained=false', async () => {
+    const database = new OfflineDatabase();
+    // A book with REMAINING outbox work (an unrelated pending edit) plus a
+    // server annotation projected by a snapshot refresh.
+    await database.commitOutbox(OWNER.subject, OWNER.epoch, outboxOp({ id: 'pending', seq: 1, entityKey: 'other-entity' }));
+    const store = createSnapshotStore(database);
+    await store.applyMerge(OWNER, mergeResult({
+      annotations: [
+        serverAnnotation({
+          id: 'server-hl-1',
+          clientEntityId: 'client-hl-1',
+          revision: 4,
+          data: { contentVersion: 2, page: 3, text: 'cross-device', note: null, color: null, anchor: null, createdAt: 1, updatedAt: 1 },
+        }),
+      ],
+    }));
+
+    const counter = createLocalOnlyCounter(database);
+    // The projected server row is server-confirmed, not local-only work.
+    expect(await counter(OWNER.subject)).toBe(0);
+
+    const coordinator = buildCoordinator(database, { countLocalOnly: counter });
+    const report = await coordinator.controlledDrain();
+    // Only the real pending outbox op blocks; the barrier reflects exactly the
+    // genuinely-local work.
+    expect(report.localOnly).toBe(0);
+    expect(report.pending).toBe(1);
+  });
+
+  it('NEW-1: a server row still under a local pending edit is NOT marked synced', async () => {
+    const database = new OfflineDatabase();
+    const store = createSnapshotStore(database);
+    await store.applyMerge(OWNER, mergeResult({
+      annotations: [
+        serverAnnotation({
+          id: 'server-hl-1',
+          clientEntityId: 'client-hl-1',
+          revision: 2,
+          data: { contentVersion: 1, page: 1, text: 'local-pending', note: null, color: null, anchor: null, createdAt: 1, updatedAt: 1 },
+        }),
+      ],
+      pending: [
+        {
+          operationId: 'op-update',
+          kind: 'ANNOTATION_UPDATE',
+          entityId: null,
+          clientEntityId: 'client-hl-1',
+          baseRevision: 1,
+          payload: { clientEntityId: 'client-hl-1' },
+        },
+      ],
+    }));
+
+    const row = await database.get<HighlightRecord>(
+      'readerRecords',
+      qualifyKey(OWNER.subject, 'highlight', 'client-hl-1'),
+    );
+    expect(row?.syncedAt ?? null).toBeNull();
+    expect(await createLocalOnlyCounter(database)(OWNER.subject)).toBe(1);
   });
 });
