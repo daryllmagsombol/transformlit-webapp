@@ -22,6 +22,11 @@ interface StudySheetProps {
   readonly onNavigate: (href: string) => void;
   readonly activeWord?: ChapterWord | null;
   readonly activeWordText?: string;
+  /**
+   * Cross-references are remote enrichment. When false (offline), the section
+   * is not fetched and is replaced by an explanatory unavailable label.
+   */
+  readonly crossReferencesEnabled?: boolean;
 }
 
 export function StudySheet({
@@ -38,13 +43,14 @@ export function StudySheet({
   onNavigate,
   activeWord = null,
   activeWordText = '',
+  crossReferencesEnabled = true,
 }: StudySheetProps) {
   const { addToast } = useToast();
   const { byVerse, load } = useCrossReferences(book, chapter);
 
   useEffect(() => {
-    if (open && verse !== null) load();
-  }, [open, verse, load]);
+    if (open && verse !== null && crossReferencesEnabled) load();
+  }, [open, verse, load, crossReferencesEnabled]);
 
   const crossRefs: CrossRefReference[] = verse === null ? [] : (byVerse[verse] ?? []);
 
@@ -94,7 +100,13 @@ export function StudySheet({
 
         <section>
           <h3 className="font-display text-headline-h4 text-on-surface mb-2">Cross-references</h3>
-          <CrossRefList refs={crossRefs} translation={translation} onNavigate={onNavigate} />
+          {crossReferencesEnabled ? (
+            <CrossRefList refs={crossRefs} translation={translation} onNavigate={onNavigate} />
+          ) : (
+            <p className="text-on-surface-variant text-small" role="note">
+              Cross-references are unavailable offline.
+            </p>
+          )}
         </section>
 
         {wordsForVerse.length > 0 && (

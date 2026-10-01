@@ -32,6 +32,17 @@ const BUILD_MARKER = '/*__PWA_BUILD__*/';
 // verified on disk; the manifest is a generated route with no public file.
 const ROUTE_ASSETS = [OFFLINE_ROUTE, '/manifest.webmanifest'];
 
+// Client-reference manifests for the routes the offline hub renders locally.
+// The hub imports the shared reader views, so these chunks must be cached for
+// a cold offline open. Only public `/_next/static/...` chunks are added; no
+// personalized/API data is ever included. The offline manifest is required;
+// the reader-route manifests are read when present.
+const OFFLINE_CLIENT_MANIFEST = 'server/app/offline/page_client-reference-manifest.js';
+const LOCAL_READER_CLIENT_MANIFESTS = [
+  'server/app/(reader)/books/[id]/read/page_client-reference-manifest.js',
+  'server/app/(app)/bible/[translation]/[book]/[chapter]/page_client-reference-manifest.js',
+];
+
 // Public files that must exist in `public/` and ship with the image.
 const REQUIRED_PUBLIC_ASSETS = [
   '/icons/pwa-192.png',
@@ -114,9 +125,15 @@ function readOfflineDocument() {
 
 function collectShellAssets(buildId) {
   const offlineHtml = readOfflineDocument();
-  const clientChunks = clientChunksFromManifest(
-    join(nextDirectory, 'server/app/offline/page_client-reference-manifest.js'),
-  );
+  // Every allowlisted route manifest is discovered, never guessed. A missing
+  // offline manifest is fatal; optional local-reader manifests are skipped when
+  // a route is absent so the generator still works on a partial build.
+  const manifests = [OFFLINE_CLIENT_MANIFEST, ...LOCAL_READER_CLIENT_MANIFESTS];
+  const clientChunks = manifests.flatMap((relativePath) => {
+    const manifestPath = join(nextDirectory, relativePath);
+    if (!existsSync(manifestPath)) return [];
+    return clientChunksFromManifest(manifestPath);
+  });
 
   const staticUrls = new Set([
     ...staticRefsFromHtml(offlineHtml),

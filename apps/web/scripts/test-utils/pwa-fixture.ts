@@ -20,6 +20,7 @@ export interface FixtureOptions {
   readonly omitChunkFileFor?: string;
   readonly omitPublicAsset?: string;
   readonly omitOfflineHtml?: boolean;
+  readonly omitLocalReaderManifests?: boolean;
 }
 
 export interface Fixture {
@@ -32,6 +33,12 @@ export interface Fixture {
 const DEFAULT_CHUNKS: readonly FixtureChunk[] = [
   { url: '/chunks/runtime.js', contents: 'console.log("runtime")' },
   { url: '/chunks/app.css', contents: 'body{color:#000}' },
+];
+
+// Distinct chunks referenced only by the local-reader client manifests. The
+// allowlist must include these so a cold offline hub can run the shared views.
+const LOCAL_READER_CHUNKS: readonly FixtureChunk[] = [
+  { url: '/chunks/reader.js', contents: 'console.log("reader")' },
 ];
 
 function staticToFile(nextDir: string, staticUrl: string): string {
@@ -68,6 +75,29 @@ function writeClientReferenceManifest(nextDir: string, chunks: readonly FixtureC
   };
   const source = `globalThis.__RSC_MANIFEST = globalThis.__RSC_MANIFEST || {};\nglobalThis.__RSC_MANIFEST["/offline/page"] = ${JSON.stringify(manifest)};\n`;
   writeFileSync(join(nextDir, 'server/app/offline/page_client-reference-manifest.js'), source);
+}
+
+/** Mirrors the build's route-manifest layout for the shared local-reader chunks. */
+function writeLocalReaderManifest(
+  nextDir: string,
+  relativeDir: string,
+  chunks: readonly FixtureChunk[],
+): void {
+  const dir = join(nextDir, 'server/app', relativeDir);
+  mkdirSync(dir, { recursive: true });
+  const jsChunks = chunks.filter((chunk) => chunk.url.endsWith('.js')).map((chunk) => `/_next/static${chunk.url}`);
+  const manifest = {
+    clientModules: {
+      '[project]/apps/web/src/components/reader/book-reader-view.tsx': {
+        id: 1,
+        name: 'BookReaderView',
+        chunks: jsChunks,
+        async: false,
+      },
+    },
+  };
+  const source = `globalThis.__RSC_MANIFEST = globalThis.__RSC_MANIFEST || {};\nglobalThis.__RSC_MANIFEST["${relativeDir}"] = ${JSON.stringify(manifest)};\n`;
+  writeFileSync(join(dir, 'page_client-reference-manifest.js'), source);
 }
 
 function writePublicShell(publicDir: string, omitPublicAsset?: string): void {
@@ -109,6 +139,16 @@ export function createFixture(options: FixtureOptions = {}): Fixture {
 
   if (!options.omitOfflineHtml) writeOfflineHtml(nextDir, chunks, fonts);
   writeClientReferenceManifest(nextDir, chunks);
+  if (!options.omitLocalReaderManifests) {
+    const readerChunks = [...chunks, ...LOCAL_READER_CHUNKS];
+    for (const chunk of LOCAL_READER_CHUNKS) {
+      const target = staticToFile(nextDir, `/_next/static${chunk.url}`);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, chunk.contents);
+    }
+    writeLocalReaderManifest(nextDir, '(reader)/books/[id]/read', readerChunks);
+    writeLocalReaderManifest(nextDir, '(app)/bible/[translation]/[book]/[chapter]', readerChunks);
+  }
   writePublicShell(publicDir, options.omitPublicAsset);
 
   return {

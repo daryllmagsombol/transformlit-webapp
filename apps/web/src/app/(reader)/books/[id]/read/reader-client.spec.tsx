@@ -19,19 +19,29 @@ jest.mock('../../../../../store', () => ({
     selector({ theme: 'paper', mode: 'paged', zoom: 1, setTheme: jest.fn(), setMode: jest.fn(), setZoom: jest.fn() }),
 }));
 
+const mockOpenSession = jest.fn().mockResolvedValue({ expiresInMs: 900000 });
+const mockFetchText = jest.fn().mockResolvedValue({ items: [{ t: 'Hello', x: 0.1, y: 0.1, w: 0.2, h: 0.02 }] });
+
 jest.mock('../../../../../lib/reader/api', () => ({
-  openReadingSession: jest.fn().mockResolvedValue({ expiresInMs: 900000 }),
+  openReadingSession: (...args: unknown[]) => mockOpenSession(...args),
   pageFrameUrl: (bookId: string, page: number) => `http://api.test/books/${bookId}/pages/${page}/frame`,
-  fetchPageText: jest.fn().mockResolvedValue({ items: [{ t: 'Hello', x: 0.1, y: 0.1, w: 0.2, h: 0.02 }] }),
+  fetchPageText: (...args: unknown[]) => mockFetchText(...args),
   fetchReadProgress: jest.fn().mockResolvedValue({ currentPage: 2 }),
   saveReaderProgress: jest.fn().mockResolvedValue(undefined),
+  networkReaderTransport: {
+    openSession: (...args: unknown[]) => mockOpenSession(...args),
+    fetchText: (...args: unknown[]) => mockFetchText(...args),
+    frameUrl: (bookId: string, page: number) => `http://api.test/books/${bookId}/pages/${page}/frame`,
+  },
 }));
 
-import { ReaderClient } from './reader-client';
-import { fetchPageText, openReadingSession } from '../../../../../lib/reader/api';
+jest.mock('../../../../../lib/offline/database', () => ({ OfflineDatabase: jest.fn() }));
+jest.mock('../../../../../lib/offline/account-activation', () => ({ accountLifecycle: () => ({ getOwner: () => null }) }));
 
-const fetchPageTextMock = fetchPageText as jest.Mock;
-const openReadingSessionMock = openReadingSession as jest.Mock;
+import { ReaderClient } from './reader-client';
+
+const fetchPageTextMock = mockFetchText;
+const openReadingSessionMock = mockOpenSession;
 
 describe('ReaderClient', () => {
   beforeEach(() => {

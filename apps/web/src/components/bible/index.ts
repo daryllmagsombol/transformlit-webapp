@@ -4,6 +4,7 @@ export { BookChapterPicker } from './book-chapter-picker';
 export { VerseList } from './verse-list';
 export { AudioPlayer } from './audio-player';
 export { ChapterNav } from './chapter-nav';
+export type { NavLink } from './chapter-nav';
 export { StudySheet } from './study-sheet';
 export { CrossRefList } from './cross-ref-list';
 export { WordStudyPopover } from './word-study-popover';

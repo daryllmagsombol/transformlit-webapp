@@ -4,16 +4,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { gql, type TypedDocumentNode } from '@apollo/client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apolloClient } from '../../../../../lib/apollo-client';
+import { fetchReadProgress, saveReaderProgress, networkReaderTransport, type PdfTextItem } from '../../../../../lib/reader/api';
 import {
-  openReadingSession,
-  fetchPageText,
-  fetchReadProgress,
-  saveReaderProgress,
-  PdfTextItem,
-} from '../../../../../lib/reader/api';
+  BookRepository,
+  type BookConversionStatus,
+  type FrameHandle,
+  type OpenedBook,
+} from '../../../../../lib/reader/repository';
+import { OfflineDatabase } from '../../../../../lib/offline/database';
+import { accountLifecycle } from '../../../../../lib/offline/account-activation';
+import { BookReaderView } from '../../../../../components/reader/book-reader-view';
 import { useReaderStore } from '../../../../../store';
-import { PageCanvas } from '../../../../../components/reader/page-canvas';
-import { ReaderToolbar } from '../../../../../components/reader/reader-toolbar';
 
 const BOOK_MANIFEST_QUERY: TypedDocumentNode<{ book: Manifest }, { id: string }> = gql`
   query ReaderBook($id: String!) {
@@ -40,39 +41,66 @@ interface Manifest {
   author?: string;
   format?: 'PDF' | 'EPUB';
   pageCount?: number;
-  conversionStatus: 'NOT_APPLICABLE' | 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED';
+  conversionStatus: BookConversionStatus;
   toc: Array<{ id: string; title: string; page: number; depth: number }>;
 }
 
 /** How long page positions settle before the server save fires. */
 const PROGRESS_SAVE_DEBOUNCE_MS = 1500;
 
-/** `fetchPageText` throws `Reader request failed with 401` on an expired session. */
-function isUnauthorized(error: unknown): boolean {
-  return error instanceof Error && error.message.includes('401');
+/**
+ * The online reader's repository. The network paths resolve metadata, start the
+ * reading session, and read frames/text; the local path is never used here.
+ */
+function createReaderRepository(): BookRepository {
+  return new BookRepository({
+    database: new OfflineDatabase(),
+    getOwner: () => accountLifecycle().getOwner(),
+    fetchMetadata: async (bookId) => {
+      const result = await apolloClient.query({ query: BOOK_MANIFEST_QUERY, variables: { id: bookId } });
+      const book = result.data?.book;
+      if (!book) throw new Error('Book manifest is unavailable');
+      return {
+        title: book.title,
+        author: book.author ?? null,
+        pageCount: book.pageCount ?? 0,
+        // Session endpoints are not version-pinned; use 0 as "current" sentinel.
+        contentVersion: 0,
+        conversionStatus: book.conversionStatus,
+        toc: book.toc.map((entry) => ({
+          id: entry.id,
+          title: entry.title,
+          pageNumber: entry.page,
+          order: entry.page,
+        })),
+      };
+    },
+    openSession: networkReaderTransport.openSession,
+    fetchText: networkReaderTransport.fetchText,
+    frameUrl: networkReaderTransport.frameUrl,
+  });
 }
 
 export function ReaderClient({ bookId, initialPage }: { readonly bookId: string; readonly initialPage?: number }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const theme = useReaderStore((s) => s.theme);
-  const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [opened, setOpened] = useState<OpenedBook | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(initialPage ?? 1);
   const [items, setItems] = useState<PdfTextItem[] | null>(null);
-  const [sessionReady, setSessionReady] = useState(false);
-  const pageCount = manifest?.pageCount ?? 0;
+  const [frame, setFrame] = useState<FrameHandle | null>(null);
+  const pageCount = opened?.pageCount ?? 0;
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pageRef = useRef(page);
   pageRef.current = page;
 
   useEffect(() => {
     let cancelled = false;
-    apolloClient
-      .query({ query: BOOK_MANIFEST_QUERY, variables: { id: bookId } })
+    createReaderRepository()
+      .open(bookId)
       .then((result) => {
-        const book = result.data?.book;
-        if (!cancelled && book) setManifest(book);
+        if (!cancelled) setOpened(result);
       })
       .catch(() => {
         if (!cancelled) setError('You do not have access to this book, or it is not available.');
@@ -82,28 +110,12 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
     };
   }, [bookId]);
 
-  // One session per mount; the API slides its TTL as pages are fetched. Page
-  // reads are gated on this so the first fetch cannot race the cookie.
-  useEffect(() => {
-    let cancelled = false;
-    openReadingSession(bookId)
-      .then(() => {
-        if (!cancelled) setSessionReady(true);
-      })
-      .catch(() => {
-        if (!cancelled) setError('Could not start a reading session.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [bookId]);
-
   // A deep-linked ?page or a stale saved position can exceed the real page
   // count; clamp once the manifest tells us how many pages exist.
   useEffect(() => {
-    if (!manifest?.pageCount) return;
-    setPage((current) => Math.min(Math.max(current, 1), manifest.pageCount as number));
-  }, [manifest?.pageCount]);
+    if (!opened?.pageCount) return;
+    setPage((current) => Math.min(Math.max(current, 1), opened.pageCount));
+  }, [opened?.pageCount]);
 
   // Resume only when the URL did not pin a page — an explicit ?page always wins.
   useEffect(() => {
@@ -122,36 +134,27 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
   }, [bookId, initialPage]);
 
   useEffect(() => {
-    if (!manifest) return;
-    if (manifest.conversionStatus !== 'READY') return;
-    if (!sessionReady) return;
+    if (!opened) return;
+    if (opened.conversionStatus !== 'READY') return;
     let cancelled = false;
     setItems(null);
 
-    const loadText = async () => {
-      try {
-        const text = await fetchPageText(bookId, page);
-        if (!cancelled) setItems(text.items);
-      } catch (error) {
-        // A cold load can hit the first text fetch before the session cookie is
-        // usable; re-open the session (which refreshes the access token) and
-        // retry once instead of showing a silently empty text layer.
-        if (isUnauthorized(error) && !cancelled) {
-          try {
-            await openReadingSession(bookId);
-            const retry = await fetchPageText(bookId, page);
-            if (!cancelled) setItems(retry.items);
-            return;
-          } catch {
-            /* fall through to the empty layer */
-          }
+    // The repository owns the frame URL lifecycle; PageCanvas disposes the
+    // previous handle on change/unmount. An in-flight open resolved after
+    // unmount is disposed here so its Blob URL (if any) cannot leak.
+    opened.openPage(page).then(
+      (result) => {
+        if (cancelled) {
+          result.frame.dispose();
+          return;
         }
+        setFrame(result.frame);
+        setItems(result.items);
+      },
+      () => {
         if (!cancelled) setItems([]);
-      }
-    };
-    loadText().catch(() => {
-      if (!cancelled) setItems([]);
-    });
+      },
+    );
 
     // Reading position is owned by the account-scoped offline store (added in
     // a later task); the reader store no longer keeps an authoritative copy.
@@ -166,7 +169,7 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
       cancelled = true;
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [bookId, manifest, page, sessionReady]);
+  }, [bookId, opened, page]);
 
   // Flush the position when the tab is hidden or the reader unmounts.
   useEffect(() => {
@@ -211,7 +214,7 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
     );
   }
 
-  if (!manifest) {
+  if (!opened || !frame) {
     return (
       <div
         className="flex min-h-dvh items-center justify-center bg-surface"
@@ -223,17 +226,16 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
   }
 
   return (
-    <div data-reader-theme={theme} className="flex min-h-dvh flex-col bg-paper text-on-surface">
-      <ReaderToolbar
-        title={manifest.title}
-        page={page}
-        pageCount={pageCount}
-        onPageChange={goToPage}
-        onBack={() => router.push('/books')}
-      />
-      <main className="flex flex-1 items-start justify-center overflow-auto p-4">
-        <PageCanvas bookId={bookId} page={page} items={items} />
-      </main>
-    </div>
+    <BookReaderView
+      title={opened.title}
+      page={page}
+      pageCount={pageCount}
+      items={items}
+      frame={frame}
+      capabilities={opened.capabilities}
+      onPageChange={goToPage}
+      onBack={() => router.push('/books')}
+      theme={theme}
+    />
   );
 }

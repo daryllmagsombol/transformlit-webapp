@@ -123,6 +123,26 @@ describe('build-pwa-assets', () => {
     );
   });
 
+  it('caches the shared local-reader chunks discovered from reader route manifests', () => {
+    fixture = createFixture();
+    generate(fixture);
+
+    const assets = readGeneratedInventory(fixture).assets;
+    // `/chunks/reader.js` is referenced only by the books/bible reader route
+    // manifests, not the offline document. It must still be cached or a cold
+    // offline hub cannot boot the shared reader views.
+    expect(assets).toContain('/_next/static/chunks/reader.js');
+    expect(assets).not.toContain('/api/graphql');
+  });
+
+  it('still generates when only the offline manifest is present', () => {
+    fixture = createFixture({ omitLocalReaderManifests: true });
+    generate(fixture);
+    const assets = readGeneratedInventory(fixture).assets;
+    expect(assets).toContain('/_next/static/chunks/runtime.js');
+    expect(assets).not.toContain('/_next/static/chunks/reader.js');
+  });
+
   it('installs only successful non-opaque allowlisted assets', async () => {
     fixture = createFixture();
     generate(fixture);

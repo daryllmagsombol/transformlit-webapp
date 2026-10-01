@@ -1,8 +1,17 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { useChapter } from './use-chapter';
 import * as api from '../../lib/bible/api';
+import { BibleRepository } from '../bible/repository';
+import { accountLifecycle } from '../offline/account-activation';
 
 jest.mock('../../lib/bible/api');
+jest.mock('../bible/repository');
+jest.mock('../offline/account-activation', () => ({
+  accountLifecycle: jest.fn(),
+}));
+
+const accountLifecycleMock = accountLifecycle as jest.Mock;
+const repositoryMock = BibleRepository as jest.MockedClass<typeof BibleRepository>;
 
 function Probe({ translation, book, chapter }: { translation: string; book: string; chapter: number }) {
   const { chapter: ch, words, loading } = useChapter(translation, book, chapter);
@@ -69,5 +78,35 @@ describe('useChapter', () => {
     render(<Probe translation="BSB" book="JHN" chapter={1} />);
     await waitFor(() => expect(screen.getByTestId('words').textContent).toBe('no'));
     expect(api.getWords).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a saved chapter when the provider is unreachable', async () => {
+    (api.getChapter as jest.Mock).mockRejectedValue(new Error('offline'));
+    accountLifecycleMock.mockReturnValue({ getOwner: () => ({ subject: 'subject-a', epoch: 1 }) });
+    repositoryMock.prototype.openChapter = jest.fn().mockResolvedValue({
+      translation: 'BSB',
+      book: 'JHN',
+      chapter: 1,
+      translationMeta: { id: 'BSB', name: 'Bereavement Standard Bible', shortName: 'BSB' },
+      bookMeta: { id: 'JHN', commonName: 'John', name: 'John', title: null, order: 43, numberOfChapters: 21, firstChapterNumber: 1, lastChapterNumber: 21, totalNumberOfVerses: 879 },
+      chapterContent: { translation: { id: 'BSB', name: 'BSB', shortName: 'BSB' }, book: { id: 'JHN' }, number: 1, content: [{ type: 'verse', number: 1, content: ['Saved verse.'] }], footnotes: [] },
+    });
+
+    render(<Probe translation="BSB" book="JHN" chapter={1} />);
+    await waitFor(() => expect(screen.getByTestId('verses').textContent).toBe('1'));
+    expect(screen.getByTestId('loading').textContent).toBe('false');
+    expect(api.getWords).not.toHaveBeenCalled();
+  });
+
+  it('reports the provider error when no saved chapter exists', async () => {
+    (api.getChapter as jest.Mock).mockRejectedValue(new Error('offline'));
+    accountLifecycleMock.mockReturnValue({ getOwner: () => null });
+
+    function ErrorProbe() {
+      const { error, loading } = useChapter('BSB', 'JHN', 1);
+      return <span data-testid="error">{loading ? 'loading' : String(error)}</span>;
+    }
+    render(<ErrorProbe />);
+    await waitFor(() => expect(screen.getByTestId('error').textContent).toBe('Failed to load chapter.'));
   });
 });

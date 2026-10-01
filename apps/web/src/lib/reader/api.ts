@@ -34,6 +34,25 @@ export interface PdfPageText {
   items: PdfTextItem[];
 }
 
+/**
+ * Network transport seam consumed by `BookRepository`. Keeping it here (rather
+ * than inline in the repository) gives the online reader and Tasks 9–11 a
+ * single, minimal interface to bind: metadata, session, and page text. The
+ * local/offline path never touches any of these.
+ */
+export interface ReaderTransport {
+  readonly openSession: (bookId: string) => Promise<unknown>;
+  readonly fetchText: (bookId: string, page: number) => Promise<PdfPageText>;
+  readonly frameUrl: (bookId: string, page: number) => string;
+}
+
+/** The default network transport bound to the authenticated reader endpoints. */
+export const networkReaderTransport: ReaderTransport = {
+  openSession: openReadingSession,
+  fetchText: fetchPageText,
+  frameUrl: pageFrameUrl,
+};
+
 async function ensureOk(response: Response): Promise<Response> {
   if (!response.ok) throw new Error(`Reader request failed with ${response.status}`);
   return response;

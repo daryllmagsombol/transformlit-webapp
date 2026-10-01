@@ -1,10 +1,12 @@
 'use client';
 
-import { pageFrameUrl, PdfTextItem } from '../../lib/reader/api';
+import { useEffect, useRef } from 'react';
+import type { PdfTextItem } from '../../lib/reader/api';
+import type { FrameHandle } from '../../lib/reader/repository';
 
 interface PageCanvasProps {
-  readonly bookId: string;
-  readonly page: number;
+  /** A repository-resolved frame; the canvas never builds a URL itself. */
+  readonly frame: FrameHandle;
   readonly items: PdfTextItem[] | null;
 }
 
@@ -13,14 +15,37 @@ interface PageCanvasProps {
  * absolutely-positioned text layer carries selection and screen-reader content.
  * `next/image` is intentionally NOT used: it would proxy and cache protected
  * bytes behind a stable app-origin URL.
+ *
+ * The frame's URL lifecycle is owned by the repository (a network URL or a Blob
+ * URL). This component releases the previous frame on page change and the
+ * current frame on unmount, but never constructs a URL itself.
  */
-export function PageCanvas({ bookId, page, items }: PageCanvasProps) {
+export function PageCanvas({ frame, items }: PageCanvasProps) {
+  // Dispose the frame that was active on the previous render. Kept in a ref so
+  // an unrelated rerender (e.g. text arriving) never disposes the live frame.
+  const previousFrame = useRef<FrameHandle | null>(null);
+
+  useEffect(() => {
+    if (previousFrame.current && previousFrame.current !== frame) {
+      previousFrame.current.dispose();
+    }
+    previousFrame.current = frame;
+  }, [frame]);
+
+  useEffect(
+    () => () => {
+      previousFrame.current?.dispose();
+      previousFrame.current = null;
+    },
+    [],
+  );
+
   return (
     <figure className="relative mx-auto w-full max-w-[720px]">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         data-testid="page-frame"
-        src={pageFrameUrl(bookId, page)}
+        src={frame.url}
         alt=""
         aria-hidden="true"
         draggable={false}
