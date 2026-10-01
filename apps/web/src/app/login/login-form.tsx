@@ -14,6 +14,7 @@ import { API_BASE } from '../../lib/constants';
 import { bootstrapAuth } from '../../lib/apollo-client';
 import { completeLocalAuth } from '../../lib/offline/account-activation';
 import { withAuthLifecycleLock } from '../../lib/auth';
+import { AccountRecoveryPrompt } from '../../components/offline/account-recovery-prompt';
 
 /* ------------------------------------------------------------------ */
 /*  Zod schema                                                        */
@@ -197,6 +198,9 @@ export default function LoginForm() {
           </span>
         </div>
       </header>
+
+      {/* Recovery for a durable barrier whose session could not be confirmed. */}
+      <AccountRecoveryPrompt />
 
       {/* ======================== MAIN ======================== */}
       <main className="flex-1 flex items-center justify-center px-4 pt-20 pb-8">

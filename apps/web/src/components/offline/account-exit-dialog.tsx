@@ -20,6 +20,15 @@ export interface AccountExitDialogProps {
   readonly onConfirmDiscard: () => void;
   readonly onCancel: () => void;
   readonly error?: string | null;
+  /**
+   * `recovery` renders the informed escape for a durable barrier whose remote
+   * session invalidation could not be confirmed: the user can reset this
+   * device's session (discarding the previous account's local data) so they are
+   * not permanently blocked from signing in.
+   */
+  readonly mode?: 'exit' | 'recovery';
+  /** Confirmed reset of this device's blocked session (recovery mode). */
+  readonly onResetDevice?: () => void;
 }
 
 interface WorkLine {
@@ -62,6 +71,8 @@ export function AccountExitDialog({
   onConfirmDiscard,
   onCancel,
   error = null,
+  mode = 'exit',
+  onResetDevice,
 }: AccountExitDialogProps) {
   const headingId = useId();
   const confirmId = useId();
@@ -102,6 +113,7 @@ export function AccountExitDialog({
   if (!open) return null;
 
   const hasWork = !work.fullyDrained;
+  const recovery = mode === 'recovery';
 
   return (
     <dialog
@@ -115,17 +127,21 @@ export function AccountExitDialog({
     >
       <div>
         <h2 id={headingId} className="font-display text-headline-h4 text-on-surface">
-          Sign out
+          {recovery ? 'Session could not be confirmed' : 'Sign out'}
         </h2>
         <p className="mt-1 font-body text-small text-on-surface-variant">
-          {hasWork
-            ? 'Some changes have not synced yet.'
-            : 'Your account data on this device will be cleared.'}
+          {recovery
+            ? 'This device could not confirm your previous session ended, so signing in is blocked. Resetting this device signs you out and permanently discards the previous account’s saved data here.'
+            : hasWork
+              ? 'Some changes have not synced yet.'
+              : 'Your account data on this device will be cleared.'}
         </p>
 
-        <div className="mt-3 rounded-lg border border-outline-variant bg-surface-container-low p-3">
-          <WorkSummary work={work} />
-        </div>
+        {!recovery ? (
+          <div className="mt-3 rounded-lg border border-outline-variant bg-surface-container-low p-3">
+            <WorkSummary work={work} />
+          </div>
+        ) : null}
 
         {error ? (
           <p role="alert" className="mt-3 font-small text-small text-error">
@@ -133,7 +149,7 @@ export function AccountExitDialog({
           </p>
         ) : null}
 
-        {hasWork ? (
+        {(recovery || hasWork) ? (
           <div className="mt-3 flex items-start gap-2">
             <input
               id={confirmId}
@@ -143,7 +159,9 @@ export function AccountExitDialog({
               className="mt-1"
             />
             <label htmlFor={confirmId} className="font-small text-small text-on-surface">
-              I understand these changes will be permanently discarded and cannot be recovered.
+              {recovery
+                ? 'I understand this permanently discards the previous account’s data on this device and cannot be recovered.'
+                : 'I understand these changes will be permanently discarded and cannot be recovered.'}
             </label>
           </div>
         ) : null}
@@ -156,7 +174,7 @@ export function AccountExitDialog({
           >
             Cancel
           </button>
-          {hasWork ? (
+          {!recovery && hasWork ? (
             <button
               type="button"
               onClick={onSync}
@@ -166,14 +184,25 @@ export function AccountExitDialog({
               Sync now
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={onConfirmDiscard}
-            disabled={busy || (hasWork && !confirmed)}
-            className="inline-flex min-h-11 items-center rounded-lg border border-error px-4 font-small text-small font-semibold text-error disabled:opacity-50"
-          >
-            Discard and sign out
-          </button>
+          {recovery ? (
+            <button
+              type="button"
+              onClick={onResetDevice}
+              disabled={busy || !confirmed}
+              className="inline-flex min-h-11 items-center rounded-lg border border-error px-4 font-small text-small font-semibold text-error disabled:opacity-50"
+            >
+              Reset this device’s session
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onConfirmDiscard}
+              disabled={busy || (hasWork && !confirmed)}
+              className="inline-flex min-h-11 items-center rounded-lg border border-error px-4 font-small text-small font-semibold text-error disabled:opacity-50"
+            >
+              Discard and sign out
+            </button>
+          )}
         </div>
       </div>
     </dialog>

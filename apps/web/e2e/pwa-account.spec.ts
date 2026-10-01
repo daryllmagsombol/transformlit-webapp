@@ -122,6 +122,34 @@ test.describe('account lifecycle barriers', () => {
     await expect(page).toHaveURL(/\/login/);
   });
 
+  test('offers a user-reachable recovery when the session cannot be confirmed', async ({
+    page,
+    origin,
+    loginAs,
+  }) => {
+    await loginAs(0);
+    await page.goto(`${origin}/feed`);
+
+    // Fail the remote logout so the durable barrier persists (unconfirmable).
+    await page.route('**/api/auth/logout', (route) => route.abort());
+    await page.getByRole('button', { name: /user menu/i }).click().catch(() => undefined);
+    await page.getByRole('menuitem', { name: /log out/i }).click();
+    await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
+
+    // The login (activation) surface surfaces the informed recovery escape.
+    const dialog = page.getByTestId('account-exit-dialog');
+    await expect(dialog).toBeVisible({ timeout: 10_000 });
+    await expect(dialog).toContainText(/could not be confirmed/i);
+
+    const reset = dialog.getByRole('button', { name: /reset this device/i });
+    await expect(reset).toBeDisabled();
+    await dialog.getByLabel(/permanently discards/i).check();
+    await reset.click();
+
+    // The barrier is cleared and the device is no longer blocked from activation.
+    await expect(dialog).not.toBeVisible({ timeout: 10_000 });
+  });
+
   test('a delayed logout response cannot clear a newly activated session', async ({ page, origin, loginAs, ids }) => {
     await loginAs(0);
     await page.goto(`${origin}/feed`);

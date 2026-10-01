@@ -89,4 +89,27 @@ describe('AccountExitDialog', () => {
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it('recovery mode explains the unconfirmed session and requires informed confirmation', () => {
+    const onResetDevice = jest.fn();
+    renderDialog({ mode: 'recovery', work: EMPTY, onResetDevice });
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-labelledby');
+    expect(dialog).toHaveTextContent(/could not be confirmed/i);
+
+    const reset = screen.getByRole('button', { name: /reset this device/i });
+    expect(reset).toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText(/permanently discards/i));
+    expect(reset).toBeEnabled();
+    fireEvent.click(reset);
+    expect(onResetDevice).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovery mode surfaces an error and keeps the reset disabled when disallowed', () => {
+    renderDialog({ mode: 'recovery', work: EMPTY, error: 'Reset failed', onResetDevice: jest.fn() });
+    expect(screen.getByRole('alert')).toHaveTextContent(/reset failed/i);
+    expect(screen.getByRole('button', { name: /reset this device/i })).toBeDisabled();
+  });
 });
