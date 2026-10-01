@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import '../../../test/helpers/offline-dom-shims';
 import {
   DownloadIntegrityError,
   DownloadFencedError,
@@ -10,6 +11,7 @@ import {
 import { OfflineDatabase, resetOfflineDatabaseHandle } from './database';
 import {
   DownloadManager,
+  DownloadHttpError,
   resolveAssetUrl,
   stripApiPrefix,
   type DownloadManagerDeps,
@@ -322,6 +324,39 @@ describe('download manager', () => {
 
       const reread = await harness.manager.getBookStatus(BOOK_ID);
       expect(reread?.status).not.toBe('READY');
+    });
+
+    it.each([401, 403])('classifies HTTP %i as a terminal access denial', async (statusCode) => {
+      await seedLifecycle(harness.database);
+      harness.failAsset('p2:frame', new Response('denied', { status: statusCode }));
+      await expect(harness.manager.startBookDownload(BOOK_ID)).rejects.toBeInstanceOf(DownloadHttpError);
+      const status = await harness.manager.getBookStatus(BOOK_ID);
+      expect(status?.status).toBe('FAILED');
+      expect(status?.error).toMatch(/no longer have access/i);
+    });
+
+    it.each([404, 410])('classifies HTTP %i as terminal unavailable content', async (statusCode) => {
+      await seedLifecycle(harness.database);
+      harness.failAsset('p2:text', new Response('gone', { status: statusCode }));
+      await expect(harness.manager.startBookDownload(BOOK_ID)).rejects.toBeInstanceOf(DownloadHttpError);
+      const status = await harness.manager.getBookStatus(BOOK_ID);
+      expect(status?.status).toBe('FAILED');
+      expect(status?.error).toMatch(/no longer available/i);
+    });
+
+    it('classifies a missing requested manifest version (404) as terminal', async () => {
+      await seedLifecycle(harness.database);
+      await expect(harness.manager.startBookDownload(BOOK_ID, 999)).rejects.toBeInstanceOf(DownloadHttpError);
+      const status = await harness.manager.getBookStatus(BOOK_ID);
+      expect(status?.status).toBe('FAILED');
+    });
+
+    it.each([408, 429, 500, 503])('keeps HTTP %i retryable as INTERRUPTED', async (statusCode) => {
+      await seedLifecycle(harness.database);
+      harness.failAsset('p2:frame', new Response('temporary', { status: statusCode }));
+      await expect(harness.manager.startBookDownload(BOOK_ID)).rejects.toThrow();
+      const status = await harness.manager.getBookStatus(BOOK_ID);
+      expect(status?.status).toBe('INTERRUPTED');
     });
   });
 

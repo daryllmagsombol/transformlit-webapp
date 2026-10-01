@@ -83,7 +83,8 @@ export function resolveOfflineRights(translationId: string): TranslationOfflineR
       attribution: '',
     };
   }
-  return { ...baseRights(curated.id), attribution: baseRights(curated.id).attribution || (curated.attribution ?? '') };
+  const resolved = baseRights(curated.id);
+  return { ...resolved, attribution: resolved.attribution || (curated.attribution ?? '') };
 }
 
 /** True only when evidence is documented AND every required grant is present. */

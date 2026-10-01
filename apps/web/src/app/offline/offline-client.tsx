@@ -247,6 +247,27 @@ function OfflineBibleReader({ translation, book, chapter, verse }: {
   );
 }
 
+/** Chooses between the loading, saved-library, and signed-out states. */
+function OfflineLibrarySection({
+  loading,
+  owner,
+  downloads,
+}: {
+  readonly loading: boolean;
+  readonly owner: string | null;
+  readonly downloads: readonly DownloadManifestRecord[];
+}) {
+  if (loading) return <LoadingSpinner />;
+  if (!owner) {
+    return (
+      <p className="font-small text-sm leading-relaxed text-on-surface-variant">
+        Sign in while online to save reading for offline use.
+      </p>
+    );
+  }
+  return <OfflineLibrary downloads={downloads} />;
+}
+
 /** Lists saved books and chapters; opening is purely client-local. */
 function OfflineLibrary({ downloads }: { readonly downloads: readonly DownloadManifestRecord[] }) {
   if (downloads.length === 0) {
@@ -443,15 +464,7 @@ export default function OfflineClient() {
                 </span>
               </div>
               <div className="my-6 h-px bg-outline-variant" />
-              {loading ? (
-                <LoadingSpinner />
-              ) : owner ? (
-                <OfflineLibrary downloads={downloads} />
-              ) : (
-                <p className="font-small text-sm leading-relaxed text-on-surface-variant">
-                  Sign in while online to save reading for offline use.
-                </p>
-              )}
+              <OfflineLibrarySection loading={loading} owner={owner} downloads={downloads} />
             </div>
           </aside>
         </section>

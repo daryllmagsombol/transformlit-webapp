@@ -12,7 +12,7 @@ import { DownloadControls, type DownloadControlState } from '../../../../../../c
 import { canDownloadTranslationOffline } from '../../../../../../lib/bible/offline-rights';
 import type { BibleCapabilities } from '../../../../../../lib/bible/repository';
 import { offlineDownloadManager } from '../../../../../../lib/hooks/use-download';
-import { accountLifecycle } from '../../../../../../lib/offline/account-activation';
+import { useWritePermit } from '../../../../../../lib/hooks/use-write-permit';
 import { formatRef } from '../../../../../../lib/bible/refs';
 
 interface ReaderProps {
@@ -39,7 +39,8 @@ function BibleChapterDownload({ translation, book, chapter, label }: {
   const [state, setState] = useState<DownloadControlState>('IDLE');
   const [error, setError] = useState<string | null>(null);
   const [persistenceGranted, setPersistenceGranted] = useState<boolean | null>(null);
-  const permitted = accountLifecycle().writePermit().permitted;
+  // Reactive permit: re-renders when ownership is established/cleared.
+  const permitted = useWritePermit().permitted;
   const allowed = canDownloadTranslationOffline(translation);
 
   useEffect(() => {

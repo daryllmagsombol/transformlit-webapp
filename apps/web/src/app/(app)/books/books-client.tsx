@@ -15,7 +15,7 @@ import { DownloadControls, type DownloadControlState } from '../../../components
 import { apolloClient } from '../../../lib/apollo-client';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
 import { offlineDownloadManager } from '../../../lib/hooks/use-download';
-import { accountLifecycle } from '../../../lib/offline/account-activation';
+import { useWritePermit } from '../../../lib/hooks/use-write-permit';
 
 // ── GraphQL Queries ──────────────────────────────────────────────────────────
 
@@ -97,7 +97,9 @@ function BookDownloadButton({ book }: { readonly book: GraphQLBook }) {
   const [error, setError] = useState<string | null>(null);
   const [storageAvailable, setStorageAvailable] = useState(typeof globalThis.indexedDB !== 'undefined');
   const [persistenceGranted, setPersistenceGranted] = useState<boolean | null>(null);
-  const permitted = accountLifecycle().writePermit().permitted;
+  // Reactive permit: re-renders when ownership is established/cleared, so the
+  // button cannot stay disabled after an asynchronous activation.
+  const permitted = useWritePermit().permitted;
 
   useEffect(() => {
     const manager = offlineDownloadManager();

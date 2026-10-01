@@ -14,6 +14,7 @@ import {
   DownloadIntegrityError,
   OfflineStorageError,
   QuotaExceededError,
+  RightsBlockedError,
   classifyStorageError,
   bookDownloadKey,
   bookPageKey,
@@ -29,7 +30,6 @@ import {
   resolveOfflineRights,
   type TranslationOfflineRights,
 } from '../bible/offline-rights';
-import { RightsBlockedError } from './contracts';
 import type { BibleChapter } from '../bible/types';
 
 /** Bearer-authenticated transcript failure with its HTTP status. */
@@ -188,6 +188,52 @@ function validateManifest(manifest: OfflineBookManifestWire, requestedBookId: st
 
 async function shaOfBytes(bytes: Uint8Array, hasher: (value: Uint8Array) => Promise<string>): Promise<string> {
   return hasher(bytes);
+}
+
+/**
+ * Terminal (non-retryable) versus retryable failure classification.
+ *
+ * - Access denied (401/403) and missing/unavailable content or version
+ *   (404/410) are terminal: retrying cannot succeed until access or content
+ *   state changes, so the UI must not offer an endless Retry.
+ * - 408/429/5xx/network faults and quota/integrity failures are handled by the
+ *   caller; quota and integrity are terminal, everything else stays
+ *   `INTERRUPTED` (retryable).
+ */
+function isTerminalHttpStatus(status: number): boolean {
+  return status === 401 || status === 403 || status === 404 || status === 410;
+}
+
+/** A specific, honest message for a terminal HTTP failure. */
+function httpFailureMessage(error: DownloadHttpError): string {
+  if (error.status === 401 || error.status === 403) {
+    return 'You no longer have access to this content.';
+  }
+  return 'This content is no longer available to download.';
+}
+
+/**
+ * Resolves the durable status + message for a failed transfer. Extracted so the
+ * book and Bible paths share one classification and neither uses a nested
+ * ternary (Sonar S6644).
+ */
+function classifyDownloadFailure(error: unknown): { status: DownloadManifestRecord['status']; message: string } {
+  if (error instanceof Error && error.name === 'AbortError') {
+    return { status: 'CANCELLED', message: error.message };
+  }
+  if (error instanceof DownloadHttpError) {
+    if (isTerminalHttpStatus(error.status)) {
+      return { status: 'FAILED', message: httpFailureMessage(error) };
+    }
+    return { status: 'INTERRUPTED', message: error.message };
+  }
+  const classified = classifyStorageError(error);
+  const terminal =
+    classified instanceof QuotaExceededError ||
+    error instanceof DownloadIntegrityError ||
+    classified.message.startsWith('INSUFFICIENT_SPACE:');
+  if (terminal) return { status: 'FAILED', message: classified.message };
+  return { status: 'INTERRUPTED', message: classified.message };
 }
 
 export class DownloadManager {
@@ -538,12 +584,7 @@ export class DownloadManager {
     error: unknown,
     attemptedVersion: number | undefined,
   ): Promise<void> {
-    const classified = classifyStorageError(error);
-    const cancelled = error instanceof Error && error.name === 'AbortError';
-    const terminal =
-      classified instanceof QuotaExceededError ||
-      error instanceof DownloadIntegrityError ||
-      classified.message.startsWith('INSUFFICIENT_SPACE:');
+    const failure = classifyDownloadFailure(error);
     const current = await this.database
       .getDownloadManifest(owner.subject, bookDownloadKey(owner.subject, bookId))
       .catch(() => existing);
@@ -556,10 +597,10 @@ export class DownloadManager {
       contentVersion: attemptedVersion ?? prior?.contentVersion ?? 0,
       // The previous complete version stays active regardless of this failure.
       activeVersion: prior?.activeVersion ?? null,
-      status: cancelled ? 'CANCELLED' : terminal ? 'FAILED' : 'INTERRUPTED',
+      status: failure.status,
       itemCount: prior?.itemCount ?? 0,
       completedItems: prior?.completedItems ?? 0,
-      error: classified.message,
+      error: failure.message,
       stagedAt: prior?.stagedAt ?? this.now(),
       updatedAt: this.now(),
     };
@@ -653,13 +694,12 @@ export class DownloadManager {
       return manifest;
     } catch (error) {
       const current = await this.database.getDownloadManifest(owner.subject, manifestKey).catch(() => prior);
+      const failure = classifyDownloadFailure(error);
       const failed: DownloadManifestRecord = {
         ...(current ?? manifest),
-        status: error instanceof Error && error.name === 'AbortError'
-          ? 'CANCELLED'
-          : error instanceof DownloadIntegrityError ? 'FAILED' : 'INTERRUPTED',
+        status: failure.status,
         activeVersion: current?.activeVersion ?? prior?.activeVersion ?? null,
-        error: error instanceof Error ? error.message : 'Chapter download failed',
+        error: failure.message,
         updatedAt: this.now(),
       };
       await this.putRecord(owner, 'downloadManifests', failed).catch(() => undefined);

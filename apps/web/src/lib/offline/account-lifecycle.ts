@@ -72,6 +72,15 @@ export interface AuthLifecycle {
   markTransient(): void;
   /** Current owner, if any. */
   getOwner(): AccountOwner | null;
+  /**
+   * Subscribes to lifecycle state changes (ownership, auth-required). Returns an
+   * unsubscribe function. Used by React via `useSyncExternalStore` so the
+   * download UI reacts to an asynchronous activation instead of reading the
+   * permit once per render.
+   */
+  subscribe(listener: () => void): () => void;
+  /** Monotonic snapshot counter for `useSyncExternalStore` getSnapshot. */
+  stateVersion(): number;
   /** Task 13B seam: fail-closed, never clears data in Task 13A. */
   beginExit(): ExitDecision;
   /** Task 13B seam: not implemented here; always fails closed. */
@@ -89,12 +98,8 @@ export function classifyAuthFailure(status: number): AuthFailureClassification {
 
 export function classifyAuthError(error: unknown): AuthFailureClassification {
   if (error && typeof error === 'object') {
-    const status =
-      'status' in error
-        ? (error as { status?: number }).status
-        : 'statusCode' in error
-          ? (error as { statusCode?: number }).statusCode
-          : undefined;
+    const candidate = error as { status?: number; statusCode?: number };
+    const status = candidate.status ?? candidate.statusCode;
     if (status === 401) return 'AUTH_REQUIRED';
   }
   return 'TRANSIENT';
@@ -110,10 +115,29 @@ export class AccountLifecycle implements AuthLifecycle {
   private readonly context: AccountContext;
   private readonly persistence: LifecyclePersistence;
   private authRequired = false;
+  private version = 0;
+  private readonly listeners = new Set<() => void>();
 
   constructor(context: AccountContext, persistence: LifecyclePersistence) {
     this.context = context;
     this.persistence = persistence;
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  stateVersion(): number {
+    return this.version;
+  }
+
+  /** Advances the snapshot and notifies subscribers after a state change. */
+  private notify(): void {
+    this.version += 1;
+    for (const listener of this.listeners) listener();
   }
 
   getOwner(): AccountOwner | null {
@@ -135,7 +159,9 @@ export class AccountLifecycle implements AuthLifecycle {
    */
   async hydrate(): Promise<AccountOwner | null> {
     if (this.context.hasEstablishedOwner()) return this.context.getOwner();
-    return this.context.restore();
+    const restored = await this.context.restore();
+    if (restored) this.notify();
+    return restored;
   }
 
   setDisplay(display: AuthDisplayState | null): void {
@@ -143,7 +169,9 @@ export class AccountLifecycle implements AuthLifecycle {
   }
 
   markAuthRequired(): void {
+    if (this.authRequired) return;
     this.authRequired = true;
+    this.notify();
   }
 
   /**
@@ -174,6 +202,7 @@ export class AccountLifecycle implements AuthLifecycle {
 
     this.authRequired = false;
     const owner = await this.context.establish(verification.subject);
+    this.notify();
     return { status: 'INSTALLED', owner };
   }
 

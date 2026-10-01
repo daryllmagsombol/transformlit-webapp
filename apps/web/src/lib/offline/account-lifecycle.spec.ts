@@ -59,6 +59,40 @@ describe('account lifecycle activation fencing', () => {
     expect(lifecycle.writePermit()).toEqual({ permitted: true, owner: { subject: 'user-a', epoch: 1 } });
   });
 
+  it('notifies subscribers and advances stateVersion when ownership is established', async () => {
+    const { lifecycle } = makeLifecycle();
+    const listener = jest.fn();
+    const unsubscribe = lifecycle.subscribe(listener);
+    const before = lifecycle.stateVersion();
+
+    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
+
+    expect(lifecycle.stateVersion()).toBeGreaterThan(before);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
+    await lifecycle.markAuthRequired();
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies after restoring a persisted owner', async () => {
+    const { persistence, lifecycle } = makeLifecycle();
+    await persistence.writeState({
+      id: 'lifecycle',
+      state: 'ACTIVE',
+      subject: 'user-a',
+      epoch: 3,
+      updatedAt: 1,
+    });
+    const listener = jest.fn();
+    lifecycle.subscribe(listener);
+
+    await lifecycle.hydrate();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(lifecycle.writePermit()).toEqual({ permitted: true, owner: { subject: 'user-a', epoch: 3 } });
+  });
+
   it('rejects a stale-epoch install result without changing ownership', async () => {
     const { lifecycle } = makeLifecycle();
     await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
