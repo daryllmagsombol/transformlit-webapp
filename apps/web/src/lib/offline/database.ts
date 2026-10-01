@@ -1,6 +1,10 @@
 import {
   classifyStorageError,
   keyBelongsToSubject,
+  type BibleChapterRecord,
+  type BookPageRecord,
+  type BookVersionRecord,
+  type DownloadManifestRecord,
   type LifecycleBarrierRecord,
   type LifecycleStateRecord,
   type LeaseRecord,
@@ -11,11 +15,22 @@ import {
   StorageUnavailableError,
   SubjectMismatchError,
   TransactionAbortedError,
+  bibleChapterKey,
+  bookVersionKey,
+  qualifyKey,
 } from './contracts';
 import type { LeasePersistence } from './coordination';
 import type { LifecyclePersistence } from './account-lifecycle';
 
-export { OFFLINE_DB_NAME, OFFLINE_DB_VERSION, bookKey, bibleChapterKey, qualifyKey } from './contracts';
+export {
+  OFFLINE_DB_NAME,
+  OFFLINE_DB_VERSION,
+  bookKey,
+  bookPageKey,
+  bookVersionKey,
+  bibleChapterKey,
+  qualifyKey,
+} from './contracts';
 
 export interface StoreIndexSchema {
   name: string;
@@ -465,6 +480,219 @@ export class OfflineDatabase {
         done(undefined);
       });
     });
+  }
+
+  /**
+   * Writes one download record (manifest, version, page, or chapter) only when
+   * the caller's subject + lifecycle epoch still match the authoritative owner.
+   * Used for the short per-item writes during staging; the actual readiness
+   * publish is a separate, atomic multi-store transaction.
+   */
+  async putDownloadRecord<T>(subject: string, epoch: number, store: string, value: T): Promise<void> {
+    assertRecordSubject(subject, value);
+    const db = await this.db();
+    await runTransaction<void>(db, ['lifecycle', store], 'readwrite', (tx, done, fail) => {
+      guardWrite(tx, subject, epoch, fail, () => {
+        tx.objectStore(store).put(value as unknown as IDBValidKey);
+        done(undefined);
+      });
+    });
+  }
+
+  /**
+   * Writes a batch of download records for the same store in one short, fenced
+   * transaction. Callers must not hold this across network I/O: each chunk is
+   * committed and released before the next fetch begins.
+   */
+  async putDownloadRecords<T>(subject: string, epoch: number, store: string, values: readonly T[]): Promise<void> {
+    if (values.length === 0) return;
+    for (const value of values) assertRecordSubject(subject, value);
+    const db = await this.db();
+    await runTransaction<void>(db, ['lifecycle', store], 'readwrite', (tx, done, fail) => {
+      guardWrite(tx, subject, epoch, fail, () => {
+        const objectStore = tx.objectStore(store);
+        for (const value of values) objectStore.put(value as unknown as IDBValidKey);
+        done(undefined);
+      });
+    });
+  }
+
+  /**
+   * Persists a Bible chapter (content + metadata + provenance) in one fenced
+   * transaction. Rights are checked by the caller before this is reached.
+   */
+  async putBibleChapter(subject: string, epoch: number, record: BibleChapterRecord): Promise<void> {
+    await this.putDownloadRecord(subject, epoch, 'bibleChapters', record);
+  }
+
+  async getBibleChapter(
+    subject: string,
+    translation: string,
+    book: string,
+    chapter: number,
+  ): Promise<BibleChapterRecord | null> {
+    return this.get<BibleChapterRecord>('bibleChapters', bibleChapterKey(subject, translation, book, chapter));
+  }
+
+  /**
+   * Atomically publishes a verified Bible chapter: the chapter content and its
+   * ready manifest land in one fenced transaction, so a chapter can never be
+   * readable without a ready marker or vice versa.
+   */
+  async publishBibleChapter(
+    subject: string,
+    epoch: number,
+    chapter: BibleChapterRecord,
+    manifest: DownloadManifestRecord,
+  ): Promise<void> {
+    assertRecordSubject(subject, chapter);
+    assertRecordSubject(subject, manifest);
+    const db = await this.db();
+    await runTransaction<void>(db, ['lifecycle', 'bibleChapters', 'downloadManifests'], 'readwrite', (tx, done, fail) => {
+      guardWrite(tx, subject, epoch, fail, () => {
+        tx.objectStore('bibleChapters').put(chapter as unknown as IDBValidKey);
+        tx.objectStore('downloadManifests').put(manifest as unknown as IDBValidKey);
+        done(undefined);
+      });
+    });
+  }
+
+  /** Every stored page of a pinned book version (used to re-verify on retry). */
+  async getBookPages(subject: string, bookId: string, contentVersion: number): Promise<BookPageRecord[]> {
+    return this.getAllByIndex<BookPageRecord>(
+      'bookPages',
+      'subjectBookVersion',
+      IDBKeyRange.bound(
+        [subject, bookId, contentVersion],
+        [subject, bookId, contentVersion, Number.MAX_SAFE_INTEGER],
+      ),
+    );
+  }
+
+  /**
+   * Atomically publishes a verified book version: marks the new version ready +
+   * active, demotes the prior version (if any) to inactive, and repoints the
+   * manifest's `activeVersion`. A failure anywhere aborts the whole
+   * transaction, so the previous complete version stays active.
+   */
+  async publishBookVersion(
+    subject: string,
+    epoch: number,
+    version: BookVersionRecord,
+    manifest: DownloadManifestRecord,
+  ): Promise<void> {
+    assertRecordSubject(subject, version);
+    assertRecordSubject(subject, manifest);
+    const db = await this.db();
+    await runTransaction<void>(
+      db,
+      ['lifecycle', 'bookVersions', 'downloadManifests'],
+      'readwrite',
+      (tx, done, fail) => {
+        guardWrite(tx, subject, epoch, fail, () => {
+          const versions = tx.objectStore('bookVersions');
+          const request = versions.index('subjectBookVersion').getAll(
+            IDBKeyRange.bound([subject, version.bookId], [subject, version.bookId, Number.MAX_SAFE_INTEGER]),
+          );
+          request.onsuccess = () => {
+            for (const existing of (request.result as BookVersionRecord[] | undefined) ?? []) {
+              if (existing.id === version.id) continue;
+              if (existing.active) versions.put({ ...existing, active: false });
+            }
+            versions.put(version as unknown as IDBValidKey);
+            tx.objectStore('downloadManifests').put(manifest as unknown as IDBValidKey);
+            done(undefined);
+          };
+          request.onerror = () => {
+            fail(request.error ?? new OfflineStorageError('Could not read book versions'));
+            tx.abort();
+          };
+        });
+      },
+    );
+  }
+
+  async getBookVersion(subject: string, bookId: string, contentVersion: number): Promise<BookVersionRecord | null> {
+    return this.get<BookVersionRecord>(
+      'bookVersions',
+      qualifyKey(subject, 'bookversion', bookId, contentVersion),
+    );
+  }
+
+  /** The single ready+active version currently exposed offline for a book. */
+  async getActiveBookVersion(subject: string, bookId: string): Promise<BookVersionRecord | null> {
+    const versions = await this.getAllByIndex<BookVersionRecord>(
+      'bookVersions',
+      'subjectBookVersion',
+      IDBKeyRange.bound([subject, bookId], [subject, bookId, Number.MAX_SAFE_INTEGER]),
+    );
+    return versions.find((version) => version.active && version.status === 'READY') ?? null;
+  }
+
+  /**
+   * Removes a whole book download's content (version descriptor + pages +
+   * manifest) for one subject. It never touches `readerRecords`, `outbox`,
+   * `receipts`, `tombstones`, or `conflicts`, so annotations and pending edits
+   * survive a removal.
+   */
+  async removeBookDownload(subject: string, epoch: number, bookId: string, manifestId: string): Promise<void> {
+    const db = await this.db();
+    await runTransaction<void>(
+      db,
+      ['lifecycle', 'downloadManifests', 'bookVersions', 'bookPages'],
+      'readwrite',
+      (tx, done, fail) => {
+        guardWrite(tx, subject, epoch, fail, () => {
+          const range = IDBKeyRange.bound([subject, bookId], [subject, bookId, Number.MAX_SAFE_INTEGER]);
+          let pending = 2;
+          const after = () => {
+            pending -= 1;
+            if (pending === 0) done(undefined);
+          };
+          for (const storeName of ['bookVersions', 'bookPages'] as const) {
+            const cursorRequest = tx.objectStore(storeName).index('subjectBookVersion').openCursor(range);
+            cursorRequest.onsuccess = () => {
+              const cursor = cursorRequest.result;
+              if (cursor) {
+                cursor.delete();
+                cursor.continue();
+                return;
+              }
+              after();
+            };
+            cursorRequest.onerror = () => fail(cursorRequest.error ?? new OfflineStorageError('Removal failed'));
+          }
+          tx.objectStore('downloadManifests').delete(manifestId);
+        });
+      },
+    );
+  }
+
+  /** Removes one saved Bible chapter and its manifest; never touches reader state. */
+  async removeBibleChapter(
+    subject: string,
+    epoch: number,
+    translation: string,
+    book: string,
+    chapter: number,
+    manifestId: string,
+  ): Promise<void> {
+    const db = await this.db();
+    await runTransaction<void>(db, ['lifecycle', 'downloadManifests', 'bibleChapters'], 'readwrite', (tx, done, fail) => {
+      guardWrite(tx, subject, epoch, fail, () => {
+        tx.objectStore('bibleChapters').delete(bibleChapterKey(subject, translation, book, chapter));
+        tx.objectStore('downloadManifests').delete(manifestId);
+        done(undefined);
+      });
+    });
+  }
+
+  async getDownloadManifest(subject: string, key: string): Promise<DownloadManifestRecord | null> {
+    return this.get<DownloadManifestRecord>('downloadManifests', key);
+  }
+
+  async listDownloadManifests(subject: string): Promise<DownloadManifestRecord[]> {
+    return this.getAllByIndex<DownloadManifestRecord>('downloadManifests', 'subject', subject);
   }
 
   async compareAndSetLease(name: string, expectedToken: number | null, next: LeaseRecord | null): Promise<boolean> {

@@ -26,6 +26,46 @@ function uniqueDbName(): string {
 }
 
 test.describe('offline storage browser semantics', () => {
+  test('downloads an authorized whole book through the UI and publishes its ready marker', async ({ page, origin, loginAs, ids }) => {
+    await loginAs(0);
+    await page.goto(`${origin}/books`);
+
+    const book = await page.evaluate(async (bookId) => {
+      const response = await fetch('/api/graphql', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query: '{ books { id title conversionStatus } }' }),
+      });
+      if (!response.ok) throw new Error(`Books query failed with ${response.status}`);
+      const payload = await response.json() as { data?: { books?: Array<{ id: string; title: string }> } };
+      return payload.data?.books?.find((entry) => entry.id === bookId) ?? null;
+    }, ids.readableBookId);
+    expect(book).not.toBeNull();
+    const download = page.getByRole('button', { name: `${book?.title}: save offline` });
+    await expect(download).toBeEnabled();
+    await download.click();
+
+    await expect(page.getByText('Saved offline')).toBeVisible({ timeout: 30_000 });
+    const readyMarker = await page.evaluate(async ({ subject, bookId }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('transformlit-offline');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const rows = await new Promise<Array<{ contentId: string; status: string; activeVersion: number | null }>>((resolve, reject) => {
+        const tx = db.transaction('downloadManifests', 'readonly');
+        const request = tx.objectStore('downloadManifests').index('subject').getAll(subject);
+        request.onsuccess = () => resolve(request.result as Array<{ contentId: string; status: string; activeVersion: number | null }>);
+        request.onerror = () => reject(request.error);
+      });
+      db.close();
+      return rows.find((entry) => entry.contentId === bookId) ?? null;
+    }, { subject: ids.readerId, bookId: ids.readableBookId });
+    expect(readyMarker).toMatchObject({ contentId: ids.readableBookId, status: 'READY' });
+    expect(readyMarker?.activeVersion).toBeGreaterThan(0);
+  });
+
   test('aborts a transaction that errored after a successful request', async ({ context, origin }) => {
     const page = await context.newPage();
     await page.goto(`${origin}/offline`);

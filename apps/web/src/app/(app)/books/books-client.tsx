@@ -11,8 +11,11 @@ import {
   ReadingProgressCard,
   LoadingSpinner,
 } from '../../../components/ui';
+import { DownloadControls, type DownloadControlState } from '../../../components/offline/download-controls';
 import { apolloClient } from '../../../lib/apollo-client';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
+import { offlineDownloadManager } from '../../../lib/hooks/use-download';
+import { accountLifecycle } from '../../../lib/offline/account-activation';
 
 // ── GraphQL Queries ──────────────────────────────────────────────────────────
 
@@ -78,6 +81,118 @@ const SORTS: { key: SortKey; label: string }[] = [
 function formatPrice(book: GraphQLBook): number {
   if (book.accessLevel === 'FREE') return 0;
   return book.price ?? Infinity;
+}
+
+// ── Offline download control ─────────────────────────────────────────────────
+
+/**
+ * Per-book "Save offline" control. It reads the authoritative account permit
+ * from the lifecycle (never display auth), so it fails closed when signed out,
+ * and drives the explicit download manager's start/retry/cancel/remove flow.
+ */
+function BookDownloadButton({ book }: { readonly book: GraphQLBook }) {
+  const [state, setState] = useState<DownloadControlState>('IDLE');
+  const [completed, setCompleted] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [storageAvailable, setStorageAvailable] = useState(typeof globalThis.indexedDB !== 'undefined');
+  const [persistenceGranted, setPersistenceGranted] = useState<boolean | null>(null);
+  const permitted = accountLifecycle().writePermit().permitted;
+
+  useEffect(() => {
+    const manager = offlineDownloadManager();
+    let current = true;
+    const refresh = async () => {
+      try {
+        const [status, storage] = await Promise.all([
+          manager.getBookStatus(book.id),
+          manager.estimateStorage(),
+        ]);
+        if (!current) return;
+        setStorageAvailable(storage.supported);
+        setPersistenceGranted(storage.supported ? storage.persisted : null);
+        if (status) {
+          setState(status.status);
+          setCompleted(status.completedItems);
+          setTotal(status.itemCount);
+          setError(status.error);
+        }
+      } catch {
+        if (current) setStorageAvailable(false);
+      }
+    };
+    const unsubscribe = manager.subscribe((progress) => {
+      if (current && progress.kind === 'BOOK' && progress.contentId === book.id) {
+        setState(progress.status);
+        setCompleted(progress.completedItems);
+        setTotal(progress.itemCount);
+      }
+    });
+    refresh().catch(() => undefined);
+    return () => {
+      current = false;
+      unsubscribe();
+    };
+  }, [book.id]);
+
+  const run = useCallback(
+    async (action: () => Promise<unknown>) => {
+      setError(null);
+      setState('STAGING');
+      try {
+        const result = (await action()) as { status?: DownloadControlState; completedItems?: number; itemCount?: number };
+        setState(result?.status ?? 'READY');
+        setCompleted(result?.completedItems ?? 0);
+        setTotal(result?.itemCount ?? 0);
+      } catch (caught) {
+        setState('INTERRUPTED');
+        setError(caught instanceof Error ? caught.message : 'Download failed');
+      }
+    },
+    [],
+  );
+
+  const onStart = useCallback(() => run(() => offlineDownloadManager().startBookDownload(book.id)), [book.id, run]);
+
+  const onRetry = useCallback(() => run(() => offlineDownloadManager().retryBookDownload(book.id)), [book.id, run]);
+
+  const onCancel = useCallback(async () => {
+    try {
+      await offlineDownloadManager().cancelBookDownload(book.id);
+      setState('CANCELLED');
+    } catch {
+      setError('Could not cancel the download.');
+    }
+  }, [book.id]);
+
+  const onRemove = useCallback(async () => {
+    try {
+      await offlineDownloadManager().removeBookDownload(book.id);
+      setState('IDLE');
+      setCompleted(0);
+      setTotal(0);
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : 'Could not remove download');
+    }
+  }, [book.id]);
+
+  return (
+    <DownloadControls
+      label={book.title}
+      state={state}
+      completedItems={completed}
+      itemCount={total}
+      error={error}
+      canDownload={permitted && book.conversionStatus === 'READY'}
+      deniedReason={!permitted ? 'Sign in to save this book offline.' : 'This book is still being prepared.'}
+      storageAvailable={storageAvailable}
+      persistenceGranted={persistenceGranted}
+      onStart={onStart}
+      onRetry={onRetry}
+      onCancel={onCancel}
+      onRemove={onRemove}
+    />
+  );
 }
 
 // ── Books Page ───────────────────────────────────────────────────────────────
@@ -204,6 +319,7 @@ export default function BooksClient() {
               book={book}
               onRead={() => handleRead(book)}
               onBuy={handleBuy}
+              statusPill={<BookDownloadButton book={book} />}
             />
           ))}
         </div>

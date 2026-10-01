@@ -129,7 +129,20 @@ export interface LeaseRecord {
 // ── Downloads and content ────────────────────────────────────────────────
 
 export type DownloadKind = 'BIBLE_CHAPTER' | 'BOOK';
-export type DownloadStatus = 'STAGING' | 'READY' | 'FAILED';
+
+/**
+ * Durable download lifecycle. `STAGING`/`VERIFYING` are in-progress states,
+ * `READY` is the only state that exposes content offline, and
+ * `INTERRUPTED`/`FAILED`/`CANCELLED` are durable terminal-until-retried states.
+ * An interrupted or failed replacement must never clear `activeVersion`.
+ */
+export type DownloadStatus =
+  | 'STAGING'
+  | 'VERIFYING'
+  | 'READY'
+  | 'INTERRUPTED'
+  | 'FAILED'
+  | 'CANCELLED';
 
 export interface TocEntry {
   id: string;
@@ -151,17 +164,51 @@ export interface AssetEntry {
   mediaType: string;
   byteLength: number;
   sha256: string;
+  /** Application-relative, version-pinned URL emitted by the manifest. */
+  url?: string | null;
+  width?: number | null;
+  height?: number | null;
 }
 
-/** Active/staged manifest for one downloaded book or Bible chapter. */
+/**
+ * Client mirror of the `200 OfflineBookManifest` wire contract. Assets are
+ * fetched by id against the actual client API base; the manifest never leaks a
+ * storage key.
+ */
+export interface OfflineBookManifest {
+  contractVersion: number;
+  bookId: string;
+  contentVersion: number;
+  title: string;
+  author: string | null;
+  description: string | null;
+  coverAssetId: string | null;
+  totalPages: number;
+  toc: TocEntry[];
+  pages: PageEntry[];
+  assets: AssetEntry[];
+}
+
+/**
+ * Durable status for one downloaded content id (a Bible book/chapter or a
+ * Transformlit book). `contentVersion` is the version currently staged or
+ * active; `activeVersion` is the last fully verified, openable version. They
+ * differ exactly while a replacement transfer is incomplete, which is what
+ * lets a failed replacement leave the previous complete version active.
+ */
 export interface DownloadManifestRecord {
   id: string;
   subject: string;
   kind: DownloadKind;
   contentId: string;
   contentVersion: number;
+  /** Last ready/complete version exposed offline; null before the first publish. */
+  activeVersion: number | null;
   status: DownloadStatus;
   itemCount: number;
+  completedItems: number;
+  /** Human-readable terminal error; null while healthy/in-progress. */
+  error: string | null;
   stagedAt: number;
   updatedAt: number;
 }
@@ -172,12 +219,16 @@ export interface BookVersionRecord {
   bookId: string;
   contentVersion: number;
   status: 'STAGED' | 'READY';
+  /** True only for the single version currently exposed offline. */
+  active: boolean;
   title: string;
   author: string | null;
   description: string | null;
   coverAssetId: string | null;
   totalPages: number;
   toc: TocEntry[];
+  /** Contract/server provenance for the pinned version. */
+  provenance: string;
   createdAt: number;
 }
 
@@ -195,6 +246,13 @@ export interface BookPageRecord {
   verified: boolean;
 }
 
+/**
+ * A fully saved Bible chapter. `payload` holds the exact provider chapter
+ * response (text verses + footnotes) and `bookMeta`/`translationMeta` carry the
+ * metadata needed for offline navigation; `attribution`/`provenance` are
+ * mandatory because the chapter may only be stored when its translation has
+ * documented offline rights.
+ */
 export interface BibleChapterRecord {
   id: string;
   subject: string;
@@ -204,6 +262,11 @@ export interface BibleChapterRecord {
   contentVersion: number;
   text: string;
   payload: unknown;
+  translationMeta: { id: string; name: string; shortName: string } | null;
+  bookMeta: { id: string; commonName: string; firstChapterNumber: number; lastChapterNumber: number } | null;
+  chapterBounds: { firstChapter: number; lastChapter: number };
+  provenance: string;
+  attribution: string;
   downloadedAt: number;
 }
 
@@ -371,6 +434,30 @@ export class TransactionAbortedError extends OfflineStorageError {
   }
 }
 
+/** A downloaded asset failed length/digest/completeness verification. */
+export class DownloadIntegrityError extends OfflineStorageError {
+  constructor(message = 'Downloaded content failed integrity verification') {
+    super(message);
+    this.name = 'DownloadIntegrityError';
+  }
+}
+
+/** The content's translation has no documented offline-storage rights. */
+export class RightsBlockedError extends OfflineStorageError {
+  constructor(message = 'This translation may not be stored offline') {
+    super(message);
+    this.name = 'RightsBlockedError';
+  }
+}
+
+/** A download operation was rejected because no live account permits it. */
+export class DownloadFencedError extends OfflineStorageError {
+  constructor(message = 'Download rejected: account is not active') {
+    super(message);
+    this.name = 'DownloadFencedError';
+  }
+}
+
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
 const KEY_SEPARATOR = '\u0000';
@@ -390,6 +477,26 @@ export function keyBelongsToSubject(subject: string, key: string): boolean {
 
 export function bookKey(subject: string, bookId: string): string {
   return qualifyKey(subject, 'book', bookId);
+}
+
+/** Key for one book's download manifest: unique per subject + book. */
+export function bookDownloadKey(subject: string, bookId: string): string {
+  return qualifyKey(subject, 'download', 'book', bookId);
+}
+
+/** Key for one immutable book-version descriptor. */
+export function bookVersionKey(subject: string, bookId: string, contentVersion: number): string {
+  return qualifyKey(subject, 'bookversion', bookId, contentVersion);
+}
+
+/** Key for one rendered page of a pinned book version. */
+export function bookPageKey(subject: string, bookId: string, contentVersion: number, pageNumber: number): string {
+  return qualifyKey(subject, 'bookpage', bookId, contentVersion, pageNumber);
+}
+
+/** Key for one Bible chapter's download manifest: subject + translation + book + chapter. */
+export function bibleDownloadKey(subject: string, translation: string, book: string, chapter: number): string {
+  return qualifyKey(subject, 'download', 'bible', translation, book, chapter);
 }
 
 export function bibleChapterKey(

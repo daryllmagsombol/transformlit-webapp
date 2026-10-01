@@ -105,6 +105,21 @@ export async function getCompleteTranslation(translation: string): Promise<Compl
   return fetchBible(`/${translation}/complete.json`, false);
 }
 
+/**
+ * Full chapter payload (verses + footnotes) fetched for offline storage.
+ *
+ * This is deliberately separate from the cached `getChapter` reader path: an
+ * explicit download must fetch and persist the exact response, uncached, and
+ * the caller must further exclude optional word/cross-reference/audio payloads.
+ */
+export async function fetchChapterForOffline(
+  translation: string,
+  book: string,
+  chapter: number,
+): Promise<BibleChapter> {
+  return fetchBible(`/${translation}/${book}/${chapter}.json`, false);
+}
+
 /** Test/edge helper: clear the module-level L1 cache (use in spec beforeEach). */
 export function clearBibleCache(): void {
   cache.clear();

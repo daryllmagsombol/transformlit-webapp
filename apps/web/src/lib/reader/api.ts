@@ -67,6 +67,21 @@ export function pageFrameUrl(bookId: string, page: number): string {
   return `${API_BASE}/books/${bookId}/pages/${page}/frame`;
 }
 
+/**
+ * Application-relative path for the version-pinned offline manifest. The
+ * download manager joins this with the API base (which already ends in
+ * `/api`), so the path deliberately omits the `/api` prefix.
+ */
+export function offlineManifestPath(bookId: string, contentVersion?: number): string {
+  const query = contentVersion === undefined ? '' : `?contentVersion=${contentVersion}`;
+  return `/books/${bookId}/offline-manifest${query}`;
+}
+
+/** Application-relative path for one immutable, version-pinned asset. */
+export function offlineAssetPath(bookId: string, contentVersion: number, assetId: string): string {
+  return `/books/${bookId}/content/${contentVersion}/assets/${assetId}`;
+}
+
 export async function fetchPageText(bookId: string, page: number): Promise<PdfPageText> {
   const response = await fetch(`${API_BASE}/books/${bookId}/pages/${page}/text`, {
     credentials: 'include',
