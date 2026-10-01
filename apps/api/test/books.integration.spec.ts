@@ -56,20 +56,18 @@ describe('Books Integration', () => {
   let testUserId: string;
 
   beforeAll(async () => {
-    let databaseUrl: string;
-
-    if (isDockerAvailable()) {
-      container = await new PostgreSqlContainer('postgres:15-alpine')
-        .withDatabase('testdb')
-        .withUsername('test')
-        .withPassword('test')
-        .start();
-      databaseUrl = container.getConnectionUri();
-    } else {
-      databaseUrl =
-        process.env.TEST_DATABASE_URL ||
-        'postgresql://localhost:5432/transformlit_test';
+    if (!isDockerAvailable()) {
+      // No shared-database fallback: these tests reset the schema via
+      // `runMigrations`, so running them against an arbitrary TEST_DATABASE_URL
+      // would be unsafe. Fail loudly instead of silently targeting a real DB.
+      throw new Error('Docker is required for Books Integration tests (Testcontainers); no shared-database fallback is supported');
     }
+    container = await new PostgreSqlContainer('postgres:15-alpine')
+      .withDatabase('testdb')
+      .withUsername('test')
+      .withPassword('test')
+      .start();
+    const databaseUrl = container.getConnectionUri();
 
     assertOwnedDisposableDatabaseUrl(databaseUrl, container);
     process.env.DATABASE_URL = databaseUrl;

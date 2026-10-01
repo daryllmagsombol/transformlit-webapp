@@ -457,8 +457,6 @@ model BookProgress {
    * conflict rather than a silent highest-page-wins overwrite.
    */
   revision    Int       @default(0)
-  /** Client-supplied provenance for legacy rows; NULL when unknown. */
-  clientEntityId String?
   lastReadAt  DateTime  @default(now())
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -579,7 +577,7 @@ model ConflictCopy {
   subject        String
   user           User             @relation(fields: [subject], references: [id], onDelete: Cascade)
   operationId    String
-  sourceEntityId String?
+  sourceEntityId String
   bookId         String
   book           Book             @relation(fields: [bookId], references: [id], onDelete: Cascade)
   contentVersion Int

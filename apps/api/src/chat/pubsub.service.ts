@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 
 interface PubSubTrigger {
   resolve: (value: IteratorResult<unknown>) => void;
+  /** Identity of the iterator that registered this trigger, for cleanup. */
+  owner: symbol;
 }
 
 @Injectable()
@@ -67,8 +69,21 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     // Release the dedicated LISTEN connection back to the pool before ending it.
     // Pool.end() waits for every checked-out client, so an unreleased LISTEN
     // client would hang shutdown (and the schema export/check commands) forever.
-    this.listenClient?.release();
-    this.listenClient = undefined;
+    if (this.listenClient) {
+      try {
+        // Stop delivering notifications before we hand the connection back;
+        // otherwise a pooled/reused client would keep forwarding NOTIFYs into
+        // this (now discarded) service instance.
+        await this.listenClient.query('UNLISTEN *');
+      } catch {
+        // A broken connection cannot be unlistened; proceed to release.
+      }
+      this.listenClient.removeAllListeners('notification');
+      this.listenClient.removeAllListeners('error');
+      this.listenClient.release();
+      this.listenClient = undefined;
+    }
+    this.listeners.clear();
     await this.pool.end();
   }
 
@@ -80,18 +95,31 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
   }
 
   asyncIterator<T>(triggerName: string): AsyncIterator<T> {
+    const owner = Symbol(triggerName);
     return {
       next: () =>
         new Promise<IteratorResult<T>>((resolve) => {
           const existing = this.listeners.get(triggerName) ?? [];
-          existing.push({ resolve: resolve as (v: IteratorResult<unknown>) => void });
+          existing.push({ resolve: resolve as (v: IteratorResult<unknown>) => void, owner });
           this.listeners.set(triggerName, existing);
         }),
-      return: async () => {
-        // listener cleanup happens naturally since it won't receive more events
-        return { value: undefined as unknown, done: true };
+      return: () => {
+        // Remove every still-pending trigger for THIS iterator so a subscriber
+        // that unsubscribes without consuming a value is not retained forever
+        // (and cannot be woken by a later notification).
+        this.detach(triggerName, owner);
+        return Promise.resolve({ value: undefined as unknown, done: true });
       },
-      throw: async () => ({ value: undefined as unknown, done: true }),
+      throw: () => {
+        this.detach(triggerName, owner);
+        return Promise.resolve({ value: undefined as unknown, done: true });
+      },
     };
+  }
+
+  private detach(triggerName: string, owner: symbol): void {
+    const remaining = (this.listeners.get(triggerName) ?? []).filter((trigger) => trigger.owner !== owner);
+    if (remaining.length === 0) this.listeners.delete(triggerName);
+    else this.listeners.set(triggerName, remaining);
   }
 }

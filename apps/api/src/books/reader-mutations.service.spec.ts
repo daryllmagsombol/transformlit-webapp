@@ -379,8 +379,24 @@ describe('ReaderMutationsService', () => {
       expect((state.highlight[0] as { text: string }).text).toBe('v1');
     });
 
-    it('preserves both sides on edit-after-delete', async () => {
-      const { service, state } = build();
+    it('returns a non-null conflict copy for a retarget whose base revision lost the race', async () => {
+      const { service, state, prisma } = build();
+      // Seed a conflict copy to retarget.
+      state.conflictCopy.push({ id: 'cc-race', subject: SUBJECT, bookId: BOOK_ID, operationId: 'seed', sourceEntityId: 'hl-1', page: 2, text: 'offline', revision: 1, reason: 'STALE_REVISION', contentVersion: 2, createdAt: new Date() });
+      // The row advanced between our read (revision 1) and the conditional
+      // update, so updateMany matches 0 rows.
+      prisma.conflictCopy.updateMany.mockResolvedValueOnce({ count: 0 });
+      const outcome = await service.applyOperation(SUBJECT, {
+        ...baseInput({ kind: OperationKind.ANNOTATION_UPDATE, entityId: 'cc-race', targetKind: OperationTargetKind.CONFLICT_COPY, baseRevision: 1, page: 2, text: 'retargeted', note: null, color: null, anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 } } as never),
+        operationId: '1c1c1c1c-1c1c-4c1c-8c1c-1c1c1c1c1c1c',
+      } as never);
+      expect(outcome.result.kind).toBe('CONFLICT');
+      // A retarget conflict must never come back with a null copy.
+      expect((outcome.result as { conflictCopy: unknown }).conflictCopy).not.toBeNull();
+      expect((outcome.result as { conflictCopy?: { reason?: string } }).conflictCopy?.reason).toBe('STALE_REVISION');
+    });
+
+            it('preserves both sides on edit-after-delete', async () => {      const { service, state } = build();
       const created = await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.ANNOTATION_CREATE, clientEntityId: CLIENT_ID, page: 2, text: 'v1', note: null, color: null, anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 } } as never));
       const entityId = (created.result as { entityId: string }).entityId;
       await service.applyOperation(SUBJECT, { ...baseInput({ kind: OperationKind.ANNOTATION_DELETE, entityId, baseRevision: 1 } as never), operationId: '88888888-8888-4888-8888-888888888888' } as never);
@@ -559,8 +575,65 @@ describe('ReaderMutationsService', () => {
     });
   });
 
-  describe('authoritative annotation snapshot', () => {
-    it('returns only present annotations, tombstones, and conflict copies for one book', async () => {
+  describe('transaction-scoped access gate', () => {
+    it('passes the transaction client into the access check so it shares the write snapshot', async () => {
+      const { service, books } = build();
+      await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 0, currentPage: 1, scrollY: null } as never));
+      // Third argument must be the transaction client, never undefined; a
+      // separate pooled read would be a TOCTOU race with a concurrent revoke.
+      expect(books.canRead).toHaveBeenCalledWith(expect.anything(), SUBJECT, expect.anything());
+      expect(books.canRead.mock.calls[0][2]).not.toBeUndefined();
+    });
+
+    it('passes the transaction client into the snapshot access check', async () => {
+      const { service, books } = build();
+      await service.getSnapshot(SUBJECT, BOOK_ID);
+      expect(books.canRead.mock.calls[0][2]).not.toBeUndefined();
+    });
+  });
+
+  describe('stale-entity follow-up read scoping', () => {
+    it('scopes the stale-bookmark follow-up read to the authenticated subject', async () => {
+      const { service, state, prisma } = build();
+      const created = await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.BOOKMARK_ADD, clientEntityId: CLIENT_ID, page: 5, label: null, color: null, anchor: null } as never));
+      const entityId = (created.result as { entityId: string }).entityId;
+      // A concurrent writer advanced the row to revision 2 after our read of
+      // revision 1, so the conditional updateMany matches 0 rows and we fall
+      // into the stale-entity follow-up read.
+      state.bookmark[0].revision = 2;
+      prisma.bookmark.findFirst.mockResolvedValueOnce({ ...state.bookmark[0], revision: 1 });
+      const outcome = await service.applyOperation(SUBJECT, {
+        ...baseInput({ kind: OperationKind.BOOKMARK_REMOVE, entityId, baseRevision: 1 } as never),
+        operationId: '1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a',
+      } as never);
+      expect(outcome.result.kind).toBe('CONFLICT');
+      // The follow-up read must include userId so it can never surface another
+      // account's row as `serverValue` if ownership changes mid-flight.
+      const followUpCalls = prisma.bookmark.findFirst.mock.calls.filter(
+        ([args]: [Row]) => (args.where as Row).id === entityId,
+      );
+      expect(followUpCalls.at(-1)?.[0].where).toMatchObject({ id: entityId, userId: SUBJECT, bookId: BOOK_ID });
+    });
+
+    it('scopes the stale-highlight follow-up read to the authenticated subject', async () => {
+      const { service, state, prisma } = build();
+      const created = await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.ANNOTATION_CREATE, clientEntityId: CLIENT_ID, page: 2, text: 'v1', note: null, color: null, anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 } } as never));
+      const entityId = (created.result as { entityId: string }).entityId;
+      state.highlight[0].revision = 2;
+      prisma.highlight.findFirst.mockResolvedValueOnce({ ...state.highlight[0], revision: 1 });
+      const outcome = await service.applyOperation(SUBJECT, {
+        ...baseInput({ kind: OperationKind.ANNOTATION_DELETE, entityId, baseRevision: 1 } as never),
+        operationId: '1b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b',
+      } as never);
+      expect(outcome.result.kind).toBe('CONFLICT');
+      const followUpCalls = prisma.highlight.findFirst.mock.calls.filter(
+        ([args]: [Row]) => (args.where as Row).id === entityId,
+      );
+      expect(followUpCalls.at(-1)?.[0].where).toMatchObject({ id: entityId, userId: SUBJECT, bookId: BOOK_ID });
+    });
+  });
+
+  describe('authoritative annotation snapshot', () => {    it('returns only present annotations, tombstones, and conflict copies for one book', async () => {
       const { service, state } = build();
       // A present bookmark, a present highlight, a soft-deleted bookmark with a
       // tombstone, and a linked conflict copy — all in the same snapshotted book.

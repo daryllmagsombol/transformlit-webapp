@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { BlobService } from '../azure/blob.service.js';
@@ -175,14 +176,25 @@ export class BooksService {
    * Non-throwing reader gate. Returns whether `userId` may read `book`.
    * `assertCanRead` delegates to it, and the GraphQL `toc` resolve field needs
    * a boolean (it must return `[]`, not throw, for unreadable books).
+   *
+   * Pass an active transaction client `tx` when the caller already holds one
+   * (e.g. reader mutations): the entitlement rows are then read on the same
+   * connection and isolation snapshot as the guarded write, so a concurrent
+   * revocation cannot slip between the check and the mutation (TOCTOU) and the
+   * check never acquires a second pooled connection from inside a transaction.
+   * Omit `tx` only for standalone pre-transaction checks.
    */
-  async canRead(book: ReadableBookFacts, userId: string): Promise<boolean> {
+  async canRead(
+    book: ReadableBookFacts,
+    userId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<boolean> {
     if (book.deletedAt) return false;
     if (book.status !== 'PUBLISHED') return false;
     if (book.conversionStatus !== 'READY') return false;
     if (book.accessLevel === 'FREE' || book.createdById === userId) return true;
 
-    const access = await this.prisma.bookAccess.findUnique({
+    const access = await (tx ?? this.prisma).bookAccess.findUnique({
       where: { bookId_userId: { bookId: book.id, userId } },
     });
     return access !== null;

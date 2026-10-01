@@ -178,7 +178,7 @@ export class ReaderMutationsService {
       async (tx) => {
         const book = await tx.book.findUnique({ where: { id: bookId } });
         if (!book || book.deletedAt) throw new NotFoundException('Book not available');
-        if (!(await this.books.canRead(book, subject))) {
+        if (!(await this.books.canRead(book, subject, tx))) {
           throw new ForbiddenException('You do not have access to this book');
         }
 
@@ -312,7 +312,7 @@ export class ReaderMutationsService {
   ): Promise<{ allowed: boolean; reason: string; supportedContentVersions: number[] }> {
     const book = await tx.book.findUnique({ where: { id: bookId } });
     if (!book || book.deletedAt) return { allowed: false, reason: 'Book not available', supportedContentVersions: [] };
-    const allowed = await this.books.canRead(book, subject);
+    const allowed = await this.books.canRead(book, subject, tx);
     if (!allowed) return { allowed: false, reason: 'You do not have access to this book', supportedContentVersions: [] };
 
     const versions = await tx.bookContentVersion.findMany({
@@ -461,7 +461,7 @@ export class ReaderMutationsService {
       where: { id: existing.id, userId: subject, bookId: input.bookId, revision: baseRevision },
       data: { deletedAt: new Date(), revision: { increment: 1 } },
     });
-    if (result.count === 0) return this.staleEntityConflict(tx, 'bookmark', input, existing.id, existing);
+    if (result.count === 0) return this.staleEntityConflict(tx, subject, 'bookmark', input, existing.id, existing);
 
     await this.upsertTombstone(tx, subject, existing.id, 'BOOKMARK', baseRevision + 1);
     return { kind: 'APPLIED', entityId: existing.id, revision: baseRevision + 1, receiptId };
@@ -543,7 +543,7 @@ export class ReaderMutationsService {
         revision: { increment: 1 },
       },
     });
-    if (result.count === 0) return this.staleEntityConflict(tx, 'highlight', input, existing.id, existing);
+    if (result.count === 0) return this.staleEntityConflict(tx, subject, 'highlight', input, existing.id, existing);
 
     return { kind: 'APPLIED', entityId: existing.id, revision: baseRevision + 1, receiptId };
   }
@@ -579,7 +579,15 @@ export class ReaderMutationsService {
     });
     if (result.count === 0) {
       const fresh = await tx.conflictCopy.findFirst({ where: { id: existing.id, subject, bookId: existing.bookId } });
-      return this.conflict(existing.bookId, fresh?.revision ?? existing.revision, this.conflictCopyValue(fresh ?? existing), null);
+      // The row was read at `baseRevision` but the conditional update matched
+      // nothing: a concurrent write advanced it between read and write. Preserve
+      // BOTH sides — the newer server copy and this offline edit — by minting a
+      // fresh conflict copy, and never return CONFLICT with a null copy for an
+      // update (the contract requires a non-null copy for retarget conflicts).
+      const current = fresh ?? existing;
+      const sourceEntityId = current.sourceEntityId ?? current.id;
+      const copy = await this.createConflictCopy(tx, subject, input, sourceEntityId, existing.bookId, ConflictReason.STALE_REVISION, this.editFields(input));
+      return this.conflict(existing.bookId, (current.revision as number) ?? existing.revision, this.conflictCopyValue(current), copy);
     }
 
     return { kind: 'APPLIED', entityId: existing.id, revision: baseRevision + 1, receiptId };
@@ -620,7 +628,7 @@ export class ReaderMutationsService {
       where: { id: existing.id, userId: subject, bookId: input.bookId, revision: baseRevision },
       data: { deletedAt: new Date(), revision: { increment: 1 } },
     });
-    if (result.count === 0) return this.staleEntityConflict(tx, 'highlight', input, existing.id, existing);
+    if (result.count === 0) return this.staleEntityConflict(tx, subject, 'highlight', input, existing.id, existing);
 
     await this.upsertTombstone(tx, subject, existing.id, 'ANNOTATION', baseRevision + 1);
     return { kind: 'APPLIED', entityId: existing.id, revision: baseRevision + 1, receiptId };
@@ -628,14 +636,17 @@ export class ReaderMutationsService {
 
   private async staleEntityConflict(
     tx: Prisma.TransactionClient,
+    subject: string,
     entity: 'bookmark' | 'highlight',
     input: NormalizedOperation,
     entityId: string,
     known: Record<string, unknown>,
   ): Promise<OperationResultPayload> {
+    // Scope to the authenticated subject as well as the book: the follow-up
+    // read must never surface another account's row as `serverValue`.
     const fresh = entity === 'bookmark'
-      ? await tx.bookmark.findFirst({ where: { id: entityId, bookId: input.bookId } })
-      : await tx.highlight.findFirst({ where: { id: entityId, bookId: input.bookId } });
+      ? await tx.bookmark.findFirst({ where: { id: entityId, userId: subject, bookId: input.bookId } })
+      : await tx.highlight.findFirst({ where: { id: entityId, userId: subject, bookId: input.bookId } });
     const row = (fresh as Record<string, unknown> | null) ?? known;
     const value = entity === 'bookmark' ? this.bookmarkValue(row) : this.highlightValue(row);
     return this.conflict(input.bookId, (row.revision as number) ?? 1, value, null);

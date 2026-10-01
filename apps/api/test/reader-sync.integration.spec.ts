@@ -202,11 +202,18 @@ describe('Reader sync idempotency', () => {
     expect(await prisma.conflictCopy.count({ where: { subject, sourceEntityId: entityId } })).toBe(1);
   });
 
-  it('rejects a legacy reader write without mutating or receipting', async () => {
+  it('rejects every legacy reader write with UPGRADE_REQUIRED without mutating or receipting', async () => {
     const before = await prisma.readerOperationReceipt.count({ where: { subject } });
-    await expect(books.saveProgress(subject, { bookId, currentPage: 4 } as never)).rejects.toMatchObject({
-      extensions: { code: 'UPGRADE_REQUIRED' },
-    });
+    const legacyWrites: Array<() => Promise<unknown>> = [
+      () => books.saveProgress(subject, { bookId, currentPage: 4 } as never),
+      () => books.addBookmark(subject, { bookId, page: 1 } as never),
+      () => books.removeBookmark('bm-legacy', subject),
+      () => books.addHighlight(subject, { bookId, page: 1, text: 'legacy' } as never),
+      () => books.removeHighlight('hl-legacy', subject),
+    ];
+    for (const write of legacyWrites) {
+      await expect(write()).rejects.toMatchObject({ extensions: { code: 'UPGRADE_REQUIRED' } });
+    }
     expect(await prisma.readerOperationReceipt.count({ where: { subject } })).toBe(before);
   });
 

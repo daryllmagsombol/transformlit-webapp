@@ -4,6 +4,7 @@ import { PubSubService } from './pubsub.service.js';
 // that onModuleInit registers against the real service instance.
 const mockClient = {
   on: jest.fn(),
+  removeAllListeners: jest.fn(),
   query: jest.fn().mockResolvedValue({}),
   end: jest.fn().mockResolvedValue(undefined),
   release: jest.fn(),
@@ -62,6 +63,35 @@ describe('PubSubService', () => {
     expect(mockClient.release.mock.invocationCallOrder[0]).toBeLessThan(
       mockPool.end.mock.invocationCallOrder[0],
     );
+  });
+
+  it('UNLISTENs and detaches handlers before releasing the LISTEN client on destroy', async () => {
+    await service.onModuleDestroy();
+
+    expect(mockClient.query).toHaveBeenCalledWith('UNLISTEN *');
+    expect(mockClient.removeAllListeners).toHaveBeenCalledWith('notification');
+    expect(mockClient.removeAllListeners).toHaveBeenCalledWith('error');
+    // The UNLISTEN must run while the connection is still checked out.
+    expect(mockClient.query.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      mockClient.release.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('drops pending triggers when the async iterator returns', async () => {
+    const iterator = service.asyncIterator('messageAdded');
+    const pending = iterator.next();
+    let settled = false;
+    pending.then(() => {
+      settled = true;
+    });
+    await iterator.return?.();
+    await flush();
+    // The detached subscriber must no longer be woken by a later notification.
+    expect(settled).toBe(false);
+    const handler = notificationHandler();
+    handler({ channel: 'messageAdded', payload: JSON.stringify({ ok: true }) });
+    await flush();
+    expect(settled).toBe(false);
   });
 
   it('does not throw on a malformed JSON payload and does not resolve waiting triggers', async () => {
