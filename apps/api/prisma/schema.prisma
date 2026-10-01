@@ -43,6 +43,9 @@ model User {
   bookProgress       BookProgress[]
   bookmarks          Bookmark[]
   highlights         Highlight[]
+  operationReceipts  ReaderOperationReceipt[]
+  readerTombstones   ReaderTombstone[]
+  conflictCopies     ConflictCopy[]
   readingSessions    ReadingSession[]
   notifications      Notification[]     @relation("NotificationUser")
   notificationsCreated Notification[]   @relation("NotificationCreatedBy")
@@ -347,6 +350,7 @@ model Book {
   readingSessions  ReadingSession[]
   pageViews        PageView[]
   contentVersions  BookContentVersion[]
+  conflictCopies   ConflictCopy[]
 
   @@index([status])
   @@index([title])
@@ -447,6 +451,14 @@ model BookProgress {
   currentPage Int       @default(1)
   scrollY     Float?
   completedAt DateTime?
+  /**
+   * Revision of the authoritative progress row. Starts at 0 when absent (the
+   * first versioned write sets it to 1) so a stale `baseRevision` is an explicit
+   * conflict rather than a silent highest-page-wins overwrite.
+   */
+  revision    Int       @default(0)
+  /** Client-supplied provenance for legacy rows; NULL when unknown. */
+  clientEntityId String?
   lastReadAt  DateTime  @default(now())
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -467,8 +479,15 @@ model Bookmark {
   color     String?
   anchor         Json?
   contentVersion Int?
+  /** Stable client-generated identity; NULL for legacy rows of unknown provenance. */
+  clientEntityId String?
+  /** Per-entity revision, incremented on conflict-copy retarget. */
+  revision       Int      @default(1)
+  /** Soft-delete marker; a tombstone is retained so a delayed retry cannot resurrect. */
+  deletedAt      DateTime?
   createdAt DateTime @default(now())
 
+  @@unique([userId, clientEntityId])
   @@index([userId, bookId])
   @@map("bookmarks")
 }
@@ -485,11 +504,97 @@ model Highlight {
   color     String?
   anchor         Json?
   contentVersion Int?
+  /** Stable client-generated identity; NULL for legacy rows of unknown provenance. */
+  clientEntityId String?
+  /** Per-entity revision, incremented on each successful conditional write. */
+  revision       Int      @default(1)
+  /** Soft-delete marker; tombstone retained so a delayed retry cannot resurrect. */
+  deletedAt      DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([userId, clientEntityId])
   @@index([userId, bookId])
   @@map("highlights")
+}
+
+// ── Offline reader synchronization ──────────────────────────────────────────
+
+enum ReaderEntityKind {
+  PROGRESS
+  BOOKMARK
+  ANNOTATION
+}
+
+enum ConflictReason {
+  STALE_REVISION
+  DELETE_VS_EDIT
+}
+
+/**
+ * Permanent deduplication receipt keyed by `(subject, operationId)`. The stored
+ * result is returned verbatim on replay; reusing the id with a different payload
+ * hash is rejected. No TTL: an operation may be replayed for as long as the
+ * client could retry, so receipts are never expired by time.
+ */
+model ReaderOperationReceipt {
+  id              String             @id @default(uuid())
+  subject         String
+  user            User               @relation(fields: [subject], references: [id], onDelete: Cascade)
+  operationId     String
+  payloadHash     String
+  result          Json
+  createdAt       DateTime           @default(now())
+
+  @@unique([subject, operationId])
+  @@index([subject, createdAt])
+  @@map("reader_operation_receipts")
+}
+
+/**
+ * Tombstone for a soft-deleted bookmark/annotation identity. Carries the
+ * deletion revision so a delayed add/update/retry cannot resurrect the entity.
+ */
+model ReaderTombstone {
+  id         String           @id @default(uuid())
+  subject    String
+  user       User             @relation(fields: [subject], references: [id], onDelete: Cascade)
+  entityId   String
+  kind       ReaderEntityKind
+  revision   Int
+  deletedAt  DateTime         @default(now())
+
+  @@unique([subject, entityId])
+  @@index([subject, kind])
+  @@map("reader_tombstones")
+}
+
+/**
+ * Durable, first-class conflict copy preserving an offline edit whose base
+ * revision was stale, or an edit that raced a delete. `operationId` and
+ * `sourceEntityId` preserve provenance; `revision` increments on retarget.
+ */
+model ConflictCopy {
+  id             String           @id @default(uuid())
+  subject        String
+  user           User             @relation(fields: [subject], references: [id], onDelete: Cascade)
+  operationId    String
+  sourceEntityId String?
+  bookId         String
+  book           Book             @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  contentVersion Int
+  page           Int
+  text           String
+  note           String?
+  color          String?
+  anchor         Json?
+  revision       Int              @default(1)
+  reason         ConflictReason
+  createdAt      DateTime         @default(now())
+
+  @@index([subject, bookId])
+  @@index([sourceEntityId])
+  @@map("conflict_copies")
 }
 
 // ── Book reader ─────────────────────────────────────────────────────────────

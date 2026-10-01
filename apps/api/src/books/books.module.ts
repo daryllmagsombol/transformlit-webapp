@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { BooksService } from './books.service.js';
 import { BooksResolver } from './books.resolver.js';
 import { BooksController } from './books.controller.js';
+import { ReaderMutationsService } from './reader-mutations.service.js';
 import {
   BookDownloadService,
   DOWNLOAD_CONCURRENCY_LIMITER,
@@ -21,6 +22,7 @@ import { ConversionModule } from './conversion/conversion.module.js';
     BooksService,
     BooksResolver,
     BookDownloadService,
+    ReaderMutationsService,
     ReaderSessionService,
     PageViewService,
     {

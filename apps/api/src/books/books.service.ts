@@ -17,6 +17,7 @@ import {
   AddBookmarkInput,
   AddHighlightInput,
 } from './models/book.model.js';
+import { UpgradeRequiredError } from './reader-mutation.errors.js';
 
 /** The Book columns the reader entitlement gate needs. */
 export interface ReadableBookFacts {
@@ -234,56 +235,51 @@ export class BooksService {
     });
   }
 
-  async saveProgress(userId: string, input: SaveProgressInput) {
-    return this.prisma.bookProgress.upsert({
-      where: { userId_bookId: { userId, bookId: input.bookId } },
-      update: { currentPage: input.currentPage, scrollY: input.scrollY ?? undefined, lastReadAt: new Date() },
-      create: { userId, bookId: input.bookId, currentPage: input.currentPage, scrollY: input.scrollY ?? undefined },
-    });
+  async saveProgress(_userId: string, _input: SaveProgressInput): Promise<never> {
+    // Legacy progress writes carry no revision, so applying one could silently
+    // clobber a newer versioned write. Reject with a stable code; new clients
+    // use applyBookReaderOperation. Routed through the same rejection helper as
+    // the versioned service so it can never drift.
+    throw new UpgradeRequiredError('saveProgress');
   }
 
   // Bookmarks
   async listBookmarks(userId: string, bookId: string) {
+    // Reads remain available to legacy clients, but soft-deleted rows must not
+    // reappear. New clients use bookReaderAnnotationSnapshot.
     return this.prisma.bookmark.findMany({
-      where: { userId, bookId },
+      where: { userId, bookId, deletedAt: null },
       orderBy: { page: 'asc' },
     });
   }
 
-  async addBookmark(userId: string, input: AddBookmarkInput) {
-    return this.prisma.bookmark.create({
-      data: { userId, ...input },
-    });
+  async addBookmark(_userId: string, _input: AddBookmarkInput): Promise<never> {
+    // Legacy bookmark writes have no client identity/revision/tombstone guard.
+    throw new UpgradeRequiredError('addBookmark');
   }
 
-  async removeBookmark(id: string, userId: string) {
-    const result = await this.prisma.bookmark.deleteMany({
-      where: { id, userId },
-    });
-    if (result.count === 0) throw new NotFoundException('Bookmark not found');
-    return true;
+  async removeBookmark(_id: string, _userId: string): Promise<never> {
+    // A legacy hard delete would erase history and bypass tombstone protection.
+    throw new UpgradeRequiredError('removeBookmark');
   }
 
   // Highlights
   async listHighlights(userId: string, bookId: string) {
+    // Legacy reads keep working, but soft-deleted rows must not reappear.
     return this.prisma.highlight.findMany({
-      where: { userId, bookId },
+      where: { userId, bookId, deletedAt: null },
       orderBy: { page: 'asc' },
     });
   }
 
-  async addHighlight(userId: string, input: AddHighlightInput) {
-    return this.prisma.highlight.create({
-      data: { userId, ...input },
-    });
+  async addHighlight(_userId: string, _input: AddHighlightInput): Promise<never> {
+    // Legacy highlight writes have no anchor/contentVersion provenance.
+    throw new UpgradeRequiredError('addHighlight');
   }
 
-  async removeHighlight(id: string, userId: string) {
-    const result = await this.prisma.highlight.deleteMany({
-      where: { id, userId },
-    });
-    if (result.count === 0) throw new NotFoundException('Highlight not found');
-    return true;
+  async removeHighlight(_id: string, _userId: string): Promise<never> {
+    // A legacy hard delete would erase history and bypass tombstone protection.
+    throw new UpgradeRequiredError('removeHighlight');
   }
 
   async deleteBook(id: string, actorId: string, actorRole: UserRole) {

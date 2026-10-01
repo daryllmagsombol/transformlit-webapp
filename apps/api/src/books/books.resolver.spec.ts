@@ -4,6 +4,7 @@ import { BadRequestException } from '@nestjs/common';
 import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { BooksResolver } from './books.resolver';
 import { BooksService } from './books.service';
+import { ReaderMutationsService } from './reader-mutations.service';
 
 const mockBook = {
   id: 'book-1',
@@ -53,8 +54,12 @@ const mockUser = { id: 'user-1', role: 'MEMBER' };
 describe('BooksResolver', () => {
   let resolver: BooksResolver;
   let booksService: Record<string, jest.Mock>;
+  let readerMutations: Record<string, jest.Mock>;
 
   beforeEach(async () => {
+    readerMutations = {
+      applyOperation: jest.fn().mockResolvedValue({ operationId: 'op-1', result: { kind: 'APPLIED' } }),
+    };
     const mockBooksService = {
       listBooks: jest.fn().mockResolvedValue([mockBook]),
       findById: jest.fn().mockResolvedValue(mockBook),
@@ -78,12 +83,24 @@ describe('BooksResolver', () => {
       providers: [
         BooksResolver,
         { provide: BooksService, useValue: mockBooksService },
+        { provide: ReaderMutationsService, useValue: readerMutations },
       ],
     }).compile();
 
     resolver = module.get<BooksResolver>(BooksResolver);
     booksService = module.get(BooksService) as any;
     jest.clearAllMocks();
+  });
+
+  // ── applyBookReaderOperation mutation ──────────────────────────────────────
+
+  describe('applyBookReaderOperation', () => {
+    it('delegates the flattened envelope to the versioned mutation service', async () => {
+      const input = { operationId: 'op-1', bookId: 'book-1' } as never;
+      const result = await resolver.applyBookReaderOperation({ id: 'user-1' }, input);
+      expect(readerMutations.applyOperation).toHaveBeenCalledWith('user-1', input);
+      expect(result).toEqual({ operationId: 'op-1', result: { kind: 'APPLIED' } });
+    });
   });
 
   // ── books query ─────────────────────────────────────────────────────────────
@@ -295,6 +312,7 @@ describe('BooksResolver', () => {
       };
       const gatedResolver = new BooksResolver(
         new BooksService(prisma as never, {} as never, {} as never),
+        readerMutations as never,
       );
 
       // A DRAFT book must return no entries even though the query does not
@@ -324,6 +342,7 @@ describe('BooksResolver', () => {
       };
       const gatedResolver = new BooksResolver(
         new BooksService(prisma as never, {} as never, {} as never),
+        readerMutations as never,
       );
       const parent = {
         id: 'book-1',
@@ -345,7 +364,7 @@ describe('BooksResolver', () => {
         retryConversion: jest.fn().mockResolvedValue({ id: 'book-1', conversionStatus: 'PENDING' }),
         findById: jest.fn().mockResolvedValue({ id: 'book-1' }),
       };
-      const localResolver = new BooksResolver(service as never);
+      const localResolver = new BooksResolver(service as never, readerMutations as never);
       await localResolver.retryBookConversion({ id: 'user-1', role: UserRole.ADMIN }, 'book-1');
       expect(service.assertCanManageBookPublic).toHaveBeenCalledWith('book-1', 'user-1', UserRole.ADMIN);
       expect(service.retryConversion).toHaveBeenCalledWith('book-1');
