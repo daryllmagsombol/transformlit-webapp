@@ -4,6 +4,16 @@ import { OfflineDatabase, createIndexedDbLeasePersistence } from './database';
 import { accountLifecycle } from './account-activation';
 import { createSyncLock } from './coordination';
 import { qualifyKey, type ConflictCopyRecord, type TombstoneRecord } from './contracts';
+
+/**
+ * A persisted conflict copy. `id` is the subject-namespaced storage key
+ * (required by the `conflicts` store and its subject guard); `serverId` retains
+ * the conflict copy's STABLE server identity, which a retarget
+ * (`ANNOTATION_UPDATE` with `targetKind: CONFLICT_COPY`) must send.
+ */
+export interface StoredConflictCopyRecord extends ConflictCopyRecord {
+  readonly serverId: string;
+}
 import { dispatchReaderOperation } from '../reader/api';
 import { fetchAnnotationSnapshot } from '../reader/api';
 import {
@@ -75,7 +85,7 @@ export function createOutboxStore(database: OfflineDatabase): OutboxStore {
  * operation (it must stay queued until resolved). There is no non-atomic
  * fallback.
  */
-function createReceiptStore(database: OfflineDatabase): ReceiptStore {
+export function createReceiptStore(database: OfflineDatabase): ReceiptStore {
   return {
     recordAndRemove: (outboxId, subject, epoch, receipt) =>
       database.acknowledgeOperation(subject, epoch, outboxId, receipt),
@@ -92,7 +102,7 @@ function createReceiptStore(database: OfflineDatabase): ReceiptStore {
  * discriminate by subject-qualified keys, so merging raw server rows requires a
  * separate projection (recorded in the Task 11 report).
  */
-function createSnapshotStore(database: OfflineDatabase): SnapshotApplyStore {
+export function createSnapshotStore(database: OfflineDatabase): SnapshotApplyStore {
   return {
     async applyMerge(owner, result: BookMergeResult): Promise<void> {
       for (const tombstone of result.tombstones) {
@@ -107,8 +117,11 @@ function createSnapshotStore(database: OfflineDatabase): SnapshotApplyStore {
         await database.putAccountRecord(owner.subject, owner.epoch, 'tombstones', record);
       }
       for (const conflict of result.conflictCopies) {
-        const record: ConflictCopyRecord = {
+        // `id` becomes the storage key; the stable server identity is preserved
+        // as `serverId` so a retarget can still reference it.
+        const record: StoredConflictCopyRecord = {
           ...conflict,
+          serverId: conflict.id,
           id: qualifyKey(owner.subject, 'conflict', conflict.id),
           subject: owner.subject,
         };
