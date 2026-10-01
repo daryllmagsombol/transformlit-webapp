@@ -328,10 +328,50 @@ export function planRetarget(
   return { removeIds, upserts, enqueuedOperationIds: enqueued };
 }
 
+/** True for operations that delete an entity (bookmark remove / annotation delete). */
+export function isDeleteKind(kind: OutboxOperationKind): boolean {
+  return kind === 'ANNOTATION_DELETE' || kind === 'BOOKMARK_REMOVE';
+}
+
 /**
- * Keep the offline edit as its linked conflict copy: retarget every direct
- * successor onto the copy so the preserved chain never replays against stale
- * server state.
+ * Apply an offline DELETE decision as a NEW replay-safe delete operation. Used
+ * when the conflicted offline edit was a delete (a delete racing a server edit):
+ * "keep my version" must actually reconcile the deletion, not silently drop it.
+ * Targets the source entity at the server's current revision.
+ */
+export function planKeepDelete(
+  conflict: ConflictView,
+  operations: readonly OutboxOperationRecord[],
+  context: ConflictPlanContext,
+): ResolutionPlan {
+  const baseRevision =
+    conflict.serverRevision ?? conflict.conflictCopy?.revision ?? conflict.baseRevision ?? 1;
+  const operationId = context.newId();
+  const operation: OutboxOperationRecord = {
+    id: namespacedId(context, operationId),
+    subject: context.subject,
+    epoch: context.epoch,
+    operationId,
+    entityKey: conflict.entityKey,
+    bookId: conflict.bookId,
+    contentVersion: conflict.contentVersion,
+    kind: conflict.kind,
+    seq: nextLocalSequence(operations),
+    dependsOn: null,
+    baseRevision,
+    dispatchState: 'PENDING',
+    attemptCount: 0,
+    payload: { entityId: conflict.sourceEntityId, baseRevision },
+    createdAt: context.now,
+  };
+  return { removeIds: [conflict.outboxId], upserts: [operation], enqueuedOperationIds: [operationId] };
+}
+
+/**
+ * Keep the offline edit as its linked conflict copy. For a deleted entity the
+ * offline decision is a delete, so it is re-issued as a new replay-safe delete;
+ * otherwise every direct successor is retargeted onto the copy so the preserved
+ * chain never replays against stale server state.
  */
 export function planOfflineCopyChoice(
   conflict: ConflictView,
@@ -339,6 +379,9 @@ export function planOfflineCopyChoice(
   copy: ConflictCopyView,
   context: ConflictPlanContext,
 ): ResolutionPlan {
+  if (isDeleteKind(conflict.kind)) {
+    return planKeepDelete(conflict, operations, context);
+  }
   const successors = directSuccessors(operations, conflict.outboxId).map((o) => o.operationId);
   return planRetarget(conflict, operations, copy, successors, context);
 }

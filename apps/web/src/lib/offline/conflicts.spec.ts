@@ -410,6 +410,53 @@ describe('ConflictResolver over durable state', () => {
     expect(rows[0].payload).toEqual({ currentPage: 2, scrollY: null });
   });
 
+  it('applies an offline DELETE decision as a new replay-safe delete (local delete vs server edit)', async () => {
+    const deleteBase = conflicted('d', {
+      kind: 'ANNOTATION_DELETE',
+      entityKey: qualifyKey(OWNER.subject, 'highlight', 'client-d'),
+      payload: { entityId: 'server-d', baseRevision: 5 },
+    });
+    await seed(
+      [deleteBase],
+      [copy({ operationId: 'op-d', sourceEntityId: 'server-d', serverId: 'cc-d', reason: 'DELETE_VS_EDIT', text: 'server edit' })],
+    );
+    const conflict = (await resolver().listConflicts(BOOK, {
+      'server-d': { revision: 9, value: { id: 'server-d', text: 'server edit', revision: 9 } },
+    }))[0];
+
+    const keep = await resolver().keepOfflineCopy(conflict);
+
+    expect(keep.status).toBe('RESOLVED');
+    const rows = await listOutbox();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'ANNOTATION_DELETE', baseRevision: 9, contentVersion: 7 });
+    expect(rows[0].payload).toMatchObject({ entityId: 'server-d', baseRevision: 9 });
+  });
+
+  it('accepts the server on a local-delete conflict without losing deletion history', async () => {
+    const deleteBase = conflicted('d', {
+      kind: 'ANNOTATION_DELETE',
+      entityKey: qualifyKey(OWNER.subject, 'highlight', 'client-d'),
+      payload: { entityId: 'server-d', baseRevision: 5 },
+    });
+    await seed(
+      [deleteBase],
+      [copy({ operationId: 'op-d', sourceEntityId: 'server-d', serverId: 'cc-d', reason: 'DELETE_VS_EDIT' })],
+    );
+    const conflict = (await resolver().listConflicts(BOOK, {
+      'server-d': { revision: 9, value: { id: 'server-d', text: 'server edit', revision: 9 } },
+    }))[0];
+
+    const server = await resolver().chooseServer(conflict);
+
+    expect(server.status).toBe('RESOLVED');
+    // The delete intent is dropped; the server edit stands and the copy is
+    // durably recorded as resolved (deletion history is not silently lost).
+    expect(await listOutbox()).toHaveLength(0);
+    const copies = await database.getAllByIndex<StoredConflictCopyRecord>('conflicts', 'subject', OWNER.subject);
+    expect(copies[0].resolution).toBe('SERVER');
+  });
+
   it('surfaces both directions of a delete/edit race without losing either payload', async () => {
     const editVsDelete = conflicted('e', {
       kind: 'ANNOTATION_UPDATE',
