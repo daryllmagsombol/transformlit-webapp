@@ -6,8 +6,7 @@ import {
   type HighlightRecord,
   type ProgressRecord,
   qualifyKey,
-} from './contracts';
-import {
+} from './contracts';import {
   coalesceProgress,
   nextLocalSequence,
   pendingProgressFor,
@@ -103,12 +102,34 @@ export class ReaderRecords {
   private readonly getOwner: () => AccountOwner | null;
   private readonly now: () => number;
   private readonly newId: () => string;
+  /**
+   * Serializes every mutation on this instance. Each mutation reads the outbox
+   * to derive a base revision / dependency and then commits in a separate
+   * IndexedDB transaction; without this chain two concurrent calls could both
+   * take the coalesce path (or both append), breaking the single-coalesced-op
+   * invariant. IndexedDB transactions alone cannot make the read-modify-write
+   * atomic because the read and the write are separate transactions.
+   */
+  private chain: Promise<unknown> = Promise.resolve();
 
   constructor(deps: ReaderRecordsDeps) {
     this.database = deps.database;
     this.getOwner = deps.getOwner;
     this.now = deps.now ?? (() => Date.now());
     this.newId = deps.newId ?? (() => globalThis.crypto.randomUUID());
+  }
+
+  /**
+   * Runs `task` after every previously enqueued mutation settles. The chain is
+   * not poisoned by a rejection: the next task always runs regardless.
+   */
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const next = this.chain.then(task, task);
+    this.chain = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
   }
 
   // ── Progress ─────────────────────────────────────────────────────────────
@@ -120,15 +141,20 @@ export class ReaderRecords {
    * touched, and this always appends a new one instead.
    */
   async saveProgress(input: ProgressInput): Promise<ReaderSaveResult> {
+    return this.enqueue(() => this.saveProgressLocked(input));
+  }
+
+  private async saveProgressLocked(input: ProgressInput): Promise<ReaderSaveResult> {
     try {
       const owner = this.getOwner();
       if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
       const entityKey = qualifyKey(owner.subject, 'progress', input.bookId);
+      const contentVersion = await this.resolveProgressContentVersion(owner, input.bookId, input.contentVersion);
       const record: ProgressRecord = {
         id: entityKey,
         subject: owner.subject,
         bookId: input.bookId,
-        contentVersion: input.contentVersion,
+        contentVersion,
         currentPage: input.currentPage,
         scrollY: input.scrollY,
         revision: 0,
@@ -144,7 +170,7 @@ export class ReaderRecords {
         baseRevision,
         payload: { currentPage: input.currentPage, scrollY: input.scrollY },
       };
-      const operation = this.buildOperation(owner, input.bookId, input.contentVersion, context, existing);
+      const operation = this.buildOperation(owner, input.bookId, contentVersion, context, existing);
       const decision = coalesceProgress(pending, operation);
       if (decision.action === 'REPLACE') {
         await this.database.commitEditWithOutbox({
@@ -167,10 +193,42 @@ export class ReaderRecords {
     }
   }
 
+  /**
+   * Resolves the content version stamped on a PROGRESS_SET operation.
+   *
+   * The server operation envelope requires a POSITIVE integer content version
+   * and rejects `0` (it validates the value against the book's supported
+   * versions). Progress is semantically content-version-independent, but the
+   * envelope field is still required. Preference order:
+   *  1. the caller's real content version when it is already positive
+   *     (offline/pinned reading, or a future API-supplied version),
+   *  2. the locally downloaded active version for this book,
+   *  3. `1` as the minimal valid positive value.
+   *
+   * Task 11 is responsible for sending the server's CURRENT supported version
+   * for progress (rather than trusting any stored placeholder) before dispatch.
+   */
+  async resolveProgressContentVersion(
+    owner: AccountOwner,
+    bookId: string,
+    provided: number,
+  ): Promise<number> {
+    if (Number.isSafeInteger(provided) && provided >= 1) return provided;
+    const active = await this.database.getActiveBookVersion(owner.subject, bookId);
+    if (active && Number.isSafeInteger(active.contentVersion) && active.contentVersion >= 1) {
+      return active.contentVersion;
+    }
+    return 1;
+  }
+
   // ── Bookmarks (add/remove only) ───────────────────────────────────────────
 
   /** Creates a bookmark locally and queues a BOOKMARK_ADD. No label/color edit. */
   async addBookmark(input: BookmarkAddInput): Promise<ReaderSaveResult> {
+    return this.enqueue(() => this.addBookmarkLocked(input));
+  }
+
+  private async addBookmarkLocked(input: BookmarkAddInput): Promise<ReaderSaveResult> {
     const owner = this.getOwner();
     if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
     const clientEntityId = this.newId();
@@ -200,6 +258,10 @@ export class ReaderRecords {
 
   /** Soft-deletes a bookmark locally and queues a BOOKMARK_REMOVE. */
   async removeBookmark(input: BookmarkRemoveInput): Promise<ReaderSaveResult> {
+    return this.enqueue(() => this.removeBookmarkLocked(input));
+  }
+
+  private async removeBookmarkLocked(input: BookmarkRemoveInput): Promise<ReaderSaveResult> {
     const owner = this.getOwner();
     if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
     const entityKey = input.entityId;
@@ -220,6 +282,10 @@ export class ReaderRecords {
 
   /** Creates a highlight (with its note) locally and queues an ANNOTATION_CREATE. */
   async createHighlight(input: HighlightCreateInput): Promise<ReaderSaveResult> {
+    return this.enqueue(() => this.createHighlightLocked(input));
+  }
+
+  private async createHighlightLocked(input: HighlightCreateInput): Promise<ReaderSaveResult> {
     const owner = this.getOwner();
     if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
     const clientEntityId = this.newId();
@@ -257,6 +323,10 @@ export class ReaderRecords {
 
   /** Updates a highlight/note locally and queues an ANNOTATION_UPDATE. */
   async updateHighlight(input: HighlightUpdateInput): Promise<ReaderSaveResult> {
+    return this.enqueue(() => this.updateHighlightLocked(input));
+  }
+
+  private async updateHighlightLocked(input: HighlightUpdateInput): Promise<ReaderSaveResult> {
     const owner = this.getOwner();
     if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
     const entityKey = input.entityId;
@@ -293,6 +363,10 @@ export class ReaderRecords {
 
   /** Soft-deletes a highlight locally and queues an ANNOTATION_DELETE. */
   async deleteHighlight(input: HighlightDeleteInput): Promise<ReaderSaveResult> {
+    return this.enqueue(() => this.deleteHighlightLocked(input));
+  }
+
+  private async deleteHighlightLocked(input: HighlightDeleteInput): Promise<ReaderSaveResult> {
     const owner = this.getOwner();
     if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
     const entityKey = input.entityId;
@@ -321,14 +395,14 @@ export class ReaderRecords {
     const owner = this.getOwner();
     if (!owner) return [];
     const rows = await this.database.getAllByIndex<BookmarkRecord>('readerRecords', 'subjectBook', [owner.subject, bookId]);
-    return rows.filter((row) => row.deletedAt === null && 'label' in row);
+    return rows.filter((row) => row.deletedAt === null && isEntityKey(owner.subject, 'bookmark', row.id));
   }
 
   async listHighlights(bookId: string): Promise<HighlightRecord[]> {
     const owner = this.getOwner();
     if (!owner) return [];
     const rows = await this.database.getAllByIndex<HighlightRecord>('readerRecords', 'subjectBook', [owner.subject, bookId]);
-    return rows.filter((row) => row.deletedAt === null && 'text' in row);
+    return rows.filter((row) => row.deletedAt === null && isEntityKey(owner.subject, 'highlight', row.id));
   }
 
   // ── Internals ─────────────────────────────────────────────────────────────
@@ -401,6 +475,15 @@ export class ReaderRecords {
     const message = error instanceof Error ? error.message : 'Could not save on this device';
     return { status: 'FAILED', operationId: null, error: message };
   }
+}
+
+/**
+ * True when a reader-record key is namespaced as `owner + entity + id` by
+ * `qualifyKey`. This discriminates bookmarks from highlights by their explicit
+ * key namespace rather than by which payload field happens to be present.
+ */
+function isEntityKey(subject: string, entity: 'bookmark' | 'highlight', id: string): boolean {
+  return id.startsWith(qualifyKey(subject, entity, ''));
 }
 
 let shared: ReaderRecords | null = null;

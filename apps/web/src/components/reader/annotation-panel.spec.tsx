@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { AnnotationPanel } from './annotation-panel';
+import { AnnotationPanel, anchorForItem, pageTextLayer, textForAnchor } from './annotation-panel';
 import type { PdfTextItem } from '../../lib/reader/api';
 
 const ITEMS: PdfTextItem[] = [
@@ -42,9 +42,48 @@ function renderPanel(harness: Harness, overrides: Record<string, unknown> = {}) 
   );
 }
 
-describe('AnnotationPanel', () => {
-  it('saves a highlight with an anchor derived from the selected text-layer item', async () => {
+describe('annotation anchors match the canonical text layer', () => {
+  it('resolves a stored anchor back to the exact substring it selected', () => {
+    const anchor = anchorForItem(ITEMS, 1, 2);
+    expect(textForAnchor(ITEMS, anchor)).toBe('world');
+    // The canonical text layer is the exact concatenation the offsets index.
+    expect(pageTextLayer(ITEMS)).toBe('Helloworld');
+  });
+
+  it('scopes the text fallback to the full page text, not a duplicate item string', () => {
+    // Two identical strings on one page: an anchor must win over text equality.
+    const items: PdfTextItem[] = [
+      { t: 'the', x: 0, y: 0, w: 0.1, h: 0.01 },
+      { t: 'the', x: 0.2, y: 0, w: 0.1, h: 0.01 },
+    ];
     const harness = makeHarness();
+    const highlight = {
+      id: 'hl-dup',
+      clientEntityId: 'client-dup',
+      bookId: 'book-1',
+      contentVersion: 3,
+      page: 2,
+      text: 'the',
+      note: 'second one',
+      color: null,
+      anchor: { version: 1, page: 2, startOffset: 3, endOffset: 6 },
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+    };
+    renderPanel(harness, { items, highlights: [highlight] });
+
+    // There are two identical items; an anchor (not text equality) must bind the
+    // second "the" (offset 3..6) to the existing highlight.
+    const buttons = screen.getAllByRole('button', { name: /highlight "the"/i });
+    fireEvent.click(buttons[1]);
+    expect(screen.getByRole('textbox', { name: 'Note' })).toHaveValue('second one');
+  });
+});
+
+describe('AnnotationPanel', () => {
+  it('saves a highlight with an anchor derived from the selected text-layer item', async () => {    const harness = makeHarness();
     renderPanel(harness);
 
     fireEvent.click(screen.getByRole('button', { name: /highlight "Hello"/i }));

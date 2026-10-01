@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { PdfTextItem } from '../../lib/reader/api';
 import type { BookmarkRecord, HighlightRecord } from '../../lib/offline/contracts';
 import type { ReaderSaveResult } from '../../lib/offline/reader-records';
@@ -66,18 +66,33 @@ type SaveStatus = 'IDLE' | 'SAVING' | 'SAVED' | 'FAILED';
 
 const ANCHOR_VERSION = 1;
 
+/** A resolved `PageTextAnchorV1`-shaped range over the canonical text layer. */
+export interface PageTextAnchor {
+  readonly version: number;
+  readonly page: number;
+  readonly startOffset: number;
+  readonly endOffset: number;
+}
+
 /**
- * Page text-layer string offsets are zero-based UTF-16 code units in the exact
- * concatenation of text-layer item strings, matching the server's
- * `PageTextAnchorV1` contract. Selecting item `index` yields the offset range
- * `[startOf(index), startOf(index) + item.t.length)`.
+ * The CANONICAL text-layer source for anchor offsets.
+ *
+ * The contract defines `PageTextAnchorV1` offsets as zero-based UTF-16 code
+ * units into the exact page text-layer string for the pinned `contentVersion`.
+ * That string is the in-order concatenation of the rendered text-layer item
+ * strings (exactly what `PageCanvas` renders and what the stored page
+ * `textLayerAssetId` contains). Both the online `fetchPageText` and the offline
+ * stored record expose that same `{ items: [{ t }] }` shape, so deriving anchors
+ * from `items` here index the same string on both paths. Do not insert
+ * separators: any character not present in the rendered layer would shift every
+ * subsequent offset.
  */
-export function anchorForItem(items: readonly PdfTextItem[], index: number, page: number): {
-  version: number;
-  page: number;
-  startOffset: number;
-  endOffset: number;
-} {
+export function pageTextLayer(items: readonly PdfTextItem[]): string {
+  return items.map((item) => item.t).join('');
+}
+
+/** Selecting item `index` yields `[startOf(index), startOf(index) + t.length)`. */
+export function anchorForItem(items: readonly PdfTextItem[], index: number, page: number): PageTextAnchor {
   const startOffset = items
     .slice(0, index)
     .reduce((total, item) => total + item.t.length, 0);
@@ -90,27 +105,38 @@ export function anchorForItem(items: readonly PdfTextItem[], index: number, page
   };
 }
 
-/** Reconstructs the page text-layer string exactly as the anchor offsets index it. */
-export function pageTextLayer(items: readonly PdfTextItem[]): string {
-  return items.map((item) => item.t).join('');
+/** Resolves the substring a stored anchor selects in the canonical text layer. */
+export function textForAnchor(items: readonly PdfTextItem[], anchor: PageTextAnchor): string {
+  return pageTextLayer(items).slice(anchor.startOffset, anchor.endOffset);
 }
 
+/** Index of the text-layer item a stored anchor starts at, or -1 when absent. */
+export function itemIndexForAnchor(items: readonly PdfTextItem[], anchor: PageTextAnchor): number {
+  let offset = 0;
+  for (let index = 0; index < items.length; index += 1) {
+    if (offset === anchor.startOffset) return index;
+    offset += items[index].t.length;
+  }
+  return -1;
+}
+
+/**
+ * Binds a stored highlight to the selected text item by ANCHOR RANGE ONLY.
+ *
+ * Text-equality is deliberately NOT a fallback: a page can legitimately contain
+ * duplicate strings, and binding by text would attach a highlight to the wrong
+ * occurrence. A highlight with a null/legacy anchor therefore does not pre-fill
+ * an item; the anchor is the only trustworthy provenance.
+ */
 function findHighlightForItem(
   highlights: readonly HighlightRecord[],
-  item: PdfTextItem,
-  index: number,
-  items: readonly PdfTextItem[],
-  page: number,
+  anchor: PageTextAnchor,
 ): HighlightRecord | undefined {
-  const text = pageTextLayer(items);
-  const anchor = anchorForItem(items, index, page);
   return highlights.find((highlight) => {
-    const recordAnchor = highlight.anchor as { page?: number; startOffset?: number; endOffset?: number } | null;
-    if (recordAnchor && recordAnchor.page === page) {
-      return recordAnchor.startOffset === anchor.startOffset && recordAnchor.endOffset === anchor.endOffset;
-    }
-    // Legacy/untrustworthy anchor: match by the exact text-layer substring.
-    return text.slice(anchor.startOffset, anchor.endOffset) === item.t && highlight.text === item.t;
+    const recordAnchor = highlight.anchor as Partial<PageTextAnchor> | null;
+    if (!recordAnchor || recordAnchor.version !== ANCHOR_VERSION) return false;
+    if (recordAnchor.page !== anchor.page) return false;
+    return recordAnchor.startOffset === anchor.startOffset && recordAnchor.endOffset === anchor.endOffset;
   });
 }
 
@@ -125,6 +151,24 @@ function statusText(status: SaveStatus): string {
     default:
       return '';
   }
+}
+
+/** Renders the save status, using an alert for failures and a status otherwise. */
+function SaveStatusNotice({ status, error }: { readonly status: SaveStatus; readonly error: string | null }) {
+  const text = statusText(status);
+  if (!text) return null;
+  if (status === 'FAILED') {
+    return (
+      <p role="alert" className="font-small text-small text-error" data-testid="annotation-error">
+        {error ?? text}
+      </p>
+    );
+  }
+  return (
+    <p role="status" className="font-small text-small text-on-surface-variant" data-testid="annotation-status">
+      {text}
+    </p>
+  );
 }
 
 export function AnnotationPanel({
@@ -144,13 +188,6 @@ export function AnnotationPanel({
   const [status, setStatus] = useState<SaveStatus>('IDLE');
   const [error, setError] = useState<string | null>(null);
 
-  const selectedHighlight = useMemo(() => {
-    if (selectedIndex === null) return null;
-    const item = textItems[selectedIndex];
-    if (!item) return null;
-    return findHighlightForItem(highlights, item, selectedIndex, textItems, page) ?? null;
-  }, [selectedIndex, textItems, highlights, page]);
-
   const pageBookmark = bookmarks.find((bookmark) => bookmark.page === page) ?? null;
 
   const reset = useCallback(() => {
@@ -162,8 +199,9 @@ export function AnnotationPanel({
   const selectItem = useCallback((index: number) => {
     const item = textItems[index];
     if (!item) return;
+    const anchor = anchorForItem(textItems, index, page);
     setSelectedIndex(index);
-    const existing = findHighlightForItem(highlights, item, index, textItems, page);
+    const existing = findHighlightForItem(highlights, anchor);
     setEditingId(existing?.id ?? null);
     setNote(existing?.note ?? '');
     setError(null);
@@ -172,8 +210,10 @@ export function AnnotationPanel({
 
   const beginEdit = useCallback((highlight: HighlightRecord) => {
     setEditingId(highlight.id);
-    // Keep the selection on the matching text item so the anchor is preserved.
-    const index = textItems.findIndex((item) => item.t === highlight.text);
+    // Re-select the exact item the highlight's anchor points at, so editing
+    // preserves provenance instead of matching by (possibly duplicate) text.
+    const recordAnchor = highlight.anchor as PageTextAnchor | null;
+    const index = recordAnchor ? itemIndexForAnchor(textItems, recordAnchor) : -1;
     setSelectedIndex(index >= 0 ? index : null);
     setNote(highlight.note ?? '');
     setError(null);
@@ -276,15 +316,7 @@ export function AnnotationPanel({
       </div>
 
       {statusText(status) ? (
-        status === 'FAILED' ? (
-          <p role="alert" className="font-small text-small text-error" data-testid="annotation-error">
-            {error ?? statusText(status)}
-          </p>
-        ) : (
-          <p role="status" className="font-small text-small text-on-surface-variant" data-testid="annotation-status">
-            {statusText(status)}
-          </p>
-        )
+        <SaveStatusNotice status={status} error={error} />
       ) : null}
 
       <div>

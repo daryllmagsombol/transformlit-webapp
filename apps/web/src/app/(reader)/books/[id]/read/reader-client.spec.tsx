@@ -26,8 +26,7 @@ jest.mock('../../../../../lib/reader/api', () => ({
   openReadingSession: (...args: unknown[]) => mockOpenSession(...args),
   pageFrameUrl: (bookId: string, page: number) => `http://api.test/books/${bookId}/pages/${page}/frame`,
   fetchPageText: (...args: unknown[]) => mockFetchText(...args),
-  fetchReadProgress: jest.fn().mockResolvedValue({ currentPage: 2 }),
-  saveReaderProgress: jest.fn().mockResolvedValue(undefined),
+  fetchReadProgress: jest.fn().mockResolvedValue({ currentPage: 2, revision: 1 }),
   networkReaderTransport: {
     openSession: (...args: unknown[]) => mockOpenSession(...args),
     fetchText: (...args: unknown[]) => mockFetchText(...args),

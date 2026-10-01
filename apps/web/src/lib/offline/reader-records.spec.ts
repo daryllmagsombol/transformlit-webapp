@@ -9,6 +9,12 @@ const BOOK = 'book-1';
 
 let idCounter = 0;
 
+beforeAll(() => {
+  if (typeof globalThis.IDBKeyRange === 'undefined') {
+    Object.defineProperty(globalThis, 'IDBKeyRange', { writable: true, value: memoryIdbKeyRange });
+  }
+});
+
 function createHarness(owner: AccountOwner | null = OWNER) {
   const memory: MemoryIndexedDb = createMemoryIndexedDb();
   (globalThis as { indexedDB?: unknown }).indexedDB = memory.indexedDB;
@@ -67,6 +73,46 @@ describe('ReaderRecords local-first mutations', () => {
       dispatchState: 'PENDING',
       seq: 1,
     });
+  });
+
+  it('never stamps a non-positive contentVersion on a progress operation', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+
+    // The online reader passes 0 (no pinned version); the envelope requires a
+    // positive integer, so the operation must carry a valid value.
+    await records.saveProgress({ bookId: BOOK, contentVersion: 0, currentPage: 1, scrollY: null });
+
+    const [operation] = await listOutbox(database, OWNER.subject);
+    expect(operation.contentVersion).toBeGreaterThanOrEqual(1);
+    expect(Number.isSafeInteger(operation.contentVersion)).toBe(true);
+  });
+
+  it('stamps progress with the locally downloaded active version when the caller has none', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+    // A stored, locally downloaded active version is the pinned truth.
+    await database.putDownloadRecord(OWNER.subject, OWNER.epoch, 'bookVersions', {
+      id: `${OWNER.subject}\u0000bookversion\u0000${BOOK}\u00007`,
+      subject: OWNER.subject,
+      bookId: BOOK,
+      contentVersion: 7,
+      status: 'READY',
+      active: true,
+      title: 'Downloaded',
+      author: null,
+      description: null,
+      coverAssetId: null,
+      totalPages: 1,
+      toc: [],
+      provenance: 'test',
+      createdAt: 1,
+    });
+
+    await records.saveProgress({ bookId: BOOK, contentVersion: 0, currentPage: 1, scrollY: null });
+
+    const [operation] = await listOutbox(database, OWNER.subject);
+    expect(operation.contentVersion).toBe(7);
   });
 
   it('reports FAILED and leaves no partial record when the transaction aborts', async () => {
@@ -129,6 +175,25 @@ describe('ReaderRecords local-first mutations', () => {
     expect(dispatched?.payload).toEqual({ currentPage: 2, scrollY: null });
     const appended = outbox.find((row) => row.operationId !== first.operationId);
     expect(appended?.seq).toBeGreaterThan(first.seq);
+  });
+
+  it('keeps a single unsent progress operation under concurrent saves (atomic coalesce)', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+
+    // Two overlapping page changes must not both take REPLACE or append
+    // duplicates: the read + coalesce + put must be serialized.
+    await Promise.all([
+      records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 2, scrollY: null }),
+      records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 3, scrollY: null }),
+      records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 4, scrollY: null }),
+    ]);
+
+    const outbox = await listOutbox(database, OWNER.subject);
+    expect(outbox).toHaveLength(1);
+    // The newest value wins and the original operation id is retained.
+    expect(outbox[0].payload).toEqual({ currentPage: 4, scrollY: null });
+    expect((await records.getProgress(BOOK))?.currentPage).toBe(4);
   });
 
   it('keeps a create and a later update as separate ordered operations for one entity', async () => {
