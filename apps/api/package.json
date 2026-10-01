@@ -12,6 +12,7 @@
     "start:prod": "node dist/main",
     "worker:dev": "nest start --watch --entryFile worker/main",
     "worker:start": "node dist/worker/main.js",
+    "db:backfill:downloads": "node dist/books/backfill-download-versions.js",
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.build.json",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",

@@ -154,3 +154,130 @@ matches the schema) requires a shadow database and therefore Docker — not run.
 ## Commit
 
 `86b3dd4c9d9207173190f4850891cc3b4408b752` — `feat(api): add version-pinned book download contract`
+
+---
+
+## Round 1 fix — DI bootstrap repair + production backfill entrypoint
+
+Fixed two review findings on branch `feature/pwa-lane-a` (HEAD before fix: `3788985`).
+
+### C1 — Nest DI bootstrap regression (CRITICAL)
+
+**Root cause.** `BookDownloadService` declared `limiter?: DownloadConcurrencyLimiter` as a
+constructor parameter without `@Optional()`. With `emitDecoratorMetadata`, Nest emits
+`DownloadConcurrencyLimiter` as design:paramtypes, treats it as a required provider, and fails
+AppModule bootstrap with `Nest can't resolve dependencies of the BookDownloadService (...)`.
+This broke `test/offline-download.integration.spec.ts`, `test/reader-security.integration.spec.ts`,
+and the DB-free `test:contracts` AppModule probe.
+
+**Fix.** Replaced the optional class param with an explicit DI token:
+`DOWNLOAD_CONCURRENCY_LIMITER` (exported `Symbol`) and `DOWNLOAD_CONCURRENCY_LIMIT = 8`;
+`BookDownloadService` now injects `@Inject(DOWNLOAD_CONCURRENCY_LIMITER)`. `BooksModule` provides
+it via a factory (`useFactory: () => new DownloadConcurrencyLimiter(DOWNLOAD_CONCURRENCY_LIMIT)`).
+No optional/ambiguous param remains, so DI cannot silently hide again.
+
+**RED (before fix)** — the existing DB-free bootstrap test failed:
+```
+pnpm --filter @transformlit/api exec jest --config jest.contract.config.ts \
+  --runInBand --runTestsByPath test/helpers/schema-runtime.spec.ts
+● DB-free GraphQL AppModule bootstrap › creates deterministic in-memory schema ...
+  Nest can't resolve dependencies of the BookDownloadService (..., ?) ...
+  DownloadConcurrencyLimiter at index [3]
+Test Suites: 1 failed, 1 total
+```
+
+**GREEN (after fix)**:
+```
+... schema-runtime.spec.ts
+Test Suites: 1 passed, 1 total   Tests: 1 passed
+```
+And the compiled AppModule probe (which boots the real module graph):
+```
+pnpm --filter @transformlit/api run test:command-runner
+$ tsc -p tsconfig.schema-command.json --incremental false
+Schema command runner preserves design:paramtypes.
+Compiled AppModule bootstrap matches canonical SDL without mutation.
+```
+The DB-free bootstrap guard now boots `AppModule` and would have caught this regression, closing
+the verification gap the Docker blocker previously masked.
+
+Note: the aggregate `pnpm --filter @transformlit/api run test:contracts` still ends non-zero, but
+only because `test/scripts/pwa-harness.spec.ts` is a Node-`test`-runner file that jest-empty-fails
+("Your test suite must contain at least one test"). Confirmed **pre-existing** — it fails
+identically on the pre-fix commit via `git stash`. Not introduced here.
+
+### I1 — production invocation path for `backfillVersion` (IMPORTANT)
+
+`backfillVersion` was test-only while the Task 5 migration marks every legacy version
+`eligible = false`; after deploy there was no operator path to promote them. Added:
+
+- `BookDownloadService.backfillAllIneligible(limit = 100)` — bounded, idempotent, examines only
+  `eligible = false` rows, verifies real bytes, promotes verifiable versions, reports skipped ones.
+  Never fabricates checksums/text; a structurally incomplete version is skipped.
+- `apps/api/src/books/backfill-download-versions.ts` — guarded one-shot entrypoint (refuses to run
+  without `DATABASE_URL`, logs promoted/skipped counts, exits non-zero on failure).
+- `apps/api/src/books/book-download-backfill.module.ts` — minimal HTTP-free module (Prisma +
+  Storage + Azure + Books/Download services), so the command needs no GraphQL/JWT/route setup.
+- `apps/api/package.json` — `"db:backfill:downloads": "node dist/books/backfill-download-versions.js"`.
+
+**Operator command (after `pnpm --filter @transformlit/api run build`):**
+```
+pnpm --filter @transformlit/api run db:backfill:downloads
+# optional positional cap: ... db:backfill:downloads -- 250
+```
+
+**RED/GREEN** — new focused unit coverage added: batch promotes verifiable versions, skips
+versions with missing assets, no-ops when none are ineligible, and never promotes a structurally
+incomplete version. Full focused suite:
+```
+pnpm --filter @transformlit/api test --runInBand \
+  --runTestsByPath src/books/book-download.service.spec.ts \
+  src/books/books.controller.spec.ts \
+  src/books/conversion/conversion.runner.spec.ts
+Test Suites: 3 passed, 3 total   Tests: 38 passed, 38 total
+```
+
+### Minor fixed opportunistically (same files, safe)
+
+- Busy limiter now throws `ServiceUnavailableException` (503) instead of
+  `InternalServerErrorException` (500) — transient backpressure, not a server fault.
+
+### Deferred minors (recorded, not changed — out of this fix's scope)
+
+- `format: 'PDF'` hardcoding (latent EPUB).
+- `coverAssetId` always null (cover assets not yet modeled).
+- Manifest asset URL prefix `/books/...` vs deployed `/api/books/...` (reconcile with client lane
+  at convergence).
+- `@UseGuards(AuthGuard('jwt'), ThrottlerGuard)` applies the guard twice (global + route), which
+  divides the effective download cap; revisit in a throttling-specific pass.
+
+### Round 1 verification
+
+```
+pnpm --filter @transformlit/api test --runInBand
+Test Suites: 39 passed, 39 total   Tests: 632 passed, 632 total
+
+pnpm --filter @transformlit/api exec jest --config jest.contract.config.ts \
+  --runInBand --runTestsByPath test/helpers/schema-runtime.spec.ts   # 1 passed (DI guard)
+pnpm --filter @transformlit/api run test:command-runner              # passed
+pnpm --filter @transformlit/api run typecheck                        # exit 0
+pnpm --filter @transformlit/api run build                            # 119 files compiled
+pnpm --filter @transformlit/api exec prisma validate --schema prisma/schema.prisma  # valid
+git diff --check                                                     # clean
+```
+
+DB-backed integration/migration application remains **BLOCKED** (Docker/Testcontainers absent) and
+is not claimed as passing.
+
+### Round 1 files
+
+- Modified: `apps/api/src/books/book-download.service.ts`,
+  `apps/api/src/books/book-download.service.spec.ts`,
+  `apps/api/src/books/books.module.ts`, `apps/api/package.json`
+- Created: `apps/api/src/books/backfill-download-versions.ts`,
+  `apps/api/src/books/book-download-backfill.module.ts`
+
+### Round 1 commit
+
+`fix(api): repair download DI and backfill entrypoint`
+

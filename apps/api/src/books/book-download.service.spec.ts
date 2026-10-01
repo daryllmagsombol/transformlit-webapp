@@ -52,6 +52,7 @@ function build(record: Record<string, unknown> | null = versionRecord()) {
   const prisma = {
     bookContentVersion: {
       findUnique: jest.fn().mockResolvedValue(record),
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue({}),
     },
     bookContentVersionPage: { update: jest.fn().mockResolvedValue({}) },
@@ -255,6 +256,62 @@ describe('BookDownloadService', () => {
 
     expect(await service.backfillVersion('book-1', 2)).toBe(false);
     expect(prisma.bookContentVersionPage.update).not.toHaveBeenCalled();
+    expect(prisma.bookContentVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('batch-backfills only ineligible versions and promotes the verifiable ones', async () => {
+    const verifiable = versionRecord({
+      eligible: false,
+      verifiedAt: null,
+      pageCount: 1,
+      pages: [pageRow({ frameByteLength: 0, frameSha256: null, textByteLength: null, textSha256: null })],
+    });
+    const missingText = versionRecord({
+      eligible: false,
+      verifiedAt: null,
+      pageCount: 1,
+      pages: [pageRow({ id: 'page-2', textKey: 'books/book-2/vv/pages/1.json', frameByteLength: 0, frameSha256: null, textByteLength: null, textSha256: null })],
+    });
+    const { service, storage, prisma } = build(verifiable);
+    prisma.bookContentVersion.findMany.mockResolvedValue([
+      { bookId: 'book-1', contentVersion: 2 },
+      { bookId: 'book-2', contentVersion: 1 },
+    ]);
+    prisma.bookContentVersion.findUnique.mockImplementation(async (args: { where: { bookId_contentVersion: { bookId: string } } }) =>
+      args.where.bookId_contentVersion.bookId === 'book-2' ? missingText : verifiable,
+    );
+    // book-2's text asset is missing; every other asset resolves.
+    storage.getBuffer.mockImplementation(async (key: string) => (key.includes('book-2') ? null : FRAME));
+
+    const summary = await service.backfillAllIneligible(10);
+    expect(prisma.bookContentVersion.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { eligible: false }, take: 10 }),
+    );
+    expect(summary.examined).toBe(2);
+    expect(summary.promoted).toEqual([{ bookId: 'book-1', contentVersion: 2 }]);
+    expect(summary.skipped).toEqual([{ bookId: 'book-2', contentVersion: 1 }]);
+    // Only the verifiable version was promoted.
+    expect(prisma.bookContentVersion.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('batch-backfill is a no-op when there are no ineligible versions', async () => {
+    const { service, prisma } = build();
+    prisma.bookContentVersion.findMany.mockResolvedValue([]);
+
+    const summary = await service.backfillAllIneligible();
+    expect(summary).toEqual({ examined: 0, promoted: [], skipped: [] });
+    expect(prisma.bookContentVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('never promotes a structurally incomplete version during batch backfill', async () => {
+    const incomplete = versionRecord({ eligible: false, verifiedAt: null, pageCount: 3 });
+    const { service, storage, prisma } = build(incomplete);
+    prisma.bookContentVersion.findMany.mockResolvedValue([{ bookId: 'book-1', contentVersion: 2 }]);
+    storage.getBuffer.mockResolvedValue(FRAME);
+
+    const summary = await service.backfillAllIneligible();
+    expect(summary.promoted).toEqual([]);
+    expect(summary.skipped).toEqual([{ bookId: 'book-1', contentVersion: 2 }]);
     expect(prisma.bookContentVersion.update).not.toHaveBeenCalled();
   });
 

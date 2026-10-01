@@ -1,4 +1,10 @@
-import { Inject, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { STORAGE_ADAPTER, StorageAdapter } from '../storage/storage-adapter.js';
@@ -6,6 +12,12 @@ import { BooksService } from './books.service.js';
 
 /** Contract version of the offline manifest envelope. */
 export const OFFLINE_MANIFEST_CONTRACT_VERSION = 1;
+
+/** Injected pool boundary for download asset reads. Registered in BooksModule. */
+export const DOWNLOAD_CONCURRENCY_LIMITER = Symbol('DOWNLOAD_CONCURRENCY_LIMITER');
+
+/** Maximum simultaneous download asset reads across the process. */
+export const DOWNLOAD_CONCURRENCY_LIMIT = 8;
 
 export type DownloadAssetKind = 'PAGE_IMAGE' | 'TEXT_LAYER' | 'COVER';
 
@@ -83,7 +95,8 @@ export class DownloadConcurrencyLimiter {
 
   async run<T>(task: () => Promise<T>): Promise<T> {
     if (this.active >= this.maxConcurrent) {
-      throw new InternalServerErrorException('Download is busy; too many concurrent download requests');
+      // 503, not 500: this is transient backpressure and the client should retry.
+      throw new ServiceUnavailableException('Download is busy; too many concurrent download requests');
     }
     this.active += 1;
     try {
@@ -125,16 +138,12 @@ interface VersionRecord {
 
 @Injectable()
 export class BookDownloadService {
-  private readonly limiter = new DownloadConcurrencyLimiter(8);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly books: BooksService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
-    limiter?: DownloadConcurrencyLimiter,
-  ) {
-    if (limiter) this.limiter = limiter;
-  }
+    @Inject(DOWNLOAD_CONCURRENCY_LIMITER) private readonly limiter: DownloadConcurrencyLimiter,
+  ) {}
 
   private sha256(buffer: Buffer): string {
     return createHash('sha256').update(buffer).digest('hex');
@@ -344,4 +353,40 @@ export class BookDownloadService {
     });
     return true;
   }
+
+  /**
+   * Promotes every not-yet-eligible version whose real assets verify. Bounded
+   * and idempotent: it only examines `eligible = false` rows, verifies actual
+   * stored bytes, and never fabricates checksums or text. A version whose
+   * assets are missing stays ineligible and is reported as skipped.
+   */
+  async backfillAllIneligible(limit = 100): Promise<BackfillSummary> {
+    const candidates = await this.prisma.bookContentVersion.findMany({
+      where: { eligible: false },
+      orderBy: [{ bookId: 'asc' }, { contentVersion: 'asc' }],
+      take: limit,
+      select: { bookId: true, contentVersion: true },
+    });
+
+    const promoted: BackfillResult[] = [];
+    const skipped: BackfillResult[] = [];
+    for (const candidate of candidates) {
+      const verified = await this.backfillVersion(candidate.bookId, candidate.contentVersion);
+      const result = { bookId: candidate.bookId, contentVersion: candidate.contentVersion };
+      if (verified) promoted.push(result);
+      else skipped.push(result);
+    }
+    return { examined: candidates.length, promoted, skipped };
+  }
+}
+
+export interface BackfillResult {
+  bookId: string;
+  contentVersion: number;
+}
+
+export interface BackfillSummary {
+  examined: number;
+  promoted: BackfillResult[];
+  skipped: BackfillResult[];
 }
