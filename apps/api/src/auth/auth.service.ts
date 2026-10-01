@@ -124,6 +124,24 @@ export class AuthService {
     return { accessToken, refreshToken: newRefresh, user };
   }
 
+  /**
+   * Invalidates the refresh-token family for a presented refresh cookie.
+   *
+   * Idempotent and safe to retry: an absent, unknown, or already-revoked token
+   * is a successful no-op (there is nothing left to invalidate). Used by logout
+   * so a captured refresh token cannot be rotated after the user signs out.
+   */
+  async logout(refreshToken: string): Promise<void> {
+    if (!refreshToken) return;
+    const tokenHash = this.hashToken(refreshToken);
+    const stored = await this.prisma.refreshToken.findUnique({ where: { tokenHash } });
+    if (!stored) return;
+    await this.prisma.refreshToken.updateMany({
+      where: { familyId: stored.familyId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
   async findOrCreateOAuthUser(profile: {
     provider: string;
     providerId: string;

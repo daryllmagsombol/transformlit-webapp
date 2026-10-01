@@ -42,6 +42,7 @@ describe('AuthController (REST httpOnly cookie flows)', () => {
       loginLocal: jest.fn().mockResolvedValue(mockTokens),
       registerLocal: jest.fn().mockResolvedValue(mockTokens),
       refreshTokens: jest.fn().mockResolvedValue(mockTokens),
+      logout: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -151,13 +152,37 @@ describe('AuthController (REST httpOnly cookie flows)', () => {
         UnauthorizedException,
       );
     });
+
+    it('does NOT convert an infrastructure failure into an invalid-credential 401', async () => {
+      authService.refreshTokens.mockRejectedValue(new Error('database unavailable'));
+      const req = {
+        cookies: { [REFRESH_COOKIE_NAME]: 'good-token' },
+      } as unknown as Request;
+
+      let caught: unknown;
+      try {
+        await controller.refresh(req, createRes());
+      } catch (error) {
+        caught = error;
+      }
+
+      // The infra error must surface (so the client treats it as transient and
+      // preserves local state) rather than being flattened into a 401 that would
+      // force an offline sign-out.
+      expect(caught).toBeInstanceOf(Error);
+      expect(caught).not.toBeInstanceOf(UnauthorizedException);
+    });
   });
 
   describe('POST /auth/logout', () => {
-    it('clears the refresh cookie (maxAge 0) and returns {}', async () => {
+    it('revokes the refresh family and clears the refresh cookie (maxAge 0)', async () => {
       const res = createRes();
-      const result = await controller.logout(res);
+      const req = {
+        cookies: { [REFRESH_COOKIE_NAME]: 'raw-refresh-token-1' },
+      } as unknown as Request;
+      const result = await controller.logout(req, res);
 
+      expect(authService.logout).toHaveBeenCalledWith('raw-refresh-token-1');
       expect(res.clearCookie).toHaveBeenCalledWith(
         REFRESH_COOKIE_NAME,
         expect.objectContaining({
@@ -168,6 +193,27 @@ describe('AuthController (REST httpOnly cookie flows)', () => {
         }),
       );
       expect(result).toEqual({});
+    });
+
+    it('clears the cookie and succeeds even when no refresh cookie is present', async () => {
+      const res = createRes();
+      const req = { cookies: {} } as unknown as Request;
+      const result = await controller.logout(req, res);
+
+      expect(authService.logout).not.toHaveBeenCalled();
+      expect(res.clearCookie).toHaveBeenCalled();
+      expect(result).toEqual({});
+    });
+
+    it('still clears the cookie when server-side revocation fails (best effort)', async () => {
+      authService.logout.mockRejectedValue(new Error('db down'));
+      const res = createRes();
+      const req = {
+        cookies: { [REFRESH_COOKIE_NAME]: 'raw-refresh-token-1' },
+      } as unknown as Request;
+
+      await expect(controller.logout(req, res)).resolves.toEqual({});
+      expect(res.clearCookie).toHaveBeenCalled();
     });
   });
 });

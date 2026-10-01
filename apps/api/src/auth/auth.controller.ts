@@ -94,18 +94,35 @@ export class AuthController {
       const tokens = await this.authService.refreshTokens(raw);
       this.setRefreshCookie(res, tokens.refreshToken);
       return { accessToken: tokens.accessToken, user: tokens.user } as AuthResponse;
-    } catch {
-      // Reuse/invalid/expired token — surface a clean 401. The refresh cookie is
-      // left for the caller to clear via /auth/logout if they choose.
-      // Exception is re-thrown as UnauthorizedException
-      throw new UnauthorizedException('Invalid refresh token');
+    } catch (error) {
+      // A genuine credential rejection (reuse/invalid/expired token) is a 401.
+      if (error instanceof UnauthorizedException) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
+      // An infrastructure failure (DB outage, timeout) is NOT an invalid
+      // credential: re-throw so it surfaces as a 5xx. The client classifies it
+      // as transient and preserves local offline state instead of force-signing
+      // the user out. The refresh cookie is left for the caller to clear via
+      // /auth/logout if they choose.
+      throw error;
     }
   }
 
   @Public()
   @Post('logout')
   @HttpCode(200)
-  logout(@Res({ passthrough: true }) res: Response) {
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const raw = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
+    if (raw) {
+      try {
+        // Best effort: revoke the refresh family server-side so a captured token
+        // cannot be rotated after sign-out. A failure (or an absent/revoked
+        // cookie) must never block the client from completing logout.
+        await this.authService.logout(raw);
+      } catch {
+        // Swallow: clearing the cookie below is the client-visible contract.
+      }
+    }
     this.clearRefreshCookie(res);
     return {};
   }

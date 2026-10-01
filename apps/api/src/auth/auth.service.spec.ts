@@ -400,6 +400,38 @@ describe('AuthService', () => {
     });
   });
 
+  describe('logout', () => {
+    const live = {
+      id: 'rt-1',
+      userId: 'user-1',
+      familyId: 'family-1',
+      tokenHash: 'mock-token-hash',
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 86400000),
+    };
+
+    it('revokes the entire refresh token family for a live token', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue(live);
+      await service.logout('raw-refresh-token');
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { familyId: 'family-1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+    });
+
+    it('is a safe no-op when the refresh cookie is absent', async () => {
+      await expect(service.logout('')).resolves.toBeUndefined();
+      expect(prisma.refreshToken.findUnique).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('is safe when the token is unknown or already revoked (retry after absence)', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue(null);
+      await expect(service.logout('unknown-token')).resolves.toBeUndefined();
+      expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe('findOrCreateOAuthUser', () => {
     const profile = {
       provider: 'google',
