@@ -27,7 +27,12 @@ export function AccountRecoveryPrompt() {
       .then((eligible) => {
         if (!cancelled) setBlocked(!eligible);
       })
-      .catch(() => undefined);
+      .catch(() => {
+        // Fail closed: an eligibility read we could not complete must not be
+        // treated as "eligible". Surface the recovery path instead of silently
+        // leaving a possibly-blocked session with no escape.
+        if (!cancelled) setBlocked(true);
+      });
     return () => {
       cancelled = true;
     };

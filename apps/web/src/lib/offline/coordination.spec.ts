@@ -2,7 +2,9 @@ import type { LeaseRecord } from './contracts';
 import {
   assertFencingToken,
   createLeaseCoordinator,
+  createSyncLock,
   isLeaseActive,
+  syncLeaseName,
   type Clock,
   type LeasePersistence,
 } from './coordination';
@@ -139,5 +141,44 @@ describe('lease coordination', () => {
     await coordinator.acquire('sync:user-a', 'user-a', 'tab-a', 5_000);
     await expect(assertFencingToken(persistence, 'sync:user-a', 99, clock.now())).rejects.toThrow();
     await expect(assertFencingToken(persistence, 'sync:user-a', 1, clock.now())).resolves.toBeUndefined();
+  });
+});
+
+describe('sync lock subject fencing (cross-tab account switch)', () => {
+  it('does not release a lease once another subject owns it', async () => {
+    const clock = new TestClock();
+    const persistence = new MemoryLeasePersistence();
+    let subject = 'user-a';
+    const lock = createSyncLock(() => subject, 'tab-a', { persistence, clock, ttlMs: 5_000 });
+
+    const acquired = await lock.acquire();
+    expect(acquired.acquired).toBe(true);
+
+    // Mid-run cross-tab switch: the same tab now verifies a DIFFERENT subject.
+    // Another tab (owner `tab-b`) has taken the user-b lease, while this tab
+    // still holds its bookkeeping for the user-a lease it acquired.
+    subject = 'user-b';
+    const otherTab = createLeaseCoordinator({ persistence, clock });
+    await otherTab.acquire(syncLeaseName('user-b'), 'user-b', 'tab-b', 5_000);
+
+    // Releasing must NOT tombstone the user-b lease: the release is fenced to
+    // the subject (`user-a`) the lease was acquired under.
+    await lock.release();
+
+    const userBLease = await persistence.read(syncLeaseName('user-b'));
+    expect(userBLease?.ownerId).toBe('tab-b');
+    expect(userBLease?.expiresAt).toBeGreaterThan(clock.now());
+  });
+
+  it('releases normally when the subject is unchanged', async () => {
+    const clock = new TestClock();
+    const persistence = new MemoryLeasePersistence();
+    const lock = createSyncLock(() => 'user-a', 'tab-a', { persistence, clock, ttlMs: 5_000 });
+    await lock.acquire();
+    await lock.release();
+
+    const lease = await persistence.read(syncLeaseName('user-a'));
+    // A released lease is an expired tombstone (fencing counter retained).
+    expect(lease?.expiresAt).toBe(0);
   });
 });

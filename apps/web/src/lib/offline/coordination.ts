@@ -22,7 +22,7 @@ export interface LeasePersistence {
 export interface LeaseCoordinator {
   acquire(name: string, subject: string, ownerId: string, ttlMs: number): Promise<LeaseResult>;
   renew(name: string, ownerId: string, ttlMs: number): Promise<LeaseRecord | null>;
-  release(name: string, ownerId: string): Promise<void>;
+  release(name: string, ownerId: string, subject?: string): Promise<void>;
 }
 
 export interface LeaseResult {
@@ -98,9 +98,17 @@ export function createLeaseCoordinator({
     return swapped ? renewed : null;
   }
 
-  async function release(name: string, ownerId: string): Promise<void> {
+  /**
+   * Releases an owned lease. When `subject` is supplied it must ALSO match the
+   * current lease subject: a cross-tab account switch that left this tab holding
+   * a stale subject's lease can therefore never release (or tombstone) a lease
+   * now owned by another subject.
+   */
+  async function release(name: string, ownerId: string, subject?: string): Promise<void> {
     const current = await persistence.read(name);
-    if (current?.ownerId === ownerId) {
+    const ownsLease = current?.ownerId === ownerId;
+    const subjectMatches = subject === undefined || current?.subject === subject;
+    if (ownsLease && subjectMatches) {
       // Keep the fencing counter monotonic: persist an expired tombstone rather
       // than deleting, so a reacquisition gets a strictly newer token and the
       // released owner's token can never be replayed as current.
@@ -143,20 +151,26 @@ export function createSyncLock(
 } {
   const coordinator = createLeaseCoordinator({ persistence: options.persistence, clock: options.clock });
   let activeName: string | null = null;
+  let activeSubject: string | null = null;
 
   return {
     acquire: async () => {
       const subject = getSubject();
       if (!subject) return { acquired: false, ownerId, lease: null };
       activeName = syncLeaseName(subject);
+      activeSubject = subject;
       const result = await coordinator.acquire(activeName, subject, ownerId, options.ttlMs);
       return { acquired: result.acquired, ownerId: result.lease?.ownerId ?? ownerId, lease: result.lease };
     },
     release: async () => {
       if (!activeName) return;
       const name = activeName;
+      const subject = activeSubject;
       activeName = null;
-      await coordinator.release(name, ownerId);
+      activeSubject = null;
+      // Pass the subject the lease was acquired under so a cross-tab account
+      // switch can never release a lease now owned by a different subject.
+      await coordinator.release(name, ownerId, subject ?? undefined);
     },
     readLease: () => (activeName ? options.persistence.read(activeName) : Promise.resolve(null)),
   };

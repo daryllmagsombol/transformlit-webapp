@@ -234,12 +234,6 @@ export function cancelAccountExit(): void {
   accountLifecycle().cancelExit();
 }
 
-/** Retries a deferred remote invalidation (e.g. after connectivity returns). */
-export async function retryDeferredLogout(): Promise<ExitDecision> {
-  configureAccountExit();
-  return withAuthLifecycleLock(() => accountLifecycle().resolveDeferredLogout());
-}
-
 /** Resumes an interrupted exit after restart (barrier-only or deferred). */
 export async function resumeAccountExit(): Promise<ExitDecision> {
   configureAccountExit();

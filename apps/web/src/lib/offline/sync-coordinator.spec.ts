@@ -523,6 +523,28 @@ describe('SyncCoordinator', () => {
     expect(harness.store.rows).toHaveLength(1);
   });
 
+  it('stops a multi-book snapshot refresh when the subject changes mid-run (I-2)', async () => {
+    const bookA = 'book-a';
+    const bookB = 'book-b';
+    const harness = makeHarness();
+    harness.store.rows.push(
+      operation({ id: 'a', seq: 1, bookId: bookA }),
+      operation({ id: 'b', seq: 2, bookId: bookB }),
+    );
+    // Return the FIRST book's snapshot, then switch the verified owner to a
+    // different subject while the first merge is applied (a cross-tab switch).
+    harness.snapshotStore.applyMerge = jest.fn(async () => {
+      harness.lifecycle.owner = { subject: 'subject-b', epoch: 9 };
+    });
+
+    await harness.coordinator.refreshSnapshots();
+
+    // Only the first book was fetched; the stale run stopped before projecting
+    // the next book into the old owner's records.
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.snapshotStore.applyMerge).toHaveBeenCalledTimes(1);
+  });
+
   it('discards ONLY true conflicts on request (actionable recovery)', async () => {
     const harness = makeHarness();
     harness.store.rows.push(

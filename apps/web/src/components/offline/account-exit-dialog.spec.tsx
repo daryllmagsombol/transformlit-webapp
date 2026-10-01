@@ -112,4 +112,14 @@ describe('AccountExitDialog', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/reset failed/i);
     expect(screen.getByRole('button', { name: /reset this device/i })).toBeDisabled();
   });
+
+  it('disables the confirmation checkbox while busy (M-3)', () => {
+    renderDialog({ mode: 'recovery', work: EMPTY, busy: true, onResetDevice: jest.fn() });
+    expect(screen.getByLabelText(/permanently discards/i)).toBeDisabled();
+  });
+
+  it('leaves the confirmation checkbox enabled when not busy (M-3)', () => {
+    renderDialog({ mode: 'recovery', work: EMPTY, busy: false, onResetDevice: jest.fn() });
+    expect(screen.getByLabelText(/permanently discards/i)).toBeEnabled();
+  });
 });

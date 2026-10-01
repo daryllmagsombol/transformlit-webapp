@@ -107,9 +107,11 @@ export interface AuthLifecycle {
   epoch(): Promise<number>;
   /**
    * Restores a persisted local owner after a restart. Idempotent; safe to call
-   * on every bootstrap. Returns the restored owner (or null).
+   * on every bootstrap. When a currently-verified subject is supplied and
+   * differs from the persisted one, a mismatch is recorded so replay/writes fail
+   * closed until a verified activation reconciles ownership.
    */
-  hydrate(): Promise<AccountOwner | null>;
+  hydrate(verifiedSubject?: string | null): Promise<AccountOwner | null>;
   /** Whether private writes are currently authorized. */
   writePermit(): WritePermit;
   /** Whether replay may proceed for the established owner. */
@@ -261,9 +263,11 @@ export class AccountLifecycle implements AuthLifecycle {
    * Restores the persisted owner into memory. Idempotent: when an owner is
    * already present it is a no-op, so it is safe to call on every bootstrap.
    * This is what makes the different-subject fail-closed guard apply across
-   * restarts (a new tab sees the previously established owner).
+   * restarts (a new tab sees the previously established owner). When a verified
+   * subject is supplied and differs from the persisted owner, a mismatch is
+   * recorded so replay/writes fail closed until ownership is reconciled.
    */
-  async hydrate(): Promise<AccountOwner | null> {
+  async hydrate(verifiedSubject: string | null = null): Promise<AccountOwner | null> {
     // A durable barrier or deferred logout means the previous session must not
     // be silently restored: the old account is mid-exit. Automatically RESUME
     // the interrupted exit so a crash cannot leave activation blocked forever
@@ -277,8 +281,10 @@ export class AccountLifecycle implements AuthLifecycle {
       await this.resumeExit();
       return this.context.getOwner();
     }
-    if (this.context.hasEstablishedOwner()) return this.context.getOwner();
-    const restored = await this.context.restore();
+    // Reconcile the in-memory/persisted owner against the verified subject on
+    // EVERY hydrate (not only the first): a refresh that verifies a different
+    // subject must flag the stale owner so replay never reports READY under it.
+    const restored = await this.context.restore(verifiedSubject);
     if (restored) this.notify();
     return restored;
   }
@@ -361,6 +367,9 @@ export class AccountLifecycle implements AuthLifecycle {
     // Freeze new writes while exiting (draining) so no edit lands during the
     // commit window between the drain decision and the durable barrier.
     if (this.freezing) return { permitted: false, reason: 'BLOCKED' };
+    // A persisted owner that a verified subject has already contradicted must
+    // not authorize writes until ownership is reconciled.
+    if (this.context.hasOwnerMismatch()) return { permitted: false, reason: 'BLOCKED' };
     const owner = this.context.getOwner();
     if (this.authRequired) return { permitted: false, reason: 'AUTH_REQUIRED' };
     if (!owner) return { permitted: false, reason: 'NO_OWNER' };
@@ -369,6 +378,9 @@ export class AccountLifecycle implements AuthLifecycle {
 
   requireReplayIdentity(): ReplayIdentity {
     if (this.freezing) return { status: 'PAUSED', reason: 'BLOCKED' };
+    // Fail closed on a known subject mismatch: never report READY (and thus
+    // authorize replay) under a stale owner.
+    if (this.context.hasOwnerMismatch()) return { status: 'PAUSED', reason: 'BLOCKED' };
     const owner = this.context.getOwner();
     if (this.authRequired) return { status: 'PAUSED', reason: 'AUTH_REQUIRED' };
     if (!owner) return { status: 'PAUSED', reason: 'NO_OWNER' };

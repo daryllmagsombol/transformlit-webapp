@@ -71,10 +71,14 @@ export function resetAccountExitWiringForTests(): void {
  * to call on every bootstrap; this is what makes the different-subject
  * fail-closed guard apply across restarts. It first installs the real exit deps
  * so an interrupted exit is retried rather than left blocking activation.
+ *
+ * `verifiedSubject` (when supplied) is the currently-verified JWT subject; a
+ * persisted owner for a DIFFERENT subject is not revived, so a stale owner can
+ * never authorize replay under a verified session it does not own.
  */
-export async function hydrateAccountLifecycle(): Promise<void> {
+export async function hydrateAccountLifecycle(verifiedSubject?: string | null): Promise<void> {
   await ensureAccountExitWired();
-  await lifecycle.hydrate();
+  await lifecycle.hydrate(verifiedSubject);
 }
 
 /**
@@ -109,7 +113,10 @@ export async function installEpochTaggedAuth<T>(
   result: EpochTaggedResult<T>,
   install: (ticket: AuthInstallTicket) => boolean,
 ): Promise<InstallOutcome> {
-  await hydrateAccountLifecycle();
+  // Reconcile the persisted owner against the VERIFIED subject before any
+  // activation: a stale owner for a different subject is flagged so replay
+  // cannot report READY under it, and `installIdentity` then fails closed.
+  await hydrateAccountLifecycle(result.subject);
   const outcome = await lifecycle.installIdentity(result);
   if (outcome.status !== 'INSTALLED') return outcome;
 

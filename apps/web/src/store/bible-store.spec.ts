@@ -1,4 +1,4 @@
-import { useBibleStore } from './bible-store';
+import { useBibleStore, scopeToSubject } from './bible-store';
 
 describe('useBibleStore', () => {
   beforeEach(() => {
@@ -70,6 +70,21 @@ describe('useBibleStore', () => {
     store.setLastPosition('BSB', { book: 'ROM', chapter: 8 });
     store.setAccountSubject('user-a');
     expect(useBibleStore.getState().lastPosition['BSB']).toEqual({ book: 'ROM', chapter: 8 });
+  });
+
+  it('returns an empty patch when re-selecting the same subject (M-4)', () => {
+    const state = useBibleStore.getState();
+    state.setAccountSubject('user-a');
+    const current = useBibleStore.getState();
+
+    // Re-selecting the SAME subject yields no patch at all — never the full
+    // persisted projection (which would churn translation/index/position).
+    expect(scopeToSubject(current, 'user-a')).toEqual({});
+
+    // A NEW subject yields only the scoped reset, not the persisted projection.
+    const changed = scopeToSubject(current, 'user-b');
+    expect(changed).toEqual({ subject: 'user-b', lastPosition: {}, indexStatus: {} });
+    expect(changed).not.toHaveProperty('translation');
   });
 
   it('never exposes a Bible outbox queue', () => {

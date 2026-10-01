@@ -157,6 +157,7 @@ export function AccountExitDialog({
               id={confirmId}
               type="checkbox"
               checked={confirmed}
+              disabled={busy}
               onChange={(event) => setConfirmed(event.target.checked)}
               className="mt-1"
             />

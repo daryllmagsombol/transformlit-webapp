@@ -141,6 +141,32 @@ describe('account lifecycle activation gating', () => {
     expect(lifecycle.writePermit()).toMatchObject({ permitted: false, reason: 'AUTH_REQUIRED' });
     expect(lifecycle.requireReplayIdentity()).toMatchObject({ status: 'PAUSED', reason: 'AUTH_REQUIRED' });
   });
+
+  it('does not report READY when a verified subject contradicts the persisted owner (I-1)', async () => {
+    const harness = makeHarness();
+    harness.persistence.state = {
+      id: 'lifecycle',
+      state: 'ACTIVE',
+      subject: SUBJECT,
+      epoch: 4,
+      updatedAt: 1,
+    };
+
+    // A different verified subject is supplied on restore: the persisted owner
+    // must not authorize replay.
+    await harness.lifecycle.hydrate('subject-b');
+
+    expect(harness.lifecycle.requireReplayIdentity()).toMatchObject({
+      status: 'PAUSED',
+      reason: 'BLOCKED',
+    });
+    expect(harness.lifecycle.writePermit()).toMatchObject({ permitted: false, reason: 'BLOCKED' });
+
+    // Re-hydrating with the verified subject MATCHING the persisted owner
+    // reconciles ownership and restores READY; a different subject stays paused.
+    await harness.lifecycle.hydrate(SUBJECT);
+    expect(harness.lifecycle.requireReplayIdentity().status).toBe('READY');
+  });
 });
 
 describe('controlled drain before exit', () => {

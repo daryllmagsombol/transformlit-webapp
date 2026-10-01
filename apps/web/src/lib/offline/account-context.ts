@@ -46,6 +46,7 @@ export function assertWriteEligibility(
 export class AccountContext {
   private owner: AccountOwner | null = null;
   private display: AuthDisplayState | null = null;
+  private ownerMismatch = false;
   private readonly persistence: LifecyclePersistence;
 
   constructor(persistence: LifecyclePersistence) {
@@ -54,6 +55,15 @@ export class AccountContext {
 
   getOwner(): AccountOwner | null {
     return this.owner;
+  }
+
+  /**
+   * True when a known verified subject differed from the persisted owner during
+   * restore, so the stale owner was rejected. Replay/writes must fail closed
+   * until the owner is reconciled by a verified activation.
+   */
+  hasOwnerMismatch(): boolean {
+    return this.ownerMismatch;
   }
 
   getDisplay(): AuthDisplayState | null {
@@ -76,10 +86,19 @@ export class AccountContext {
     this.display = display;
   }
 
-  async restore(): Promise<AccountOwner | null> {
+  /**
+   * Revives the persisted owner. When a currently-verified subject is known and
+   * differs from the persisted one, the persisted owner is retained (so the
+   * different-subject fail-closed guard still applies) but a mismatch is
+   * recorded: replay/writes stay unauthorized until a verified activation
+   * reconciles ownership. A stale persisted owner can therefore never report
+   * READY under a subject the verified session no longer owns.
+   */
+  async restore(verifiedSubject: string | null = null): Promise<AccountOwner | null> {
     const record = await this.persistence.readState();
     if (record?.subject) {
       this.owner = { subject: record.subject, epoch: record.epoch };
+      this.ownerMismatch = verifiedSubject !== null && verifiedSubject !== record.subject;
     }
     return this.owner;
   }
@@ -102,6 +121,7 @@ export class AccountContext {
     };
     await this.persistence.writeState(next);
     this.owner = { subject, epoch };
+    this.ownerMismatch = false;
     return this.owner;
   }
 
@@ -117,5 +137,6 @@ export class AccountContext {
     };
     await this.persistence.writeState(next);
     this.owner = null;
+    this.ownerMismatch = false;
   }
 }

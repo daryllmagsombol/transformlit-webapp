@@ -94,13 +94,39 @@ async function callRestRefresh(): Promise<RestRefreshPayload> {
 }
 
 /**
- * Verifies the immutable subject from the access token and installs the
- * session through the lifecycle gate. Returns false (installing nothing) when
- * the token has no verifiable subject or the gate rejects it.
+ * Fails closed on a genuine authentication failure: marks replay paused,
+ * clears BOTH the in-memory token and the persisted display profile
+ * (unconditionally, so a pre-hydration 401 cannot leave a stale `user` in
+ * `auth-storage`), and — when `redirect` is true — navigates to the login page.
+ *
+ * The redirect is suppressed for the bootstrap path: `bootstrapAuth()` runs on
+ * the login page itself, so redirecting on a genuine 401 would reload /login,
+ * re-enter bootstrap, and loop forever.
  */
-async function installVerifiedSession(payload: RestRefreshPayload, originEpoch: number): Promise<boolean> {
+function requireAuth(redirect: boolean): void {
+  markAuthRequired();
+  clearAuthSession();
+  if (redirect) redirectOnAuthRequired();
+}
+
+/**
+ * Verifies the immutable subject from the access token and installs the session
+ * through the lifecycle gate. Returns false (installing nothing) when the token
+ * has no verifiable subject. A missing/invalid subject is an authentication
+ * failure, not a transient one, so it also marks replay auth-required and clears
+ * the dead session; `redirect` controls whether the login navigation happens
+ * (false on the bootstrap path, which already runs on /login).
+ */
+async function installVerifiedSession(
+  payload: RestRefreshPayload,
+  originEpoch: number,
+  redirect: boolean,
+): Promise<boolean> {
   const subject = decodeJwt(payload.accessToken)?.sub;
-  if (!subject) return false;
+  if (!subject) {
+    requireAuth(redirect);
+    return false;
+  }
 
   const outcome = await installEpochTaggedAuth(
     { epoch: originEpoch, subject, value: payload },
@@ -111,17 +137,20 @@ async function installVerifiedSession(payload: RestRefreshPayload, originEpoch: 
 
 /**
  * Handles a failed refresh/bootstrap according to classification. Only a
- * genuine `AUTH_REQUIRED` failure may clear the session and redirect to login;
- * a `TRANSIENT` network/5xx failure preserves the in-memory token, the
- * persisted profile, and the current route, returning false so callers simply
- * pause auth-dependent work. Returns the classification for callers.
+ * genuine `AUTH_REQUIRED` failure may clear the session (and, for the refresh
+ * path, redirect to login); a `TRANSIENT` network/5xx failure preserves the
+ * in-memory token, the persisted profile, and the current route, returning false
+ * so callers simply pause auth-dependent work. `options.redirect` defaults to
+ * true and is set false by the bootstrap path, which must never self-redirect
+ * from the login page. Returns the classification for callers.
  */
-function handleRefreshFailure(error: unknown): AuthFailureClassification {
+function handleRefreshFailure(
+  error: unknown,
+  options: { readonly redirect?: boolean } = {},
+): AuthFailureClassification {
   const classification = classifyAuthError(error);
   if (classification === 'AUTH_REQUIRED') {
-    markAuthRequired();
-    clearAuthSession();
-    redirectOnAuthRequired();
+    requireAuth(options.redirect ?? true);
   } else {
     markTransient();
   }
@@ -139,7 +168,7 @@ async function doRefreshTokens(): Promise<boolean> {
   const originEpoch = await captureOriginEpoch();
   try {
     const payload = await callRestRefresh();
-    return await installVerifiedSession(payload, originEpoch);
+    return await installVerifiedSession(payload, originEpoch, true);
   } catch (error) {
     handleRefreshFailure(error);
     return false;
@@ -167,29 +196,26 @@ export function refreshTokens(): Promise<boolean> {
 /**
  * Restores an existing session on cold start / OAuth redirect: if an access
  * token is already present (memory) it is a no-op; otherwise it tries the REST
- * refresh endpoint using the httpOnly cookie. On failure the user is treated
- * as signed out (no hard redirect — callers decide).
+ * refresh endpoint using the httpOnly cookie. Because this runs on the login
+ * page, a genuine 401 is classified AUTH_REQUIRED (mark + clear) but NEVER
+ * redirects — redirecting would reload /login and loop.
  */
 async function bootstrapAttempt(): Promise<boolean> {
   const originEpoch = await captureOriginEpoch();
   try {
     const payload = await callRestRefresh();
-    return await installVerifiedSession(payload, originEpoch);
+    return await installVerifiedSession(payload, originEpoch, false);
   } catch (error) {
-    const classification = handleRefreshFailure(error);
+    const classification = handleRefreshFailure(error, { redirect: false });
     if (classification === 'TRANSIENT') {
       // A cold-start network/5xx outage must preserve the persisted profile so
       // the user is not silently signed out; only a genuine 401 clears state.
       return false;
     }
-    // A concurrent manual login (or another refresh) may have established a
-    // session while this bootstrap call was in flight. Never clear a session
-    // that did not exist when we began — otherwise a slow failing refresh can
-    // wipe a freshly logged-in user and bounce them back to /login.
-    if (useAuthStore.getState().user === null) {
-      clearAuth();
-      useAuthStore.getState().clearAuth();
-    }
+    // Genuine 401: `handleRefreshFailure` already cleared the session (marking
+    // replay auth-required) WITHOUT redirecting. A concurrent manual login may
+    // have established a fresh session in the meantime; never clear that — it
+    // would bounce a just-signed-in user back to /login.
     return false;
   }
 }

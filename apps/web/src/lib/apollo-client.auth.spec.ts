@@ -81,6 +81,41 @@ describe('auth refresh classification and activation fencing', () => {
 
     await expect(bootstrapAuth()).resolves.toBe(false);
     expect(useAuthStore.getState().user).toBeNull();
+    // C1: bootstrap must never redirect; otherwise the login page reloads into
+    // itself and loops.
+    expect(redirectMock).not.toHaveBeenCalled();
+  });
+
+  it('clears and redirects when the REFRESH path token has no verifiable subject (I-4)', async () => {
+    useAuthStore.setState({ user: persistedUser as never, isHydrated: true });
+    localStorage.setItem(
+      'auth-storage',
+      JSON.stringify({ state: { user: persistedUser }, version: 0 }),
+    );
+    fetchMock.mockResolvedValue(okResponse({ id: 'user-a' }, 'not-a-jwt'));
+
+    await expect(refreshTokens()).resolves.toBe(false);
+
+    // Classified as AUTH_REQUIRED: clear the dead session and redirect on the
+    // authenticated refresh path.
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(localStorage.getItem('auth-storage')).not.toContain('user-a');
+    expect(redirectMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT redirect when bootstrap gets a genuine 401 (C-1 no self-reload loop)', async () => {
+    useAuthStore.setState({ user: persistedUser as never, isHydrated: true });
+    localStorage.setItem(
+      'auth-storage',
+      JSON.stringify({ state: { user: persistedUser }, version: 0 }),
+    );
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
+
+    await expect(bootstrapAuth()).resolves.toBe(false);
+
+    expect(redirectMock).not.toHaveBeenCalled();
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(localStorage.getItem('auth-storage')).not.toContain('user-a');
   });
 
   it('serializes concurrent in-tab refreshes into a single network call', async () => {
@@ -154,6 +189,25 @@ describe('auth refresh classification and activation fencing', () => {
       fetchMock.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
       await expect(refreshTokens()).resolves.toBe(false);
 
+      expect(useAuthStore.getState().user).toBeNull();
+      expect(localStorage.getItem('auth-storage')).not.toContain('user-a');
+      expect(redirectMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the persisted profile on a 401 even when the in-memory user is null (I-3 pre-hydration)', async () => {
+      // Persisted profile exists but the store has not hydrated a user into
+      // memory yet.
+      localStorage.setItem(
+        'auth-storage',
+        JSON.stringify({ state: { user: persistedUser }, version: 0 }),
+      );
+      useAuthStore.setState({ user: null, isHydrated: false });
+
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
+      await expect(refreshTokens()).resolves.toBe(false);
+
+      // The persisted store must be cleared unconditionally, not only when an
+      // in-memory user happened to be present.
       expect(useAuthStore.getState().user).toBeNull();
       expect(localStorage.getItem('auth-storage')).not.toContain('user-a');
       expect(redirectMock).toHaveBeenCalledTimes(1);

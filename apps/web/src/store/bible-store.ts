@@ -42,10 +42,15 @@ function selectPersisted(state: BibleStore): PersistedBibleState {
   };
 }
 
-/** Drops any stored position/index belonging to a different account subject. */
-function scopeToSubject(state: BibleStore, subject: string | null): Partial<BibleStore> {
-  if (state.subject === subject) return selectPersisted(state);
-  return { translation: state.translation, subject, lastPosition: {}, indexStatus: {} };
+/**
+ * Computes the state change for binding navigation prefs to an account subject.
+ * Re-selecting the same subject returns an EMPTY patch (a true no-op, never the
+ * full persisted projection). A change resets per-account derived data. Exported
+ * for the store's unit tests.
+ */
+export function scopeToSubject(state: BibleStore, subject: string | null): Partial<BibleStore> {
+  if (state.subject === subject) return {};
+  return { subject, lastPosition: {}, indexStatus: {} };
 }
 
 export const useBibleStore = create<BibleStore>()(

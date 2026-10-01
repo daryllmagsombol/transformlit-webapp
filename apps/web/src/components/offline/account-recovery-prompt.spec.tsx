@@ -64,4 +64,13 @@ describe('AccountRecoveryPrompt', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/could not reset this device/i);
   });
+
+  it('fails closed (shows recovery) when the eligibility read rejects (M-5)', async () => {
+    mockActivationEligible.mockRejectedValue(new Error('read failed'));
+    render(<AccountRecoveryPrompt />);
+
+    // A failed eligibility read must not be swallowed into "eligible": surface
+    // the recovery escape instead of leaving a possibly-blocked session stuck.
+    expect(await screen.findByRole('dialog')).toHaveTextContent(/could not be confirmed/i);
+  });
 });

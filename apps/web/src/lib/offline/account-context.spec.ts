@@ -69,4 +69,25 @@ describe('account context', () => {
     expect(() => assertWriteEligibility(null, 'user-a', 3)).toThrow(SubjectMismatchError);
     expect(assertWriteEligibility(owner, 'user-a', 3)).toBeUndefined();
   });
+
+  it('flags a persisted owner that a different verified subject contradicts (I-1)', async () => {
+    const persistence = new MemoryLifecyclePersistence();
+    persistence.state = { id: 'lifecycle', state: 'ACTIVE', subject: 'user-a', epoch: 2, updatedAt: 1 };
+    const context = new AccountContext(persistence);
+
+    // Cold restore without a verified subject adopts the persisted owner.
+    await context.restore();
+    expect(context.getOwner()).toEqual({ subject: 'user-a', epoch: 2 });
+    expect(context.hasOwnerMismatch()).toBe(false);
+
+    // A restore against a DIFFERENT verified subject records the mismatch so
+    // replay/writes fail closed instead of reporting READY under the stale owner.
+    await context.restore('user-b');
+    expect(context.hasOwnerMismatch()).toBe(true);
+
+    // A verified match clears the mismatch.
+    await context.restore('user-a');
+    expect(context.hasOwnerMismatch()).toBe(false);
+    expect(context.getOwner()).toEqual({ subject: 'user-a', epoch: 2 });
+  });
 });
