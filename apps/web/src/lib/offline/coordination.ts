@@ -124,19 +124,40 @@ export function leaseStillValid(
   return isLeaseActive(lease, now) && lease?.fencingToken === expectedToken;
 }
 
-/** Builds a sync lock over an account's lease; returns null when unavailable. */
+/**
+ * Builds a sync lock over an account's lease. The subject is resolved from
+ * `getSubject()` at each acquire/release so a coordinator created before
+ * authentication (or surviving an account switch) always fences the CURRENT
+ * owner's lease rather than the subject captured at construction. The lease
+ * name active for the in-flight run is remembered so `release`/`readLease`
+ * always target the same lease even if the owner changes mid-run.
+ */
 export function createSyncLock(
-  subject: string,
+  getSubject: () => string | null,
   ownerId: string,
   options: { readonly persistence: LeasePersistence; readonly clock: Clock; readonly ttlMs: number },
-): { acquire: () => Promise<{ acquired: boolean; ownerId: string }>; release: () => Promise<void> } {
+): {
+  acquire: () => Promise<{ acquired: boolean; ownerId: string; lease: LeaseRecord | null }>;
+  release: () => Promise<void>;
+  readLease: () => Promise<LeaseRecord | null>;
+} {
   const coordinator = createLeaseCoordinator({ persistence: options.persistence, clock: options.clock });
-  const name = syncLeaseName(subject);
+  let activeName: string | null = null;
+
   return {
     acquire: async () => {
-      const result = await coordinator.acquire(name, subject, ownerId, options.ttlMs);
-      return { acquired: result.acquired, ownerId: result.lease?.ownerId ?? ownerId };
+      const subject = getSubject();
+      if (!subject) return { acquired: false, ownerId, lease: null };
+      activeName = syncLeaseName(subject);
+      const result = await coordinator.acquire(activeName, subject, ownerId, options.ttlMs);
+      return { acquired: result.acquired, ownerId: result.lease?.ownerId ?? ownerId, lease: result.lease };
     },
-    release: () => coordinator.release(name, ownerId),
+    release: async () => {
+      if (!activeName) return;
+      const name = activeName;
+      activeName = null;
+      await coordinator.release(name, ownerId);
+    },
+    readLease: () => (activeName ? options.persistence.read(activeName) : Promise.resolve(null)),
   };
 }

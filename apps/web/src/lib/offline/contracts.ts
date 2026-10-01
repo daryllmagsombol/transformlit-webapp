@@ -484,6 +484,11 @@ export function bookDownloadKey(subject: string, bookId: string): string {
   return qualifyKey(subject, 'download', 'book', bookId);
 }
 
+/** Key for one durable outbox acknowledgement receipt (one per operation). */
+export function receiptKey(subject: string, operationId: string): string {
+  return qualifyKey(subject, 'receipt', operationId);
+}
+
 /** Key for one immutable book-version descriptor. */
 export function bookVersionKey(subject: string, bookId: string, contentVersion: number): string {
   return qualifyKey(subject, 'bookversion', bookId, contentVersion);

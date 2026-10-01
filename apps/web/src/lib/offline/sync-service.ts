@@ -1,16 +1,18 @@
 'use client';
 
-import { OfflineDatabase } from './database';
+import { OfflineDatabase, createIndexedDbLeasePersistence } from './database';
 import { accountLifecycle } from './account-activation';
-import { createIndexedDbLeasePersistence } from './database';
 import { createSyncLock } from './coordination';
+import { qualifyKey, type ConflictCopyRecord, type TombstoneRecord } from './contracts';
 import { dispatchReaderOperation } from '../reader/api';
 import { fetchAnnotationSnapshot } from '../reader/api';
 import {
   SyncCoordinator,
+  type BookMergeResult,
   type OperationOutcome,
   type OutboxStore,
   type ReceiptStore,
+  type SnapshotApplyStore,
   type SnapshotSource,
 } from './sync-coordinator';
 import type { OutboxOperationRecord } from './outbox';
@@ -40,6 +42,7 @@ export function toOutcome(
         kind: 'CONFLICT',
         entityId: variant.entityId,
         serverRevision: variant.serverRevision,
+        serverValue: variant.serverValue,
         conflictCopyId: variant.conflictCopy?.id ?? null,
       };
     case 'ReaderOperationIncompatibleVersion':
@@ -56,7 +59,7 @@ export function toOutcome(
 }
 
 /** Builds the real outbox store over Task 4 IndexedDB (account-scoped). */
-function createOutboxStore(database: OfflineDatabase): OutboxStore {
+export function createOutboxStore(database: OfflineDatabase): OutboxStore {
   return {
     list: (subject) => database.getAllByIndex<OutboxOperationRecord>('outbox', 'subject', subject),
     remove: (id) => database.delete('outbox', id),
@@ -66,18 +69,52 @@ function createOutboxStore(database: OfflineDatabase): OutboxStore {
 
 /**
  * Builds the real receipt store. `recordAndRemove` uses the Task 4
- * `acknowledgeOperation` primitive so the receipt and the acknowledged
- * operation's removal commit in ONE transaction.
+ * `acknowledgeOperation` primitive so the COMPLETE receipt (id + subject) and
+ * the acknowledged operation's removal commit in ONE transaction.
+ * `recordRetained` stores a durable CONFLICT receipt without removing the
+ * operation (it must stay queued until resolved). There is no non-atomic
+ * fallback.
  */
 function createReceiptStore(database: OfflineDatabase): ReceiptStore {
   return {
-    record: async () => {
-      // A receipt must always be stored together with its operation removal;
-      // the non-atomic path is intentionally unused in production.
-      throw new Error('ReceiptStore.record must not be used; use recordAndRemove');
-    },
     recordAndRemove: (outboxId, subject, epoch, receipt) =>
       database.acknowledgeOperation(subject, epoch, outboxId, receipt),
+    recordRetained: (subject, epoch, receipt) =>
+      database.recordReceipt(subject, epoch, receipt),
+  };
+}
+
+/**
+ * Applies a merged snapshot to durable local state: server tombstones become
+ * durable deletion history and conflict copies are persisted so conflicts are
+ * surfaced (not silently dropped). Server-annotation projection into the
+ * individual `readerRecords` rows is intentionally deferred: local reads
+ * discriminate by subject-qualified keys, so merging raw server rows requires a
+ * separate projection (recorded in the Task 11 report).
+ */
+function createSnapshotStore(database: OfflineDatabase): SnapshotApplyStore {
+  return {
+    async applyMerge(owner, result: BookMergeResult): Promise<void> {
+      for (const tombstone of result.tombstones) {
+        const record: TombstoneRecord = {
+          id: qualifyKey(owner.subject, 'tombstone', tombstone.entityId),
+          subject: owner.subject,
+          entityId: tombstone.entityId,
+          kind: tombstone.kind,
+          revision: tombstone.revision,
+          deletedAt: tombstone.deletedAt,
+        };
+        await database.putAccountRecord(owner.subject, owner.epoch, 'tombstones', record);
+      }
+      for (const conflict of result.conflictCopies) {
+        const record: ConflictCopyRecord = {
+          ...conflict,
+          id: qualifyKey(owner.subject, 'conflict', conflict.id),
+          subject: owner.subject,
+        };
+        await database.putAccountRecord(owner.subject, owner.epoch, 'conflicts', record);
+      }
+    },
   };
 }
 
@@ -128,20 +165,21 @@ let shared: SyncCoordinator | null = null;
 export function syncCoordinator(): SyncCoordinator {
   if (shared) return shared;
   const database = new OfflineDatabase();
-  const subject = accountLifecycle().getOwner()?.subject ?? '';
   shared = new SyncCoordinator({
     store: createOutboxStore(database),
     receipts: createReceiptStore(database),
     send: async (input) => toOutcome(await dispatchReaderOperation(input as never)),
     lifecycle: { getOwner: () => accountLifecycle().getOwner() },
     snapshot: createSnapshotSource(),
-    lock: subject
-      ? createSyncLock(subject, tabId(), {
-          persistence: createIndexedDbLeasePersistence(database),
-          clock: { now: () => Date.now() },
-          ttlMs: 30_000,
-        })
-      : undefined,
+    snapshotStore: createSnapshotStore(database),
+    // The lease subject is resolved per acquire from the CURRENT owner, so a
+    // coordinator built before auth (or surviving an account switch) never
+    // holds the wrong subject's lease.
+    lock: createSyncLock(() => accountLifecycle().getOwner()?.subject ?? null, tabId(), {
+      persistence: createIndexedDbLeasePersistence(database),
+      clock: { now: () => Date.now() },
+      ttlMs: 30_000,
+    }),
   });
   return shared;
 }

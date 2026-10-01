@@ -5,25 +5,41 @@ import {
   type OperationOutcome,
   type OutboxStore,
   type ReceiptStore,
+  type SnapshotApplyStore,
   type SnapshotSource,
 } from './sync-coordinator';
 import { AuthHttpError } from '../auth';
-import type { AccountOwner } from './contracts';
+import {
+  OfflineStorageError,
+  qualifyKey,
+  type AccountOwner,
+  type LeaseRecord,
+  type OutboxReceiptRecord,
+} from './contracts';
 import type { OutboxOperationRecord } from './outbox';
+import { OfflineDatabase, resetOfflineDatabaseHandle } from './database';
+import {
+  createMemoryIndexedDb,
+  memoryIdbKeyRange,
+  type MemoryIndexedDb,
+} from '../../../test/helpers/memory-indexeddb';
 
 const OWNER: AccountOwner = { subject: 'subject-a', epoch: 4 };
 const BOOK = 'book-1';
 
 interface Harness {
   readonly store: OutboxStore & { rows: OutboxOperationRecord[] };
-  readonly receipts: ReceiptStore & { rows: Record<string, unknown>[] };
+  readonly receipts: ReceiptStore & { rows: OutboxReceiptRecord[]; removed: string[] };
   readonly send: jest.Mock<Promise<OperationOutcome>, [unknown]>;
   readonly snapshot: jest.Mock;
+  readonly snapshotStore: SnapshotApplyStore & { applied: unknown[] };
   readonly lifecycle: { owner: AccountOwner | null };
   readonly coordinator: SyncCoordinator;
   readonly clock: { value: number };
   readonly acquire: jest.Mock;
   readonly release: jest.Mock;
+  readonly readLease: jest.Mock;
+  readonly lease: { value: LeaseRecord | null };
 }
 
 function operation(
@@ -47,13 +63,19 @@ function operation(
   };
 }
 
+function leaseRecord(ownerId: string, token: number, expiresAt: number): LeaseRecord {
+  return { id: `sync:${OWNER.subject}`, subject: OWNER.subject, ownerId, fencingToken: token, acquiredAt: 0, expiresAt };
+}
+
 function makeHarness(overrides: Partial<CoordinatorDeps> = {}): Harness {
   const rows: OutboxOperationRecord[] = [];
-  const receiptRows: Record<string, unknown>[] = [];
+  const receiptRows: OutboxReceiptRecord[] = [];
+  const removed: string[] = [];
   const store: OutboxStore & { rows: OutboxOperationRecord[] } = {
     rows,
     list: jest.fn(async (subject: string) => rows.filter((row) => row.subject === subject)),
     remove: jest.fn(async (id: string) => {
+      removed.push(id);
       const index = rows.findIndex((row) => row.id === id);
       if (index >= 0) rows.splice(index, 1);
     }),
@@ -62,10 +84,19 @@ function makeHarness(overrides: Partial<CoordinatorDeps> = {}): Harness {
       if (index >= 0) rows[index] = row;
     }),
   };
-  const receipts: ReceiptStore & { rows: Record<string, unknown>[] } = {
+  // Mirrors production `acknowledgeOperation`: the COMPLETE receipt shape is
+  // stored and the operation removed in one atomic step.
+  const receipts: ReceiptStore & { rows: OutboxReceiptRecord[]; removed: string[] } = {
     rows: receiptRows,
-    record: jest.fn(async (record: Record<string, unknown>) => {
-      receiptRows.push(record);
+    removed,
+    recordAndRemove: jest.fn(async (outboxId: string, _subject: string, _epoch: number, receipt: OutboxReceiptRecord) => {
+      receiptRows.push(receipt);
+      removed.push(outboxId);
+      const index = rows.findIndex((row) => row.id === outboxId);
+      if (index >= 0) rows.splice(index, 1);
+    }),
+    recordRetained: jest.fn(async (_subject: string, _epoch: number, receipt: OutboxReceiptRecord) => {
+      receiptRows.push(receipt);
     }),
   };
   const send = jest.fn<Promise<OperationOutcome>, [unknown]>();
@@ -76,10 +107,18 @@ function makeHarness(overrides: Partial<CoordinatorDeps> = {}): Harness {
     tombstones: [],
     conflictCopies: [],
   }));
+  const snapshotStore: SnapshotApplyStore & { applied: unknown[] } = {
+    applied: [],
+    applyMerge: jest.fn(async (_owner: AccountOwner, result: unknown) => {
+      snapshotStore.applied.push(result);
+    }),
+  };
   const lifecycle: { owner: AccountOwner | null } = { owner: OWNER };
   const clock = { value: 1_000 };
-  const acquire = jest.fn(async () => ({ acquired: true, ownerId: 'tab-1' }));
+  const lease: { value: LeaseRecord | null } = { value: leaseRecord('tab-1', 1, Number.MAX_SAFE_INTEGER) };
+  const acquire = jest.fn(async () => ({ acquired: true, ownerId: 'tab-1', lease: lease.value }));
   const release = jest.fn(async () => undefined);
+  const readLease = jest.fn(async () => lease.value);
 
   const coordinator = new SyncCoordinator({
     store,
@@ -87,14 +126,15 @@ function makeHarness(overrides: Partial<CoordinatorDeps> = {}): Harness {
     send,
     lifecycle: { getOwner: () => lifecycle.owner },
     snapshot: snapshot as unknown as SnapshotSource,
-    lock: { acquire, release },
+    snapshotStore,
+    lock: { acquire, release, readLease },
     now: () => clock.value,
     baseBackoffMs: 10,
     maxBackoffMs: 40,
     ...overrides,
   });
 
-  return { store, receipts, send, snapshot, lifecycle, coordinator, clock, acquire, release };
+  return { store, receipts, send, snapshot, snapshotStore, lifecycle, coordinator, clock, acquire, release, readLease, lease };
 }
 
 describe('classifyDispatchError', () => {
@@ -104,6 +144,12 @@ describe('classifyDispatchError', () => {
     expect(classifyDispatchError({ status: 409 })).toBe('CONFLICT');
     expect(classifyDispatchError({ status: 422 })).toBe('INCOMPATIBLE_VERSION');
     expect(classifyDispatchError(new Error('Failed to fetch'))).toBe('TRANSIENT');
+  });
+
+  it('classifies storage failures distinctly and never as transient', () => {
+    expect(classifyDispatchError(new OfflineStorageError('quota'))).toBe('STORAGE_FAILURE');
+    expect(classifyDispatchError(new DOMException('quota', 'QuotaExceededError'))).toBe('STORAGE_FAILURE');
+    expect(classifyDispatchError(new DOMException('aborted', 'AbortError'))).toBe('STORAGE_FAILURE');
   });
 });
 
@@ -119,7 +165,7 @@ describe('SyncCoordinator', () => {
     expect(result.blockedReason).toBe('NO_OWNER');
   });
 
-  it('stores a create receipt and removes only that operation on APPLIED', async () => {
+  it('stores a COMPLETE receipt (id + subject) and removes only that operation on APPLIED', async () => {
     const harness = makeHarness();
     harness.store.rows.push(
       operation({ id: 'create', seq: 1, kind: 'ANNOTATION_CREATE', dependsOn: null, baseRevision: null }),
@@ -128,8 +174,21 @@ describe('SyncCoordinator', () => {
 
     await harness.coordinator.drain();
 
-    expect(harness.receipts.record).toHaveBeenCalledWith(
-      expect.objectContaining({ operationId: 'op-create', entityId: 'server-1', revision: 1, resultKind: 'APPLIED' }),
+    // The receipt must carry `id` and `subject` so production
+    // `acknowledgeOperation`'s subject guard accepts it and the `receipts`
+    // keyPath ('id') has a key. This drives the real recordAndRemove path.
+    expect(harness.receipts.recordAndRemove).toHaveBeenCalledWith(
+      'create',
+      OWNER.subject,
+      OWNER.epoch,
+      expect.objectContaining({
+        id: expect.any(String),
+        subject: OWNER.subject,
+        operationId: 'op-create',
+        entityId: 'server-1',
+        revision: 1,
+        resultKind: 'APPLIED',
+      }),
     );
     expect(harness.store.rows).toHaveLength(0);
   });
@@ -244,7 +303,7 @@ describe('SyncCoordinator', () => {
 
     await harness.coordinator.drain();
 
-    expect(harness.receipts.record).not.toHaveBeenCalled();
+    expect(harness.receipts.recordAndRemove).not.toHaveBeenCalled();
     expect(harness.store.rows).toHaveLength(1);
   });
 
@@ -273,31 +332,154 @@ describe('SyncCoordinator', () => {
     expect(result.blockedReason).toBe('LEASE_HELD');
   });
 
-  it('discards an acknowledgement when the lease expired mid-flight, leaving the op replayable', async () => {
-    const harness = makeHarness({ leaseTtlMs: 50 });
+  it('discards an acknowledgement when the lease fencing token is lost mid-flight, leaving the op replayable', async () => {
+    const harness = makeHarness();
     harness.store.rows.push(operation({ id: 'a', seq: 1 }));
     harness.send.mockImplementation(async () => {
-      // Time advances beyond the TTL while the request is in flight.
-      harness.clock.value += 10_000;
+      // Another tab took over the lease (new fencing token) while this request
+      // was in flight; the local TTL has NOT expired, so only the token proves it.
+      harness.lease.value = leaseRecord('tab-2', 2, Number.MAX_SAFE_INTEGER);
       return { kind: 'APPLIED', entityId: 'server-1', revision: 2, receiptId: 'r1' };
     });
 
     const result = await harness.coordinator.drain();
 
-    expect(harness.receipts.record).not.toHaveBeenCalled();
+    expect(harness.receipts.recordAndRemove).not.toHaveBeenCalled();
     expect(result.summary.stale).toBe(1);
     expect(harness.store.rows).toHaveLength(1);
   });
 
-  it('fetches and merges a snapshot for each book with pending work without losing the work', async () => {
+  it('publishes an acknowledgement when the lease token is still held after the round-trip', async () => {
+    const harness = makeHarness();
+    harness.store.rows.push(operation({ id: 'a', seq: 1 }));
+    harness.send.mockResolvedValue({ kind: 'APPLIED', entityId: 'server-1', revision: 2, receiptId: 'r1' });
+
+    const result = await harness.coordinator.drain();
+
+    expect(harness.receipts.recordAndRemove).toHaveBeenCalledTimes(1);
+    expect(result.summary.applied).toBe(1);
+    expect(harness.store.rows).toHaveLength(0);
+  });
+
+  it('classifies and surfaces an auth-required transport failure explicitly', async () => {
+    const harness = makeHarness();
+    harness.store.rows.push(operation({ id: 'a', seq: 1 }));
+    harness.send.mockRejectedValue(new AuthHttpError(401));
+    const statuses: Array<{ authRequired: boolean; state: string }> = [];
+    harness.coordinator.subscribe((status) => statuses.push(status));
+
+    const result = await harness.coordinator.drain();
+
+    expect(result.summary.authRequired).toBe(1);
+    expect(statuses.some((status) => status.authRequired)).toBe(true);
+    // The operation is retained for replay after reauthentication.
+    expect(harness.store.rows).toHaveLength(1);
+  });
+
+  it('classifies a storage failure distinctly and never treats it as transient', async () => {
+    const harness = makeHarness();
+    harness.store.rows.push(operation({ id: 'a', seq: 1 }));
+    harness.send.mockRejectedValue(new OfflineStorageError('quota exceeded'));
+
+    const result = await harness.coordinator.drain();
+
+    expect(result.summary.storageFailure).toBe(1);
+    expect(result.summary.transient).toBe(0);
+    const status = harness.coordinator.getStatus();
+    expect(status?.storageFailure).toBe(true);
+  });
+
+  it('never leaks retryDelayMs into the dispatched input and never mutates the stored payload', async () => {
+    const harness = makeHarness();
+    const originalPayload = { text: 'local' };
+    harness.store.rows.push(operation({ id: 'a', seq: 1, payload: originalPayload }));
+    harness.send.mockRejectedValueOnce(new Error('Failed to fetch'));
+
+    await harness.coordinator.drain();
+
+    // The retry reschedules WITHOUT touching the durable payload.
+    expect(harness.store.rows[0].payload).toEqual(originalPayload);
+    expect(harness.store.rows[0].payload).not.toHaveProperty('retryDelayMs');
+    expect(harness.store.rows[0].nextAttemptAt).toBeGreaterThanOrEqual(harness.clock.value);
+    expect((harness.send.mock.calls[0][0] as { retryDelayMs?: unknown }).retryDelayMs).toBeUndefined();
+
+    // A later successful retry must still send the pristine payload.
+    harness.send.mockResolvedValueOnce({ kind: 'APPLIED', entityId: 'server-1', revision: 2, receiptId: 'r1' });
+    await harness.coordinator.drain();
+    expect((harness.send.mock.calls[1][0] as { payload: unknown }).payload).toEqual(originalPayload);
+    expect((harness.send.mock.calls[1][0] as { retryDelayMs?: unknown }).retryDelayMs).toBeUndefined();
+  });
+
+  it('retains a conflicted op (blocking successors) while recording a durable conflict receipt', async () => {
+    const harness = makeHarness();
+    harness.store.rows.push(
+      operation({ id: 'create', seq: 1, kind: 'ANNOTATION_CREATE', dependsOn: null, baseRevision: null, entityKey: 'e1' }),
+      operation({ id: 'update', seq: 2, kind: 'ANNOTATION_UPDATE', dependsOn: 'create', baseRevision: 1, entityKey: 'e1' }),
+    );
+    harness.send.mockResolvedValue({
+      kind: 'CONFLICT',
+      entityId: 'server-1',
+      serverRevision: 5,
+      serverValue: { id: 'server-1', revision: 5 },
+      conflictCopyId: 'cc-1',
+    });
+
+    const result = await harness.coordinator.drain();
+
+    expect(result.summary.conflict).toBe(1);
+    expect(harness.receipts.recordRetained).toHaveBeenCalledWith(
+      OWNER.subject,
+      OWNER.epoch,
+      expect.objectContaining({ id: expect.any(String), subject: OWNER.subject, resultKind: 'CONFLICT' }),
+    );
+    expect(harness.store.rows.map((row) => row.id).sort()).toEqual(['create', 'update']);
+  });
+
+  it('fetches, merges AND applies a snapshot for each book without losing pending work', async () => {
     const harness = makeHarness();
     harness.store.rows.push(operation({ id: 'a', seq: 1, bookId: BOOK }));
     harness.send.mockRejectedValue(new Error('Failed to fetch'));
+    harness.snapshot.mockResolvedValue({
+      bookId: BOOK,
+      snapshotRevision: 3,
+      annotations: [],
+      tombstones: [{ entityId: 'bm-1', kind: 'BOOKMARK', revision: 2, deletedAt: 10 }],
+      conflictCopies: [],
+    });
 
-    await harness.coordinator.refreshSnapshots();
+    const report = await harness.coordinator.refreshSnapshots();
 
     expect(harness.snapshot).toHaveBeenCalledWith(BOOK);
+    expect(harness.snapshotStore.applied).toHaveLength(1);
+    expect(report).toMatchObject({ books: 1, tombstones: 1 });
+    // The merge result actually applied the tombstone (not discarded).
+    expect(harness.snapshotStore.applied[0]).toMatchObject({ bookId: BOOK, tombstones: expect.any(Array) });
     expect(harness.store.rows).toHaveLength(1);
+  });
+
+  it('discards terminal conflict operations on request (actionable recovery)', async () => {
+    const harness = makeHarness();
+    harness.store.rows.push(
+      operation({ id: 'conflict', seq: 1, entityKey: 'e1', dispatchState: 'FAILED' }),
+      operation({ id: 'pending', seq: 2, entityKey: 'e2' }),
+    );
+
+    const discarded = await harness.coordinator.discardConflicts();
+
+    expect(discarded).toBe(1);
+    expect(harness.store.rows.map((row) => row.id)).toEqual(['pending']);
+  });
+
+  it('subscribes to status transitions and replays the latest status', async () => {
+    const harness = makeHarness();
+    harness.store.rows.push(operation({ id: 'a', seq: 1 }));
+    harness.send.mockResolvedValue({ kind: 'APPLIED', entityId: 'server-1', revision: 1, receiptId: 'r1' });
+    await harness.coordinator.drain();
+
+    const seen: string[] = [];
+    const unsubscribe = harness.coordinator.subscribe((status) => seen.push(status.state));
+    expect(seen).toEqual(['IDLE']);
+    unsubscribe();
   });
 
   it('reports a controlled drain that accounts for pending, in-flight, blocked, and conflict work', async () => {
@@ -322,5 +504,75 @@ describe('SyncCoordinator', () => {
     const harness = makeHarness();
     const report = await harness.coordinator.controlledDrain();
     expect(report).toMatchObject({ fullyDrained: true, pending: 0, inFlightOrUncertain: 0, blockedSuccessors: 0, conflicts: 0 });
+  });
+});
+
+/**
+ * Drives the coordinator through the REAL Task 4 `OfflineDatabase`
+ * acknowledgement primitive. This is the path that previously threw
+ * `SubjectMismatchError` because the receipt lacked `id`/`subject`; the fake
+ * ReceiptStore never exercised it.
+ */
+describe('SyncCoordinator over the production receipt path', () => {
+  beforeAll(() => {
+    if (typeof globalThis.IDBKeyRange === 'undefined') {
+      Object.defineProperty(globalThis, 'IDBKeyRange', { writable: true, value: memoryIdbKeyRange });
+    }
+  });
+
+  afterEach(() => {
+    resetOfflineDatabaseHandle();
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  it('acknowledges and removes an operation through database.acknowledgeOperation without throwing', async () => {
+    const memory: MemoryIndexedDb = createMemoryIndexedDb();
+    (globalThis as { indexedDB?: unknown }).indexedDB = memory.indexedDB;
+    resetOfflineDatabaseHandle();
+    const database = new OfflineDatabase();
+    await database.writeLifecycle({ id: 'lifecycle', state: 'ACTIVE', subject: OWNER.subject, epoch: OWNER.epoch, updatedAt: 1 });
+
+    const row = operation({
+      id: qualifyKey(OWNER.subject, 'outbox', 'create'),
+      seq: 1,
+      kind: 'ANNOTATION_CREATE',
+      dependsOn: null,
+      baseRevision: null,
+    });
+    await database.commitOutbox(OWNER.subject, OWNER.epoch, row);
+
+    // Real receipt store wiring (mirrors sync-service.createReceiptStore).
+    const receipts: ReceiptStore = {
+      recordAndRemove: (outboxId, subject, epoch, receipt) =>
+        database.acknowledgeOperation(subject, epoch, outboxId, receipt),
+      recordRetained: (subject, epoch, receipt) => database.recordReceipt(subject, epoch, receipt),
+    };
+    const store: OutboxStore = {
+      list: (subject) => database.getAllByIndex<OutboxOperationRecord>('outbox', 'subject', subject),
+      remove: (id) => database.delete('outbox', id),
+      update: (record) => database.putAccountRecord(record.subject, record.epoch, 'outbox', record),
+    };
+
+    const coordinator = new SyncCoordinator({
+      store,
+      receipts,
+      send: async () => ({ kind: 'APPLIED', entityId: 'server-1', revision: 1, receiptId: 'r1' }),
+      lifecycle: { getOwner: () => OWNER },
+      snapshot: async () => ({ bookId: BOOK, snapshotRevision: 0, annotations: [], tombstones: [], conflictCopies: [] }),
+      now: () => 1_000,
+    });
+
+    const result = await coordinator.drain();
+
+    expect(result.summary.applied).toBe(1);
+    expect(await database.getAllByIndex<OutboxOperationRecord>('outbox', 'subject', OWNER.subject)).toHaveLength(0);
+    const receiptsRows = await database.getAllByIndex<OutboxReceiptRecord>('receipts', 'subject', OWNER.subject);
+    expect(receiptsRows).toHaveLength(1);
+    expect(receiptsRows[0]).toMatchObject({
+      id: expect.any(String),
+      subject: OWNER.subject,
+      operationId: row.operationId,
+      resultKind: 'APPLIED',
+    });
   });
 });

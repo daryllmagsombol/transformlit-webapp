@@ -34,6 +34,11 @@ export interface OutboxOperationRecord {
   readonly baseRevision: number | null;
   readonly dispatchState: OutboxDispatchState;
   readonly attemptCount: number;
+  /**
+   * Advisory durable backoff scheduling metadata (wall-clock ms). Kept OUT of
+   * `payload` so a retry delay can never leak into the dispatched server input.
+   */
+  readonly nextAttemptAt?: number | null;
   readonly payload: Readonly<Record<string, unknown>>;
   readonly createdAt: number;
 }

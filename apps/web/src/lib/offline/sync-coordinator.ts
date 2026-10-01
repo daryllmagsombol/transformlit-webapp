@@ -1,11 +1,20 @@
 import { AuthHttpError } from '../auth';
-import type { AccountOwner } from './contracts';
+import {
+  OfflineStorageError,
+  receiptKey,
+  type AccountOwner,
+  type LeaseRecord,
+  type OutboxReceiptRecord,
+} from './contracts';
 import type { OutboxOperationRecord } from './outbox';
 import { advanceSuccessorRevision, isBlockedSuccessor, orderForDispatch } from './outbox';
+import { leaseStillValid } from './coordination';
 import {
   mergeSnapshot,
+  pendingFromOperations,
   type AuthoritativeSnapshot,
   type MergeAnnotation,
+  type MergeSnapshotResult,
 } from './snapshot-merge';
 
 /**
@@ -18,6 +27,7 @@ export type OperationOutcome =
       readonly kind: 'CONFLICT';
       readonly entityId: string;
       readonly serverRevision: number;
+      readonly serverValue: unknown;
       readonly conflictCopyId?: string | null;
     }
   | { readonly kind: 'ACCESS_DENIED'; readonly resourceId: string; readonly reason: string }
@@ -27,13 +37,21 @@ export type OperationOutcome =
       readonly supportedContentVersions: readonly number[];
     };
 
-/** Transport failure classification, kept distinct from operation outcomes. */
+/**
+ * Transport/server failure classification, kept distinct from operation
+ * outcomes. The six classes map to distinct UX: bounded retry (TRANSIENT),
+ * reauthentication (AUTH_REQUIRED), permanent recovery/discard
+ * (ACCESS_DENIED / INCOMPATIBLE_VERSION), user resolution (CONFLICT), and a
+ * storage fault that must never be retried as a transport error
+ * (STORAGE_FAILURE).
+ */
 export type DispatchFailure =
   | 'TRANSIENT'
   | 'AUTH_REQUIRED'
   | 'ACCESS_DENIED'
   | 'CONFLICT'
-  | 'INCOMPATIBLE_VERSION';
+  | 'INCOMPATIBLE_VERSION'
+  | 'STORAGE_FAILURE';
 
 export interface OutboxStore {
   list(subject: string): Promise<OutboxOperationRecord[]>;
@@ -41,42 +59,59 @@ export interface OutboxStore {
   update(record: OutboxOperationRecord): Promise<void>;
 }
 
+/**
+ * Durable receipt persistence. Both methods are REQUIRED and both are atomic
+ * per-method writes guarded by subject + epoch. The receipt is a COMPLETE
+ * `OutboxReceiptRecord` (id + subject), which the IndexedDB subject guard
+ * validates — a partial receipt without `id`/`subject` is a hard error.
+ *
+ * - `recordAndRemove` stores an APPLIED receipt and removes its acknowledged
+ *   operation in ONE transaction (worst case a crash leaves the op replayable,
+ *   never a receipt without removal).
+ * - `recordRetained` stores a CONFLICT receipt while deliberately RETAINING the
+ *   operation so its successors stay blocked until the user resolves it. The
+ *   server treats the operationId as idempotent, so a later replay returns the
+ *   same durable conflict result.
+ */
 export interface ReceiptStore {
-  record(receipt: {
-    readonly operationId: string;
-    readonly entityId: string | null;
-    readonly revision: number | null;
-    readonly resultKind: 'APPLIED' | 'CONFLICT' | 'INCOMPATIBLE_VERSION' | 'ACCESS_DENIED';
-    readonly acknowledgedAt: number;
-  }): Promise<void>;
-  /**
-   * Atomically records the receipt AND removes the acknowledged operation in
-   * one storage transaction. When provided, the coordinator uses this instead
-   * of `record` + `store.remove` so a crash cannot leave a receipt without
-   * removing its operation (or vice versa). Subject/epoch come from the
-   * operation, so the fenced write is always correctly scoped.
-   */
-  recordAndRemove?(
+  recordAndRemove(
     outboxId: string,
     subject: string,
     epoch: number,
-    receipt: {
-      readonly operationId: string;
-      readonly entityId: string | null;
-      readonly revision: number | null;
-      readonly resultKind: 'APPLIED' | 'CONFLICT' | 'INCOMPATIBLE_VERSION' | 'ACCESS_DENIED';
-      readonly acknowledgedAt: number;
-    },
+    receipt: OutboxReceiptRecord,
   ): Promise<void>;
+  recordRetained(subject: string, epoch: number, receipt: OutboxReceiptRecord): Promise<void>;
 }
 
 export interface SnapshotSource {
   (bookId: string): Promise<AuthoritativeSnapshot>;
 }
 
+/** One book's merge result plus the book it belongs to. */
+export interface BookMergeResult extends MergeSnapshotResult {
+  readonly bookId: string;
+}
+
+/**
+ * Applies a merged authoritative snapshot to local durable state (tombstones,
+ * conflict copies, server-authoritative annotations). Optional so read-only
+ * contexts can fetch and preserve without writing; when absent the merge result
+ * is still returned and surfaced.
+ */
+export interface SnapshotApplyStore {
+  applyMerge(owner: AccountOwner, result: BookMergeResult): Promise<void>;
+}
+
 export interface CoordinationLock {
-  acquire(): Promise<{ readonly acquired: boolean; readonly ownerId: string }>;
+  acquire(): Promise<{ readonly acquired: boolean; readonly ownerId: string; readonly lease: LeaseRecord | null }>;
   release(): Promise<void>;
+  /**
+   * Re-reads the current lease record so the coordinator can verify the fencing
+   * token after a network round-trip. When absent, the coordinator falls back to
+   * a local TTL heuristic (kept only for lock implementations that cannot expose
+   * the lease).
+   */
+  readLease?(): Promise<LeaseRecord | null>;
 }
 
 export interface CoordinatorDeps {
@@ -90,6 +125,7 @@ export interface CoordinatorDeps {
   readonly send: (input: unknown) => Promise<OperationOutcome>;
   readonly lifecycle: { readonly getOwner: () => AccountOwner | null };
   readonly snapshot: SnapshotSource;
+  readonly snapshotStore?: SnapshotApplyStore;
   readonly lock?: CoordinationLock;
   readonly now?: () => number;
   readonly baseBackoffMs?: number;
@@ -106,6 +142,8 @@ export interface DrainSummary {
   incompatibleVersion: number;
   transient: number;
   stale: number;
+  storageFailure: number;
+  authRequired: number;
 }
 
 export interface DrainResult {
@@ -124,8 +162,21 @@ export interface ControlledDrainReport {
 export interface CoordinatorStatus {
   readonly state: 'IDLE' | 'SYNCING' | 'BLOCKED' | 'ERROR';
   readonly pending: number;
+  /** Conflicts observed in the run that produced this status. */
   readonly conflicts: number;
+  /** Terminal-but-retryable operations retained after a failed dispatch. */
+  readonly failed: number;
+  readonly authRequired: boolean;
+  readonly storageFailure: boolean;
   readonly lastError: string | null;
+}
+
+/** What one snapshot refresh fetched, merged and (optionally) applied. */
+export interface SnapshotRefreshResult {
+  readonly books: number;
+  readonly annotations: number;
+  readonly tombstones: number;
+  readonly conflicts: number;
 }
 
 const DEFAULT_BASE_BACKOFF_MS = 1_000;
@@ -144,9 +195,13 @@ function statusOf(error: unknown): number | null {
 
 /**
  * Classifies a transport/server failure. Distinct classes drive distinct UX:
- * reauthentication, permanent recovery/discard, or bounded retry.
+ * reauthentication, permanent recovery/discard, bounded retry, or a storage
+ * fault. IndexedDB/storage errors are classified FIRST and are never treated as
+ * a transient network failure that would retry forever.
  */
 export function classifyDispatchError(error: unknown): DispatchFailure {
+  if (error instanceof OfflineStorageError) return 'STORAGE_FAILURE';
+  if (isStorageDomException(error)) return 'STORAGE_FAILURE';
   const status = statusOf(error);
   if (status === 401) return 'AUTH_REQUIRED';
   if (status === 403) return 'ACCESS_DENIED';
@@ -155,17 +210,28 @@ export function classifyDispatchError(error: unknown): DispatchFailure {
   return 'TRANSIENT';
 }
 
-function emptySummary(): DrainSummary {
-  return { applied: 0, conflict: 0, accessDenied: 0, incompatibleVersion: 0, transient: 0, stale: 0 };
+/** True for IndexedDB/quota DOMExceptions, which are storage faults. */
+function isStorageDomException(error: unknown): boolean {
+  if (typeof DOMException === 'undefined' || !(error instanceof DOMException)) return false;
+  return (
+    error.name === 'QuotaExceededError' ||
+    error.name === 'AbortError' ||
+    error.name === 'InvalidStateError' ||
+    error.name === 'NotFoundError'
+  );
 }
 
-/** Operation ids that some queued operation still depends on. */
-function dependencyTargets(operations: readonly OutboxOperationRecord[]): Set<string> {
-  const targets = new Set<string>();
-  for (const operation of operations) {
-    if (operation.dependsOn !== null) targets.add(operation.dependsOn);
-  }
-  return targets;
+function emptySummary(): DrainSummary {
+  return {
+    applied: 0,
+    conflict: 0,
+    accessDenied: 0,
+    incompatibleVersion: 0,
+    transient: 0,
+    stale: 0,
+    storageFailure: 0,
+    authRequired: 0,
+  };
 }
 
 /**
@@ -182,6 +248,8 @@ export class SyncCoordinator {
   private readonly baseBackoffMs: number;
   private readonly maxBackoffMs: number;
   private readonly leaseTtlMs: number;
+  private readonly listeners = new Set<(status: CoordinatorStatus) => void>();
+  private lastStatus: CoordinatorStatus | null = null;
   private inFlightDrain: Promise<DrainResult> | null = null;
 
   constructor(deps: CoordinatorDeps) {
@@ -190,6 +258,41 @@ export class SyncCoordinator {
     this.baseBackoffMs = deps.baseBackoffMs ?? DEFAULT_BASE_BACKOFF_MS;
     this.maxBackoffMs = deps.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
     this.leaseTtlMs = deps.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
+  }
+
+  /**
+   * Subscribes to status transitions. The most recent status is replayed
+   * immediately so a newly mounted consumer is never left without state. Returns
+   * an unsubscribe function.
+   */
+  subscribe(listener: (status: CoordinatorStatus) => void): () => void {
+    this.listeners.add(listener);
+    if (this.lastStatus) listener(this.lastStatus);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  /** The most recent emitted status, or null before the first run. */
+  getStatus(): CoordinatorStatus | null {
+    return this.lastStatus;
+  }
+
+  /**
+   * Discards terminal conflict operations for the current owner (the user
+   * choosing to abandon a conflicting local edit). Returns how many were
+   * removed. This is the actionable "discard" recovery path.
+   */
+  async discardConflicts(): Promise<number> {
+    const owner = this.deps.lifecycle.getOwner();
+    if (!owner) return 0;
+    const operations = await this.deps.store.list(owner.subject);
+    const conflicted = operations.filter((operation) => operation.dispatchState === 'FAILED');
+    for (const operation of conflicted) {
+      await this.deps.store.remove(operation.id);
+    }
+    this.emitStatus('IDLE', [], emptySummary(), null);
+    return conflicted.length;
   }
 
   /**
@@ -212,19 +315,22 @@ export class SyncCoordinator {
     if (!initialOwner) return this.blocked('NO_OWNER', summary);
 
     const lock = this.deps.lock;
+    let lease: LeaseRecord | null = null;
     if (lock) {
       const acquired = await lock.acquire();
       if (!acquired.acquired) return this.blocked('LEASE_HELD', summary);
+      lease = acquired.lease;
     }
 
     try {
       if (lifecycle.getOwner()?.subject !== initialOwner.subject) return this.blocked('NO_OWNER', summary);
       const operations = await this.deps.store.list(initialOwner.subject);
-      await this.processOperations(initialOwner, orderForDispatch(operations), summary);
-      this.emitStatus('IDLE', operations, null);
+      const remaining = await this.processOperations(initialOwner, orderForDispatch(operations), summary, lease);
+      this.emitStatus('IDLE', remaining, summary, null);
       return { summary, blockedReason: null };
     } catch (error) {
-      this.emitStatus('ERROR', [], error instanceof Error ? error.message : 'Sync failed');
+      const message = error instanceof Error ? error.message : 'Sync failed';
+      this.emitStatus('ERROR', [], summary, message);
       throw error;
     } finally {
       if (lock) await lock.release();
@@ -235,7 +341,8 @@ export class SyncCoordinator {
     owner: AccountOwner,
     ordered: readonly OutboxOperationRecord[],
     summary: DrainSummary,
-  ): Promise<void> {
+    lease: LeaseRecord | null,
+  ): Promise<OutboxOperationRecord[]> {
     // Mutable working copy so a successor's advanced base revision is visible
     // when its turn comes, without mutating the persisted payload.
     const working = new Map(ordered.map((operation) => [operation.id, operation]));
@@ -246,9 +353,9 @@ export class SyncCoordinator {
       if (!current) continue;
       if (pausedEntities.has(current.entityKey)) continue;
       if (isBlockedSuccessor(current, new Set(working.keys()))) continue;
-      if (this.ownerChanged(owner)) return;
+      if (this.ownerChanged(owner)) break;
 
-      const effect = await this.dispatch(owner, current, summary);
+      const effect = await this.dispatch(owner, current, summary, lease);
       if (effect.removed) working.delete(operation.id);
       if (effect.paused) pausedEntities.add(current.entityKey);
       if (effect.ackRevision !== null) {
@@ -259,6 +366,7 @@ export class SyncCoordinator {
         }
       }
     }
+    return [...working.values()];
   }
 
   /** Returns the reconciliation effect on the current run. */
@@ -266,8 +374,8 @@ export class SyncCoordinator {
     owner: AccountOwner,
     operation: OutboxOperationRecord,
     summary: DrainSummary,
+    lease: LeaseRecord | null,
   ): Promise<{ removed: boolean; paused: boolean; ackRevision: number | null }> {
-    const startedAt = this.now();
     await this.deps.store.update({ ...operation, dispatchState: 'DISPATCHING' });
 
     let outcome: OperationOutcome;
@@ -279,19 +387,33 @@ export class SyncCoordinator {
       // immutable id/payload and is retried later.
       await this.restorePending(operation);
       if (failure === 'TRANSIENT') summary.transient += 1;
+      else if (failure === 'STORAGE_FAILURE') summary.storageFailure += 1;
       else this.markTerminal(failure, summary);
       return { removed: false, paused: false, ackRevision: null };
     }
 
-    // Discard stale results: the account changed or the sync lease expired while
-    // the request was in flight. The operation stays replayable.
-    if (this.ownerChanged(owner) || this.leaseExpired(startedAt)) {
+    // Discard stale results: the account changed or the sync lease is no longer
+    // held by this coordinator while the request was in flight. The lease is
+    // re-read and its fencing token verified — a local TTL guess is not proof.
+    if (this.ownerChanged(owner) || (await this.leaseLost(lease))) {
       await this.restorePending(operation);
       summary.stale += 1;
       return { removed: false, paused: false, ackRevision: null };
     }
 
     return this.reconcile(operation, outcome, summary);
+  }
+
+  /**
+   * True when this coordinator no longer holds its lease. With a readable lease
+   * the fencing token is verified authoritatively; otherwise the local TTL is a
+   * best-effort fallback.
+   */
+  private async leaseLost(lease: LeaseRecord | null): Promise<boolean> {
+    if (!lease) return false;
+    const read = this.deps.lock?.readLease;
+    if (read) return !leaseStillValid(await read(), lease.fencingToken, this.now());
+    return this.now() - lease.acquiredAt > this.leaseTtlMs;
   }
 
   private async reconcile(
@@ -305,7 +427,11 @@ export class SyncCoordinator {
         summary.applied += 1;
         return { removed: true, paused: false, ackRevision: outcome.revision };
       case 'CONFLICT':
-        await this.deps.receipts.record({
+        // Conflict receipts are durable, but the operation is RETAINED so its
+        // successors stay blocked until the user resolves (retarget/discard).
+        await this.deps.receipts.recordRetained(operation.subject, operation.epoch, {
+          id: receiptKey(operation.subject, operation.operationId),
+          subject: operation.subject,
           operationId: operation.operationId,
           entityId: outcome.entityId,
           revision: outcome.serverRevision,
@@ -316,11 +442,11 @@ export class SyncCoordinator {
         summary.conflict += 1;
         return { removed: false, paused: true, ackRevision: null };
       case 'ACCESS_DENIED':
-        await this.terminalOutcome(operation, 'ACCESS_DENIED', outcome.resourceId, null);
+        await this.retainTerminal(operation);
         summary.accessDenied += 1;
         return { removed: false, paused: false, ackRevision: null };
       case 'INCOMPATIBLE_VERSION':
-        await this.terminalOutcome(operation, 'INCOMPATIBLE_VERSION', null, outcome.requestedContentVersion);
+        await this.retainTerminal(operation);
         summary.incompatibleVersion += 1;
         return { removed: false, paused: false, ackRevision: null };
       default:
@@ -329,30 +455,25 @@ export class SyncCoordinator {
   }
 
   /**
-   * Applies an acknowledgement ATOMICALLY from the coordinator's perspective:
-   * the receipt is stored, successors on the SAME entity have their base
-   * revision advanced to the ack revision (only after a successful ack on the
-   * intended entity), and then only the acknowledged operation is removed.
+   * Applies an acknowledgement ATOMICALLY: a COMPLETE `OutboxReceiptRecord`
+   * (id + subject) is stored and the acknowledged operation removed in one
+   * transaction. Successors on the SAME entity then have their base revision
+   * advanced to the ack revision (payload untouched).
    */
   private async applyAck(
     operation: OutboxOperationRecord,
     outcome: Extract<OperationOutcome, { kind: 'APPLIED' }>,
   ): Promise<void> {
-    const receipt = {
+    const receipt: OutboxReceiptRecord = {
+      id: receiptKey(operation.subject, operation.operationId),
+      subject: operation.subject,
       operationId: operation.operationId,
       entityId: outcome.entityId,
       revision: outcome.revision,
-      resultKind: 'APPLIED' as const,
+      resultKind: 'APPLIED',
       acknowledgedAt: this.now(),
     };
-
-    if (this.deps.receipts.recordAndRemove) {
-      // Atomic: store the receipt and remove the acknowledged operation together.
-      await this.deps.receipts.recordAndRemove(operation.id, operation.subject, operation.epoch, receipt);
-    } else {
-      await this.deps.receipts.record(receipt);
-      await this.deps.store.remove(operation.id);
-    }
+    await this.deps.receipts.recordAndRemove(operation.id, operation.subject, operation.epoch, receipt);
 
     // Advance ONLY the successor's base revision; never its payload.
     const siblings = await this.deps.store.list(operation.subject);
@@ -362,24 +483,22 @@ export class SyncCoordinator {
     }
   }
 
-  private async terminalOutcome(
-    operation: OutboxOperationRecord,
-    resultKind: 'INCOMPATIBLE_VERSION' | 'ACCESS_DENIED',
-    entityId: string | null,
-    revision: number | null,
-  ): Promise<void> {
-    // Terminal until user/account/content state changes: durable receipt +
-    // retained queue entry (the contracts specify no short-lived receipt).
-    await this.deps.receipts.record({
-      operationId: operation.operationId,
-      entityId,
-      revision,
-      resultKind,
-      acknowledgedAt: this.now(),
-    });
+  /**
+   * Retains a terminal-but-re-evaluable operation (ACCESS_DENIED /
+   * INCOMPATIBLE_VERSION). The contracts deliberately record NO receipt for
+   * these outcomes: they are terminal only until user/account/content state
+   * changes, so a later replay must be re-evaluated rather than frozen. The
+   * operation stays queued immutably and is marked terminal.
+   */
+  private async retainTerminal(operation: OutboxOperationRecord): Promise<void> {
     await this.deps.store.update({ ...operation, dispatchState: 'FAILED', attemptCount: operation.attemptCount + 1 });
   }
 
+  /**
+   * Reschedules a failed operation WITHOUT mutating its durable payload. Backoff
+   * is durable scheduling metadata (`nextAttemptAt`), never a payload field, so
+   * the dispatched input can never leak `retryDelayMs` into the server schema.
+   */
   private async restorePending(operation: OutboxOperationRecord): Promise<void> {
     const attemptCount = operation.attemptCount + 1;
     const delayMs = Math.min(this.maxBackoffMs, this.baseBackoffMs * 2 ** operation.attemptCount);
@@ -387,20 +506,21 @@ export class SyncCoordinator {
       ...operation,
       dispatchState: 'PENDING',
       attemptCount,
-      // Bounded backoff is advisory scheduling metadata for the next trigger;
-      // the operation remains immediately replayable on an explicit retry.
-      payload: { ...operation.payload, retryDelayMs: delayMs },
+      nextAttemptAt: this.now() + delayMs,
     });
   }
 
   private markTerminal(failure: DispatchFailure, summary: DrainSummary): void {
-    if (failure === 'AUTH_REQUIRED') summary.stale += 1;
+    if (failure === 'AUTH_REQUIRED') summary.authRequired += 1;
     else if (failure === 'ACCESS_DENIED') summary.accessDenied += 1;
     else if (failure === 'CONFLICT') summary.conflict += 1;
     else if (failure === 'INCOMPATIBLE_VERSION') summary.incompatibleVersion += 1;
   }
 
   private buildInput(operation: OutboxOperationRecord): Readonly<Record<string, unknown>> {
+    // The payload is passed through EXACTLY as stored. Scheduling metadata
+    // (`attemptCount`/`nextAttemptAt`) lives on the record, not in the payload,
+    // so it can never be dispatched to the server.
     return {
       ...operation.payload,
       operationId: operation.operationId,
@@ -408,8 +528,6 @@ export class SyncCoordinator {
       contentVersion: operation.contentVersion,
       kind: operation.kind,
       baseRevision: operation.baseRevision,
-      // The original payload is passed through unchanged so the transport layer
-      // (and its tests) can prove it is never mutated across retries.
       payload: operation.payload,
     };
   }
@@ -419,54 +537,77 @@ export class SyncCoordinator {
     return !current || current.subject !== owner.subject || current.epoch !== owner.epoch;
   }
 
-  private leaseExpired(startedAt: number): boolean {
-    return this.now() - startedAt > this.leaseTtlMs;
-  }
-
   private blocked(reason: 'NO_OWNER' | 'LEASE_HELD', summary: DrainSummary): DrainResult {
-    this.emitStatus('BLOCKED', [], null);
+    this.emitStatus('BLOCKED', [], summary, null);
     return { summary, blockedReason: reason };
   }
 
-  private emitStatus(state: CoordinatorStatus['state'], operations: readonly OutboxOperationRecord[], lastError: string | null): void {
-    if (!this.deps.onStatus) return;
-    this.deps.onStatus({
+  private emitStatus(
+    state: CoordinatorStatus['state'],
+    operations: readonly OutboxOperationRecord[],
+    summary: DrainSummary,
+    lastError: string | null,
+  ): void {
+    const status: CoordinatorStatus = {
       state,
       pending: operations.filter((operation) => operation.dispatchState === 'PENDING').length,
-      conflicts: operations.filter((operation) => operation.dispatchState === 'FAILED').length,
+      conflicts: summary.conflict,
+      failed: operations.filter((operation) => operation.dispatchState === 'FAILED').length,
+      authRequired: summary.authRequired > 0,
+      storageFailure: summary.storageFailure > 0,
       lastError,
-    });
+    };
+    this.lastStatus = status;
+    this.deps.onStatus?.(status);
+    for (const listener of this.listeners) listener(status);
   }
 
   /**
    * Fetches and merges the authoritative snapshot for every book with pending
-   * work. `mergeSnapshot` guarantees pending operations are never rebased and
-   * their payload/base revision is preserved.
+   * work, then (when a store is wired) APPLIES the merged tombstones, conflict
+   * copies and server-authoritative annotations so deletions and conflicts are
+   * durable and surfaceable. `mergeSnapshot` guarantees pending operations are
+   * never rebased and their payload/base revision is preserved. Returns what was
+   * fetched/merged so callers can surface conflicts.
    */
   async refreshSnapshots(
     localAnnotations: readonly MergeAnnotation[] = [],
-  ): Promise<void> {
+  ): Promise<SnapshotRefreshResult> {
+    const empty: SnapshotRefreshResult = { books: 0, annotations: 0, tombstones: 0, conflicts: 0 };
     const owner = this.deps.lifecycle.getOwner();
-    if (!owner) return;
+    if (!owner) return empty;
     const operations = await this.deps.store.list(owner.subject);
     const books = [...new Set(operations.map((operation) => operation.bookId))];
+    const report = { ...empty };
+
     for (const bookId of books) {
       const snapshot = await this.deps.snapshot(bookId);
-      mergeSnapshot({
+      const bookPending = operations
+        .filter((operation) => operation.bookId === bookId)
+        .map((operation) => ({
+          operationId: operation.operationId,
+          kind: operation.kind,
+          baseRevision: operation.baseRevision,
+          payload: operation.payload,
+        }));
+
+      const result = mergeSnapshot({
         snapshot,
         local: localAnnotations,
-        pending: operations
-          .filter((operation) => operation.bookId === bookId)
-          .map((operation) => ({
-            operationId: operation.operationId,
-            kind: operation.kind,
-            entityId: (operation.payload.entityId as string | undefined) ?? null,
-            clientEntityId: (operation.payload.clientEntityId as string | undefined) ?? null,
-            baseRevision: operation.baseRevision,
-            payload: operation.payload,
-          })),
+        pending: pendingFromOperations(bookPending),
       });
+
+      if (this.deps.snapshotStore) {
+        await this.deps.snapshotStore.applyMerge(owner, { ...result, bookId });
+      }
+
+      report.books += 1;
+      report.annotations += result.annotations.length;
+      report.tombstones += result.tombstones.length;
+      report.conflicts += result.conflictCopies.length;
     }
+
+    return report;
   }
 
   /**
@@ -491,9 +632,4 @@ export class SyncCoordinator {
     const fullyDrained = operations.length === 0;
     return { pending, inFlightOrUncertain: inFlight, blockedSuccessors: blocked, conflicts, fullyDrained };
   }
-}
-
-/** Pure helper for the UI: how many queued ops remain for one subject. */
-export function countOutstanding(operations: readonly OutboxOperationRecord[]): number {
-  return dependencyTargets(operations).size + operations.length;
 }

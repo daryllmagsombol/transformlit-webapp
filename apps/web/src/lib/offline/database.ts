@@ -483,6 +483,23 @@ export class OfflineDatabase {
   }
 
   /**
+   * Stores a durable acknowledgement receipt WITHOUT removing the operation.
+   * Used for CONFLICT receipts: the operation stays queued (blocking its
+   * successors) until the user resolves it, while the receipt records the
+   * durable server conflict result. Still fenced by subject + epoch.
+   */
+  async recordReceipt(subject: string, epoch: number, receipt: unknown): Promise<void> {
+    assertRecordSubject(subject, receipt);
+    const db = await this.db();
+    await runTransaction<void>(db, ['lifecycle', 'receipts'], 'readwrite', (tx, done, fail) => {
+      guardWrite(tx, subject, epoch, fail, () => {
+        tx.objectStore('receipts').put(receipt as unknown as IDBValidKey);
+        done(undefined);
+      });
+    });
+  }
+
+  /**
    * Writes one download record (manifest, version, page, or chapter) only when
    * the caller's subject + lifecycle epoch still match the authoritative owner.
    * Used for the short per-item writes during staging; the actual readiness
