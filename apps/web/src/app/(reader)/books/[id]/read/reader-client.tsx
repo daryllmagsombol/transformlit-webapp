@@ -90,6 +90,7 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
   const [page, setPage] = useState(initialPage ?? 1);
   const [items, setItems] = useState<PdfTextItem[] | null>(null);
   const [frame, setFrame] = useState<FrameHandle | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
   const pageCount = opened?.pageCount ?? 0;
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pageRef = useRef(page);
@@ -138,6 +139,10 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
     if (opened.conversionStatus !== 'READY') return;
     let cancelled = false;
     setItems(null);
+    // Clear the previous frame so a failed page change can never leave the
+    // previous page's raster visible (silent wrong page).
+    setFrame(null);
+    setPageError(null);
 
     // The repository owns the frame URL lifecycle; PageCanvas disposes the
     // previous handle on change/unmount. An in-flight open resolved after
@@ -152,7 +157,11 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
         setItems(result.items);
       },
       () => {
-        if (!cancelled) setItems([]);
+        if (!cancelled) {
+          setItems([]);
+          setFrame(null);
+          setPageError('This page could not be loaded. Check your connection and try again.');
+        }
       },
     );
 
@@ -214,7 +223,7 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
     );
   }
 
-  if (!opened || !frame) {
+  if (!opened) {
     return (
       <div
         className="flex min-h-dvh items-center justify-center bg-surface"
@@ -236,6 +245,7 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
       onPageChange={goToPage}
       onBack={() => router.push('/books')}
       theme={theme}
+      pageError={pageError}
     />
   );
 }

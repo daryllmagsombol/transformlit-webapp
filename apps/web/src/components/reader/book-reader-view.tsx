@@ -17,7 +17,11 @@ export interface BookReaderViewProps {
   readonly page: number;
   readonly pageCount: number;
   readonly items: PdfTextItem[] | null;
-  readonly frame: FrameHandle;
+  /**
+   * The resolved frame, or null while a page is opening or after it failed to
+   * open. The toolbar stays visible in every case so navigation never hangs.
+   */
+  readonly frame: FrameHandle | null;
   readonly capabilities: ReaderCapabilities;
   readonly onPageChange: (page: number) => void;
   readonly onBack: () => void;
@@ -25,6 +29,11 @@ export interface BookReaderViewProps {
   readonly theme?: ReaderTheme;
   /** Optional source notice (e.g. "Saved offline") shown under the toolbar. */
   readonly statusNotice?: string | null;
+  /**
+   * A failed page open. Rendered as a non-blocking inline error instead of an
+   * infinite spinner or a stale previous page.
+   */
+  readonly pageError?: string | null;
 }
 
 /**
@@ -51,6 +60,38 @@ function UnavailableFeatures({ capabilities }: { readonly capabilities: ReaderCa
   );
 }
 
+function ReaderSurface({
+  frame,
+  items,
+  pageError,
+}: {
+  readonly frame: FrameHandle | null;
+  readonly items: PdfTextItem[] | null;
+  readonly pageError: string | null;
+}) {
+  if (pageError) {
+    return (
+      <p
+        data-testid="reader-page-error"
+        role="alert"
+        className="mx-auto mt-8 max-w-md rounded-lg border border-error/40 bg-error-container/30 px-4 py-3 text-center font-body text-body text-on-error-container"
+      >
+        {pageError}
+      </p>
+    );
+  }
+  if (!frame) {
+    return (
+      <div
+        data-testid="reader-page-loading"
+        aria-hidden="true"
+        className="mt-8 h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"
+      />
+    );
+  }
+  return <PageCanvas frame={frame} items={items} />;
+}
+
 export function BookReaderView({
   title,
   page,
@@ -62,6 +103,7 @@ export function BookReaderView({
   onBack,
   theme = 'paper',
   statusNotice = null,
+  pageError = null,
 }: BookReaderViewProps) {
   return (
     <div data-reader-theme={theme} className="flex min-h-dvh flex-col bg-paper text-on-surface">
@@ -83,7 +125,7 @@ export function BookReaderView({
       ) : null}
       <UnavailableFeatures capabilities={capabilities} />
       <main className="flex flex-1 items-start justify-center overflow-auto p-4">
-        <PageCanvas frame={frame} items={items} />
+        <ReaderSurface frame={frame} items={items} pageError={pageError} />
       </main>
     </div>
   );

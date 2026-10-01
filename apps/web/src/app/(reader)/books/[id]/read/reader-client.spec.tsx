@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 let mockSearchParams = new URLSearchParams();
 
@@ -86,5 +86,30 @@ describe('ReaderClient', () => {
     mockQuery.mockRejectedValue(new Error('forbidden'));
     render(<ReaderClient bookId="book-1" initialPage={1} />);
     expect(await screen.findByText(/do not have access|not available/i)).toBeInTheDocument();
+  });
+
+  it('shows a non-blocking fallback (not an infinite spinner) when the first page fails to open', async () => {
+    fetchPageTextMock.mockRejectedValue(new Error('Request failed with 500'));
+    render(<ReaderClient bookId="book-1" initialPage={1} />);
+
+    // The metadata still loads, so the reader shell must not hang on a spinner.
+    expect(await screen.findByText('Test Book')).toBeInTheDocument();
+    expect(await screen.findByTestId('reader-page-error')).toBeInTheDocument();
+    expect(screen.queryByTestId('page-frame')).not.toBeInTheDocument();
+  });
+
+  it('clears the stale page and shows a fallback when a page change fails to open', async () => {
+    render(<ReaderClient bookId="book-1" initialPage={1} />);
+    const firstFrame = await screen.findByTestId('page-frame');
+    expect(firstFrame).toHaveAttribute('src', 'http://api.test/books/book-1/pages/1/frame');
+
+    // The next page fails to open; the previous page's raster must not linger.
+    fetchPageTextMock.mockRejectedValue(new Error('Request failed with 500'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+
+    expect(await screen.findByTestId('reader-page-error')).toBeInTheDocument();
+    expect(screen.queryByTestId('page-frame')).not.toBeInTheDocument();
+    // Never the stale page 1 raster at the new page position.
+    expect(screen.queryByText('Page 1 of 3')).not.toBeInTheDocument();
   });
 });

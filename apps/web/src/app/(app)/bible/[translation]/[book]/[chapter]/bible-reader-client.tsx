@@ -9,7 +9,7 @@ import { useBibleStore } from '../../../../../../store/bible-store';
 import { BibleReaderView } from '../../../../../../components/bible/bible-reader-view';
 import { LoadingSpinner } from '../../../../../../components/ui';
 import { DownloadControls, type DownloadControlState } from '../../../../../../components/offline/download-controls';
-import { canDownloadTranslationOffline } from '../../../../../../lib/bible/offline-rights';
+import { canDownloadTranslationOffline, requiredAttribution } from '../../../../../../lib/bible/offline-rights';
 import type { BibleCapabilities } from '../../../../../../lib/bible/repository';
 import { offlineDownloadManager } from '../../../../../../lib/hooks/use-download';
 import { useWritePermit } from '../../../../../../lib/hooks/use-write-permit';
@@ -162,6 +162,7 @@ export default function BibleReaderClient({ translation, book, chapter }: Reader
       audioLinks={data.thisChapterAudioLinks ?? null}
       books={books}
       capabilities={ONLINE_CAPABILITIES}
+      attribution={requiredAttribution(translation)}
       onNavigate={navigate}
       onBack={() => router.push('/bible')}
       downloadControls={

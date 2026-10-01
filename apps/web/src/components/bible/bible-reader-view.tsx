@@ -39,6 +39,12 @@ export interface BibleReaderViewProps {
    * undefined and rely on the URL hash.
    */
   readonly initialVerse?: number | null;
+  /**
+   * Required translation attribution (e.g. from a downloaded chapter's stored
+   * rights record). Rendered so a redistribution/offline-storage grant is
+   * visible to the reader; omitted when no attribution was recorded.
+   */
+  readonly attribution?: string | null;
   /** Download control slot, rendered above the verse list. */
   readonly downloadControls?: ReactNode;
 }
@@ -235,6 +241,7 @@ export function BibleReaderView({
   onNavigate,
   onBack,
   initialVerse = null,
+  attribution = null,
   downloadControls = null,
 }: BibleReaderViewProps) {
   const [studyVerse, setStudyVerse] = useState<number | null>(null);
@@ -374,6 +381,15 @@ export function BibleReaderView({
           onFootnoteClick={handleFootnote}
           onWordClick={handleWord}
         />
+
+        {attribution ? (
+          <p
+            data-testid="bible-attribution"
+            className="mt-6 border-t border-outline-variant pt-4 text-center font-micro text-micro text-on-surface-variant"
+          >
+            {attribution}
+          </p>
+        ) : null}
 
         {showAudio ? (
           <div className="mt-8">

@@ -241,6 +241,7 @@ function OfflineBibleReader({ translation, book, chapter, verse }: {
       books={books}
       capabilities={opened.capabilities}
       initialVerse={verse}
+      attribution={opened.attribution}
       onNavigate={navigate}
       onBack={() => globalThis.window.location.hash = ''}
     />

@@ -1,3 +1,4 @@
+import '../../../test/helpers/offline-dom-shims';
 import {
   BookNotDownloadedError,
   BookNotReadyError,
@@ -191,6 +192,16 @@ describe('BookRepository', () => {
       expect(page.frame.source).toBe('local');
       expect(page.frame.url.startsWith('blob:')).toBe(true);
       expect(page.items?.[0].t).toBe('Page 2');
+    });
+
+    it('stores page images as Blobs that expose arrayBuffer() for retry re-hashing', async () => {
+      await seedBook(database, SUBJECT_A, 1);
+      const stored = await database.getBookPages(SUBJECT_A, BOOK_ID, 1);
+      const image = stored.find((page) => page.pageNumber === 1)?.image;
+      expect(image).not.toBeNull();
+      expect(typeof image?.arrayBuffer).toBe('function');
+      const bytes = new Uint8Array(await (image as Blob).arrayBuffer());
+      expect(new TextDecoder().decode(bytes)).toBe('frame-1-1');
     });
 
     it('rejects a requested version that is not the ready active version', async () => {
