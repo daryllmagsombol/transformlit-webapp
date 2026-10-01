@@ -29,18 +29,55 @@ interface AuthLockManager {
 }
 
 /**
+ * How many auth-lifecycle lock frames the current agent (tab) is nested inside.
+ * Web Locks is NOT reentrant, so a nested call that re-acquired the same lock
+ * would deadlock. The login flow reaches `invalidateSession` through
+ * `hydrate → resumeExit → logout` WHILE holding this lock, so nested calls must
+ * reuse the lock the outer operation already holds instead of re-acquiring it.
+ * Independent (depth 0) calls still serialize on the cross-tab Web Lock.
+ */
+let authLockDepth = 0;
+
+function authLockManager(): AuthLockManager | null {
+  const nav = globalThis.navigator as (Navigator & { locks?: AuthLockManager }) | undefined;
+  return nav?.locks ?? null;
+}
+
+/**
  * Serializes cookie-rotating auth operations (refresh, login/registration,
- * logout) on ONE exclusive cross-tab lock so a stale `Set-Cookie` response can
- * never land inside a newly activated session. A logout that is still in flight
- * therefore blocks a concurrent login (and vice versa) until its response has
- * settled. Tokens are never carried across tabs by this mechanism — it only
- * orders the requests. Falls back to running directly where Web Locks is absent.
+ * logout, and barrier-resume logout) on ONE exclusive cross-tab lock so a stale
+ * `Set-Cookie` response can never land inside a newly activated session. It is
+ * reentrancy-aware: a nested same-agent call runs inside the lock the outer
+ * operation holds (no deadlock), while independent calls still queue. Tokens are
+ * never carried across tabs — the lock only orders the requests. Falls back to
+ * running directly where Web Locks is absent.
  */
 export function withAuthLifecycleLock<T>(run: () => Promise<T>): Promise<T> {
-  const nav = globalThis.navigator as (Navigator & { locks?: AuthLockManager }) | undefined;
-  const locks = nav?.locks;
-  if (!locks) return run();
-  return locks.request('transformlit-auth-lifecycle', { mode: 'exclusive' }, run);
+  if (authLockDepth > 0) return run();
+  const locks = authLockManager();
+  if (!locks) {
+    authLockDepth += 1;
+    return (async () => {
+      try {
+        return await run();
+      } finally {
+        authLockDepth -= 1;
+      }
+    })();
+  }
+  return locks.request('transformlit-auth-lifecycle', { mode: 'exclusive' }, async () => {
+    authLockDepth += 1;
+    try {
+      return await run();
+    } finally {
+      authLockDepth -= 1;
+    }
+  });
+}
+
+/** Test seam: reset the reentrancy depth between tests. */
+export function resetAuthLifecycleLockForTests(): void {
+  authLockDepth = 0;
 }
 
 /**

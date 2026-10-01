@@ -7,7 +7,10 @@ import { useBibleStore } from '../../store/bible-store';
 import { resetApolloState } from '../apollo-client';
 import { OfflineDatabase } from './database';
 import { syncCoordinator } from './sync-service';
-import { accountLifecycle } from './account-activation';
+import {
+  accountLifecycle,
+  resetAccountExitWiringForTests,
+} from './account-activation';
 import type { ExitDecision, ExitDrainReport } from './account-lifecycle';
 
 /**
@@ -60,26 +63,27 @@ export async function readExitWork(): Promise<ExitWorkSummary> {
 
 /**
  * Terminates and settles the remote logout attempt within a bounded window.
- * Returns true ONLY when the server confirmed the session invalidation
- * (2xx + cleared cookie). A timeout aborts the request and returns false —
- * "timed out" is not proof the old cookie is gone, so the caller persists a
- * deferred-logout barrier rather than assuming success.
- */
-/**
- * Invalidates the remote session. IMPORTANT: this must NOT acquire the shared
- * auth-lifecycle lock itself. It is reached from `hydrate()` → `resumeExit()`,
- * and `hydrate()` is called from inside the lock held by login/registration/
- * refresh; Web Locks is not reentrant, so a nested acquisition would deadlock
- * every login on a profile with a durable barrier. Serialization of the actual
- * cookie-clearing fetch is provided by the OUTER lock held at the public exit
- * entrypoints (`completeAccountExit`, `retryDeferredLogout`, `resumeAccountExit`)
- * and by the login/refresh flows.
+ * Returns true ONLY when the server explicitly confirmed the invalidation
+ * (`{ revoked: true }`). A `!ok` response, a timeout, or an explicit
+ * unconfirmable signal (e.g. `no-credential`) is NOT success — the caller keeps
+ * the deferred-logout barrier rather than assuming the cookie is gone.
  *
- * Returns true ONLY when the server explicitly confirmed the session
- * invalidation (`{ revoked: true }`). A 200 with an explicit unconfirmable
- * signal (e.g. `no-credential`) is NOT success — the caller keeps the barrier.
+ * It runs under `withAuthLifecycleLock`, which is reentrancy-aware: when it is
+ * reached from `hydrate()` → `resumeExit()` inside the login/refresh lock, it
+ * reuses that already-held lock (no deadlock); when reached on an unlocked path
+ * it acquires the lock, serializing the fetch against concurrent
+ * logins/refreshes. Concurrent callers are coalesced into ONE fetch.
  */
-async function invalidateSession(): Promise<boolean> {
+let invalidatePromise: Promise<boolean> | null = null;
+
+function invalidateSession(): Promise<boolean> {
+  invalidatePromise ??= withAuthLifecycleLock(performInvalidateSession).finally(() => {
+    invalidatePromise = null;
+  });
+  return invalidatePromise;
+}
+
+async function performInvalidateSession(): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LOGOUT_TIMEOUT_MS);
   try {
@@ -152,33 +156,26 @@ export function installAccountExitListener(): void {
   }
 }
 
-/** Test seam: allow the listener to be re-installed after a reset. */
-export function resetAccountExitListenerForTests(): void {
-  exitListenerInstalled = false;
-}
-
-let bootInstalled = false;
-
 /**
- * Boot initializer: installs the REAL exit deps + cross-tab listener exactly
- * once, so a cold `hydrate()` can resume a persisted barrier/deferred logout
- * without any exit entrypoint having run. MUST be called from app bootstrap
- * (e.g. `PwaProvider`) because the lifecycle cannot import this module (cycle).
+ * Boot initializer: installs the REAL exit deps + cross-tab listener, so a cold
+ * `hydrate()` can resume a persisted barrier/deferred logout without any exit
+ * entrypoint having run. MUST be called from app bootstrap (e.g. `PwaProvider`)
+ * because the lifecycle cannot import this module (static cycle). It also backs
+ * `hydrateAccountLifecycle()`'s lazy dynamic import.
  */
 export function installAccountExit(): void {
   configureAccountExit();
-  bootInstalled = true;
 }
 
-/** Test seam: reset the boot-installed flag and the listener. */
+/**
+ * Test seam: reset the listener, coalesced-fetch cache, and the memoized
+ * exit-wiring import so a spec that resets the lifecycle singleton re-wires the
+ * fresh instance.
+ */
 export function resetAccountExitForTests(): void {
-  bootInstalled = false;
   exitListenerInstalled = false;
-}
-
-/** True once the app has installed the exit deps at boot. */
-export function accountExitInstalled(): boolean {
-  return bootInstalled;
+  invalidatePromise = null;
+  resetAccountExitWiringForTests();
 }
 
 /**

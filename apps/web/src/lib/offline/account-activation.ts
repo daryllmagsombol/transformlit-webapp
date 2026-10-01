@@ -59,6 +59,14 @@ async function ensureAccountExitWired(): Promise<void> {
 }
 
 /**
+ * Test seam: clear the memoized exit-wiring import so a spec that rebuilds the
+ * lifecycle singleton re-wires exit deps onto the FRESH instance.
+ */
+export function resetAccountExitWiringForTests(): void {
+  exitWiring = null;
+}
+
+/**
  * Restores the persisted local owner after a restart. Idempotent, so it is safe
  * to call on every bootstrap; this is what makes the different-subject
  * fail-closed guard apply across restarts. It first installs the real exit deps

@@ -3,9 +3,11 @@ import {
   resetAccountExitForTests,
   readExitWork,
   completeAccountExit,
+  resumeAccountExit,
+  abandonDeferredLogout,
 } from './account-exit';
 import { accountLifecycle, resetAccountLifecycleForTests } from './account-activation';
-import { withAuthLifecycleLock } from '../auth';
+import { withAuthLifecycleLock, resetAuthLifecycleLockForTests } from '../auth';
 
 jest.mock('../../store', () => ({
   useAuthStore: { getState: () => ({ clearAuth: jest.fn() }) },
@@ -55,17 +57,66 @@ function installNonReentrantLocks(): { active: () => number } {
   return { active: () => active };
 }
 
+/**
+ * A FIFO Web Locks shim that models cross-tab contention and lets a test hold a
+ * lock externally (as another tab/login would).
+ */
+function installFifoLockManager(): {
+  hold: (name: string) => () => void;
+  requestCalls: string[];
+  maxActive: () => number;
+} {
+  const chains = new Map<string, Promise<void>>();
+  const requestCalls: string[] = [];
+  let active = 0;
+  let max = 0;
+  const manager: FakeLockManager = {
+    request<T>(name: string, _options: { mode?: 'exclusive' | 'shared' }, callback: () => Promise<T>) {
+      requestCalls.push(name);
+      const prev = chains.get(name) ?? Promise.resolve();
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      chains.set(name, prev.then(() => gate));
+      return prev.then(async () => {
+        active += 1;
+        max = Math.max(max, active);
+        try {
+          return await callback();
+        } finally {
+          active -= 1;
+          release();
+        }
+      }) as Promise<T>;
+    },
+  };
+  function hold(name: string): () => void {
+    const prev = chains.get(name) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    chains.set(name, prev.then(() => gate));
+    return release;
+  }
+  (globalThis.navigator as unknown as { locks?: FakeLockManager }).locks = manager;
+  return { hold, requestCalls, maxActive: () => max };
+}
+
 const originalFetch = global.fetch;
 
 describe('account exit boot wiring', () => {
   beforeEach(() => {
     resetAccountLifecycleForTests();
     resetAccountExitForTests();
+    resetAuthLifecycleLockForTests();
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
     delete (globalThis.navigator as unknown as { locks?: unknown }).locks;
+    resetAuthLifecycleLockForTests();
   });
 
   it('installs real exit deps at boot so a cold hydrate resumes a persisted barrier', async () => {
@@ -147,5 +198,67 @@ describe('account exit boot wiring', () => {
 
     await expect(completeAccountExit(false, true)).resolves.toEqual({ status: 'PROCEED' });
     expect(locks.active()).toBe(0);
+  });
+
+  it('serializes a barrier-resume logout behind a held lifecycle lock (not unlocked)', async () => {
+    const locks = installFifoLockManager();
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ revoked: true }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await accountLifecycle().persistBarrier('subject-a', 2, 'SIGN_OUT');
+    installAccountExit();
+
+    // Another agent (login/refresh in this or another tab) holds the lock.
+    const release = locks.hold('transformlit-auth-lifecycle');
+    let resumed = false;
+    const resume = accountLifecycle().hydrate().then(() => {
+      resumed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The barrier-resume logout must be blocked behind the lock, NOT run unlocked.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(resumed).toBe(false);
+
+    release();
+    await resume;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(locks.requestCalls).toContain('transformlit-auth-lifecycle');
+    expect(await accountLifecycle().activationEligible()).toBe(true);
+  });
+
+  it('dedupes concurrent resume+hydrate logout fetches into one request', async () => {
+    installFifoLockManager();
+    const fetchMock = jest.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return { ok: true, json: async () => ({ revoked: true }) };
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await accountLifecycle().persistBarrier('subject-a', 2, 'SIGN_OUT');
+    installAccountExit();
+
+    await Promise.all([resumeAccountExit(), accountLifecycle().hydrate()]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('abandons an unconfirmable deferred logout on explicit request and permits re-activation', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ revoked: false, reason: 'no-credential' }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await accountLifecycle().persistBarrier('subject-a', 2, 'SIGN_OUT');
+    installAccountExit();
+    await accountLifecycle().hydrate();
+    expect(await accountLifecycle().activationEligible()).toBe(false);
+
+    await abandonDeferredLogout();
+
+    expect(await accountLifecycle().activationEligible()).toBe(true);
+    const install = await accountLifecycle().establishIdentity({ subject: 'subject-b', epoch: 9 });
+    expect(install.status).toBe('INSTALLED');
   });
 });
