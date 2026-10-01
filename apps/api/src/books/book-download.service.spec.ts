@@ -315,6 +315,60 @@ describe('BookDownloadService', () => {
     expect(prisma.bookContentVersion.update).not.toHaveBeenCalled();
   });
 
+  it('pages past unverifiable versions to reach a later verifiable one', async () => {
+    // The verifiable version sorts after more unverifiable rows than a single
+    // batch can hold. Without a keyset cursor the unverifiable rows pin the
+    // front of the query forever, so book-3 would never be promoted.
+    const verifiable = versionRecord({
+      eligible: false,
+      verifiedAt: null,
+      pageCount: 1,
+      pages: [pageRow({ assetKey: 'books/book-3/v1/pages/1.png', textKey: 'books/book-3/v1/pages/1.json', frameByteLength: 0, frameSha256: null, textByteLength: null, textSha256: null })],
+    });
+    const unverifiable = versionRecord({
+      eligible: false,
+      verifiedAt: null,
+      pageCount: 1,
+      pages: [pageRow({ assetKey: 'books/book-1/v1/pages/1.png', textKey: 'books/book-1/v1/pages/1.json', frameByteLength: 0, frameSha256: null, textByteLength: null, textSha256: null })],
+    });
+    const { service, storage, prisma } = build(verifiable);
+
+    const rows = [
+      { bookId: 'book-1', contentVersion: 1 },
+      { bookId: 'book-2', contentVersion: 1 },
+      { bookId: 'book-3', contentVersion: 1 },
+    ];
+    prisma.bookContentVersion.findMany.mockImplementation(async (args: { take: number; where: { OR?: Array<Record<string, unknown>> } }) => {
+      const cursorClause = args.where.OR?.[1] as
+        | { bookId: string; contentVersion: { gt: number } }
+        | undefined;
+      const after = cursorClause
+        ? { bookId: cursorClause.bookId, contentVersion: cursorClause.contentVersion.gt }
+        : null;
+      const remaining = after
+        ? rows.filter((row) => row.bookId > after.bookId || (row.bookId === after.bookId && row.contentVersion > after.contentVersion))
+        : rows;
+      return remaining.slice(0, args.take);
+    });
+    prisma.bookContentVersion.findUnique.mockImplementation(async (args: { where: { bookId_contentVersion: { bookId: string } } }) =>
+      args.where.bookId_contentVersion.bookId === 'book-3' ? verifiable : unverifiable,
+    );
+    // book-1/book-2 assets are missing; book-3's resolve.
+    storage.getBuffer.mockImplementation(async (key: string) => (key.includes('book-3') ? FRAME : null));
+
+    // Batch size 1 forces one unverifiable row per page.
+    const summary = await service.backfillAllIneligible(1);
+    expect(summary.examined).toBe(3);
+    expect(summary.promoted).toEqual([{ bookId: 'book-3', contentVersion: 1 }]);
+    expect(summary.skipped).toEqual([
+      { bookId: 'book-1', contentVersion: 1 },
+      { bookId: 'book-2', contentVersion: 1 },
+    ]);
+    expect(prisma.bookContentVersion.update).toHaveBeenCalledTimes(1);
+    // The cursor advanced past the unverifiable rows instead of re-selecting them.
+    expect(prisma.bookContentVersion.findMany.mock.calls.length).toBeGreaterThan(1);
+  });
+
   it('bounds concurrent download work independent of reading analytics', async () => {
     const limiter = new DownloadConcurrencyLimiter(1);
     let release!: () => void;

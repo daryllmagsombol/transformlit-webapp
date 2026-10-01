@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -355,28 +356,62 @@ export class BookDownloadService {
   }
 
   /**
-   * Promotes every not-yet-eligible version whose real assets verify. Bounded
-   * and idempotent: it only examines `eligible = false` rows, verifies actual
-   * stored bytes, and never fabricates checksums or text. A version whose
-   * assets are missing stays ineligible and is reported as skipped.
+   * Promotes every not-yet-eligible version whose real assets verify.
+   *
+   * Pages deterministically through ALL ineligible rows using an ascending
+   * `(bookId, contentVersion)` keyset cursor until exhausted. A permanently
+   * unverifiable row stays `eligible = false` forever, so a fixed `take` without
+   * a cursor would let skipped rows occupy the front of every run and starve
+   * later verifiable versions. The cursor advances past rows already examined in
+   * this invocation, so a single run reaches later versions regardless of how
+   * many unverifiable rows precede them.
+   *
+   * `batchSize` bounds each database round-trip, not total work. Refusal is
+   * preserved: verification failure leaves a version ineligible and reports it
+   * as skipped; checksums and text are never fabricated.
    */
-  async backfillAllIneligible(limit = 100): Promise<BackfillSummary> {
-    const candidates = await this.prisma.bookContentVersion.findMany({
-      where: { eligible: false },
-      orderBy: [{ bookId: 'asc' }, { contentVersion: 'asc' }],
-      take: limit,
-      select: { bookId: true, contentVersion: true },
-    });
+  async backfillAllIneligible(batchSize = 100): Promise<BackfillSummary> {
+    if (batchSize < 1) throw new BadRequestException('Backfill batch size must be at least 1');
 
     const promoted: BackfillResult[] = [];
     const skipped: BackfillResult[] = [];
-    for (const candidate of candidates) {
-      const verified = await this.backfillVersion(candidate.bookId, candidate.contentVersion);
-      const result = { bookId: candidate.bookId, contentVersion: candidate.contentVersion };
-      if (verified) promoted.push(result);
-      else skipped.push(result);
+    let examined = 0;
+    let cursor: BackfillResult | null = null;
+
+    for (;;) {
+      const batch = (await this.prisma.bookContentVersion.findMany({
+        where: {
+          eligible: false,
+          ...(cursor
+            ? {
+                OR: [
+                  { bookId: { gt: cursor.bookId } },
+                  { bookId: cursor.bookId, contentVersion: { gt: cursor.contentVersion } },
+                ],
+              }
+            : {}),
+        },
+        orderBy: [{ bookId: 'asc' }, { contentVersion: 'asc' }],
+        take: batchSize,
+        select: { bookId: true, contentVersion: true },
+      })) as BackfillResult[];
+
+      if (batch.length === 0) break;
+
+      for (const candidate of batch) {
+        examined += 1;
+        const result = { bookId: candidate.bookId, contentVersion: candidate.contentVersion };
+        if (await this.backfillVersion(candidate.bookId, candidate.contentVersion)) promoted.push(result);
+        else skipped.push(result);
+      }
+
+      // The keyset strictly advances because (bookId, contentVersion) is unique,
+      // so this terminates even when every row in the batch is skipped.
+      cursor = batch[batch.length - 1];
+      if (batch.length < batchSize) break;
     }
-    return { examined: candidates.length, promoted, skipped };
+
+    return { examined, promoted, skipped };
   }
 }
 

@@ -281,3 +281,83 @@ is not claimed as passing.
 
 `fix(api): repair download DI and backfill entrypoint`
 
+---
+
+## Round 2 fix — page backfill past unverifiable versions
+
+Fixed the remaining Important residual on branch `feature/pwa-lane-a` (HEAD before fix:
+`53f322a`).
+
+**Root cause.** `backfillAllIneligible(limit = 100)` selected `where: { eligible: false }` with a
+fixed `take`. Permanently-unverifiable rows stay `eligible: false`, so they occupy the front of the
+ordered query on every run; when more than `limit` ineligible versions exist and the earliest ones
+are unverifiable, later verifiable versions are never reached — even on rerun (starvation).
+
+**Fix.** `backfillAllIneligible(batchSize = 100)` now keyset-pages deterministically through ALL
+ineligible rows using an ascending `(bookId, contentVersion)` cursor until exhausted:
+
+```
+where: {
+  eligible: false,
+  OR: [
+    { bookId: { gt: cursor.bookId } },
+    { bookId: cursor.bookId, contentVersion: { gt: cursor.contentVersion } },
+  ],
+},
+orderBy: [{ bookId: 'asc' }, { contentVersion: 'asc' }],
+take: batchSize
+```
+
+Because `(bookId, contentVersion)` is unique, the cursor strictly advances and the loop
+terminates even when every row in the batch is skipped. `batchSize` bounds each database
+round-trip, not total work. Refusal-not-fabricate behavior and per-row promoted/skipped reporting
+are unchanged; `batchSize < 1` is rejected. The one-shot entrypoint was updated to call this as a
+batch size (default 100) and its help text now states the run pages through all ineligible rows.
+
+**RED (before fix)** — new focused test with a verifiable version behind more unverifiable rows
+than one batch can hold (`batchSize = 1`):
+```
+pnpm --filter @transformlit/api test --runInBand \
+  --runTestsByPath src/books/book-download.service.spec.ts
+● BookDownloadService › pages past unverifiable versions to reach a later verifiable one
+  expect(received).toBe(expected) // Object.is equality
+  Expected: 3
+  Received: 1
+Test Suites: 1 failed, 1 total   Tests: 1 failed, 18 passed
+```
+Only one row was examined and `book-3` was never promoted.
+
+**GREEN (after fix)**:
+```
+... src/books/book-download.service.spec.ts
+Test Suites: 1 passed, 1 total   Tests: 19 passed
+```
+The test asserts `examined = 3`, `promoted = [book-3]`, `skipped = [book-1, book-2]`, exactly one
+version update, and more than one `findMany` page (the cursor advanced).
+
+### Round 2 verification
+
+```
+pnpm --filter @transformlit/api test --runInBand
+Test Suites: 39 passed, 39 total   Tests: 633 passed, 633 total
+
+pnpm --filter @transformlit/api run typecheck                  # exit 0
+pnpm --filter @transformlit/api run build                      # 119 files compiled
+pnpm --filter @transformlit/api run test:command-runner        # passed (DI bootstrap guard)
+git diff --check                                               # clean
+```
+
+DB-backed integration/migration application remains **BLOCKED** (Docker/Testcontainers absent) and
+is not claimed as passing.
+
+### Round 2 files
+
+- Modified: `apps/api/src/books/book-download.service.ts`,
+  `apps/api/src/books/book-download.service.spec.ts`,
+  `apps/api/src/books/backfill-download-versions.ts`
+
+### Round 2 commit
+
+`fix(api): page backfill past unverifiable versions`
+
+
