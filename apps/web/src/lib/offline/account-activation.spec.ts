@@ -13,12 +13,19 @@ import {
   activateIdentity,
   captureOriginEpoch,
   completeLocalAuth,
+  hydrateAccountLifecycle,
   installEpochTaggedAuth,
   markAuthRequired,
   requireReplayIdentity,
   resetAccountLifecycleForTests,
 } from './account-activation';
-import { issueAuthInstallTicket } from '../auth';
+import { issueAuthInstallTicket } from './install-ticket';
+
+function buildJwt(sub: string): string {
+  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const body = btoa(JSON.stringify({ sub, exp: 9999999999, iat: 1000000000 }));
+  return `${header}.${body}.sig`;
+}
 
 const mockUser = {
   id: 'subject-a',
@@ -57,9 +64,8 @@ describe('account activation wiring', () => {
     useBibleStore.getState().setLastPosition('BSB', { book: 'JHN', chapter: 3 });
     expect(useBibleStore.getState().subject).toBe('subject-a');
 
-    // Switching subjects is blocked in Task 13A (exit is Task 13B), so drive
-    // the reset through the public Bible seam after a fresh activation would
-    // occur — pinned here as the intended A→B behavior.
+    // A real A→B gate traversal is Task 13B (exit/drain); here the reset is
+    // proven through the public Bible seam the gate drives.
     useBibleStore.getState().setAccountSubject('subject-b');
     expect(useBibleStore.getState().lastPosition).toEqual({});
     expect(useBibleStore.getState().subject).toBe('subject-b');
@@ -95,18 +101,46 @@ describe('account activation wiring', () => {
     expect(install).not.toHaveBeenCalled();
   });
 
-  it('completes local auth with a lifecycle ticket that the store accepts', async () => {
-    const installed = await completeLocalAuth(mockUser as never, 'access-token');
+  it('does not bind account state when the store rejects the ticket (M1)', async () => {
+    await activateIdentity({ subject: 'subject-a', epoch: 0 });
+    const epoch = await captureOriginEpoch();
+
+    const outcome = await installEpochTaggedAuth(
+      { epoch, subject: 'subject-a', value: 'tok' },
+      () => false,
+    );
+    expect(outcome.status).toBe('BLOCKED');
+  });
+
+  it('completes local auth only when the token subject matches the user id (M2)', async () => {
+    const installed = await completeLocalAuth(mockUser as never, buildJwt('subject-a'));
     expect(installed).toBe(true);
     expect(useAuthStore.getState().user).toEqual(mockUser);
     expect(useBibleStore.getState().subject).toBe('subject-a');
   });
 
+  it('rejects local auth when the token subject differs from the user id (M2)', async () => {
+    const installed = await completeLocalAuth(mockUser as never, buildJwt('someone-else'));
+    expect(installed).toBe(false);
+    expect(useAuthStore.getState().user).toBeNull();
+  });
+
+  it('rejects local auth when the token has no verifiable subject (M2)', async () => {
+    const installed = await completeLocalAuth(mockUser as never, 'not-a-jwt');
+    expect(installed).toBe(false);
+    expect(useAuthStore.getState().user).toBeNull();
+  });
+
   it('issues install tickets only from the lifecycle gate', () => {
-    // Two tickets for the same identity are distinct proofs.
     const a = issueAuthInstallTicket('subject-a', 1);
     const b = issueAuthInstallTicket('subject-a', 1);
     expect(a).not.toBe(b);
+  });
+
+  it('hydrates without clobbering an in-memory owner (I1 idempotent)', async () => {
+    await activateIdentity({ subject: 'subject-a', epoch: 0 });
+    await hydrateAccountLifecycle();
+    expect(requireReplayIdentity()).toEqual({ status: 'READY', owner: { subject: 'subject-a', epoch: 1 } });
   });
 
   it('pauses replay when identity is required but auth failed', async () => {

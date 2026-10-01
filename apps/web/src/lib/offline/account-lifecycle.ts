@@ -55,6 +55,11 @@ export interface AuthLifecycle {
   installIdentity<T>(result: EpochTaggedResult<T>): Promise<InstallOutcome>;
   /** Durable lifecycle epoch (owner epoch, else stored baseline). */
   epoch(): Promise<number>;
+  /**
+   * Restores a persisted local owner after a restart. Idempotent; safe to call
+   * on every bootstrap. Returns the restored owner (or null).
+   */
+  hydrate(): Promise<AccountOwner | null>;
   /** Whether private writes are currently authorized. */
   writePermit(): WritePermit;
   /** Whether replay may proceed for the established owner. */
@@ -120,6 +125,17 @@ export class AccountLifecycle implements AuthLifecycle {
     const owner = this.context.getOwner();
     if (owner) return owner.epoch;
     return this.context.currentEpoch();
+  }
+
+  /**
+   * Restores the persisted owner into memory. Idempotent: when an owner is
+   * already present it is a no-op, so it is safe to call on every bootstrap.
+   * This is what makes the different-subject fail-closed guard apply across
+   * restarts (a new tab sees the previously established owner).
+   */
+  async hydrate(): Promise<AccountOwner | null> {
+    if (this.context.hasEstablishedOwner()) return this.context.getOwner();
+    return this.context.restore();
   }
 
   setDisplay(display: AuthDisplayState | null): void {

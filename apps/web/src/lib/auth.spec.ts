@@ -6,10 +6,9 @@ import {
   decodeJwt,
   getTokenExpiry,
   isTokenExpiringSoon,
-  issueAuthInstallTicket,
-  isAuthInstallTicket,
   AuthHttpError,
 } from './auth';
+import { issueAuthInstallTicket, isAuthInstallTicket } from './offline/install-ticket';
 
 function buildJwt(payload: Record<string, unknown>): string {
   const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));

@@ -1,5 +1,5 @@
 import { useAuthStore } from './auth';
-import { issueAuthInstallTicket } from '../lib/auth';
+import { issueAuthInstallTicket } from '../lib/offline/install-ticket';
 
 jest.mock('../lib/auth', () => {
   const actual = jest.requireActual('../lib/auth');
@@ -7,21 +7,12 @@ jest.mock('../lib/auth', () => {
     ...actual,
     setAccessToken: jest.fn(),
     clearAuth: jest.fn(),
-    issueAuthInstallTicket: jest.fn(),
-    isAuthInstallTicket: jest.fn(),
   };
 });
 
-const {
-  setAccessToken,
-  clearAuth: clearAuthStorage,
-  issueAuthInstallTicket: issueTicket,
-  isAuthInstallTicket,
-} = require('../lib/auth') as {
+const { setAccessToken, clearAuth: clearAuthStorage } = require('../lib/auth') as {
   setAccessToken: jest.Mock;
   clearAuth: jest.Mock;
-  issueAuthInstallTicket: jest.Mock;
-  isAuthInstallTicket: jest.Mock;
 };
 
 const mockUser = {
@@ -32,10 +23,7 @@ const mockUser = {
   createdAt: '2024-01-01T00:00:00Z',
 };
 
-const realTicket = () => {
-  const actual = jest.requireActual('../lib/auth') as typeof import('../lib/auth');
-  return actual.issueAuthInstallTicket('user-1', 1);
-};
+const realTicket = () => issueAuthInstallTicket('user-1', 1);
 
 describe('Auth Store', () => {
   beforeEach(() => {
@@ -66,17 +54,13 @@ describe('Auth Store', () => {
 
   describe('installAuth', () => {
     it('installs the user when presented a valid lifecycle ticket', () => {
-      isAuthInstallTicket.mockReturnValue(true);
-      const ticket = realTicket();
-
-      const installed = useAuthStore.getState().installAuth(mockUser as any, 'access-token-123', ticket);
+      const installed = useAuthStore.getState().installAuth(mockUser as any, 'access-token-123', realTicket());
       expect(installed).toBe(true);
       expect(useAuthStore.getState().user).toEqual(mockUser);
       expect(setAccessToken).toHaveBeenCalledWith('access-token-123');
     });
 
     it('fails closed and installs nothing without a valid ticket', () => {
-      isAuthInstallTicket.mockReturnValue(false);
       const ticket = { subject: 'user-1', epoch: 1 };
 
       const installed = useAuthStore.getState().installAuth(mockUser as any, 'access-token-123', ticket);
@@ -86,10 +70,6 @@ describe('Auth Store', () => {
     });
 
     it('rejects a forged ticket object that never passed the lifecycle gate', () => {
-      // Use the real implementation so a plain object ticket is rejected.
-      const actual = jest.requireActual('../lib/auth') as typeof import('../lib/auth');
-      isAuthInstallTicket.mockImplementation(actual.isAuthInstallTicket);
-
       const installed = useAuthStore
         .getState()
         .installAuth(mockUser as any, 'tok', { subject: 'user-1', epoch: 1 } as never);
@@ -114,7 +94,6 @@ describe('Auth Store', () => {
 
   describe('persistence', () => {
     it('persists only the user to localStorage after installAuth (never a token)', () => {
-      isAuthInstallTicket.mockReturnValue(true);
       useAuthStore.getState().installAuth(mockUser as any, 'access-token-123', realTicket());
       const stored = JSON.parse(localStorage.getItem('auth-storage') || '{}');
       expect(stored.state).toEqual({
@@ -124,7 +103,6 @@ describe('Auth Store', () => {
     });
 
     it('does not persist isHydrated', () => {
-      isAuthInstallTicket.mockReturnValue(true);
       useAuthStore.setState({ isHydrated: true });
       useAuthStore.getState().installAuth(mockUser as any, 'tok', realTicket());
       const stored = JSON.parse(localStorage.getItem('auth-storage') || '{}');

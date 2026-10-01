@@ -1,12 +1,11 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { GraphQLUser } from '@transformlit/shared';
+import { clearAuth as clearAuthStorage, setAccessToken } from '../lib/auth';
 import {
   type AuthInstallTicket,
-  clearAuth as clearAuthStorage,
   isAuthInstallTicket,
-  setAccessToken,
-} from '../lib/auth';
+} from '../lib/offline/install-ticket';
 
 interface AuthStore {
   user: GraphQLUser | null;

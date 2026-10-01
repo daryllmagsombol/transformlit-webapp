@@ -31,6 +31,8 @@ touched by this task:
   Locks serialization; no direct token/user installs.
 - `apps/web/src/lib/auth.ts` — lifecycle install tickets (`issueAuthInstallTicket`
   / `isAuthInstallTicket`) and `AuthHttpError`; never persists tokens.
+- `apps/web/src/lib/offline/install-ticket.ts` (**new, Round 1**) — the
+  lifecycle-owned ticket minter/guard, not re-exported from any public barrel.
 - `apps/web/src/store/auth.ts` — replaced ungated `setAuth`/`setUser` with a
   ticket-gated `installAuth`.
 - `apps/web/src/app/login/login-form.tsx` — local login via `completeLocalAuth`.
@@ -78,6 +80,10 @@ now crosses the same gate. No separate OAuth return module exists.
 - **C3 wiring (mandatory).** Every successful activation calls
   `useBibleStore.setAccountSubject(subject)`, resetting the per-account Bible
   position/index so a previous account's position cannot surface under another.
+  **Scope correction (Round 1):** same-subject activation is gate-wired and
+  proven; a real A→B gate-level switch cannot traverse the gate until Task 13B
+  (exit/drain). The A→B reset is proven through the public Bible seam the gate
+  drives, not through a completed gate-level account switch.
 
 ## TDD evidence
 
@@ -91,7 +97,7 @@ now crosses the same gate. No separate OAuth return module exists.
 
 ## Verification
 
-- `pnpm --filter @transformlit/web test --runInBand` — **108 suites / 830 tests passed**.
+- `pnpm --filter @transformlit/web test --runInBand` — **108 suites / 830 tests passed** (pre-fix).
 - `pnpm --filter @transformlit/web typecheck` — passed.
 - `pnpm --filter @transformlit/web build` — passed (Next.js 16.3.6).
 - `git diff --check` — passed.
@@ -109,3 +115,71 @@ now crosses the same gate. No separate OAuth return module exists.
 - `markTransient()` intentionally does not clear a pending `AUTH_REQUIRED`
   state; only a successful same-subject activation resumes replay.
 - No tokens are persisted; the access token remains memory-only.
+
+## Round 1 fix — review findings (C1–C2, I1–I4, M1–M2)
+
+### Status
+
+All Critical and Important items addressed; M1/M2 fixed as cheap in-lane
+changes. No new dependencies. Real-browser verification remains **BLOCKED**.
+
+### RED / GREEN evidence
+
+RED captured by mutating the fixed code back to the pre-fix policy
+(unconditional clear+redirect on every failure; `hydrate()` a no-op) and running
+the specs: **7 failed / 21 passed**. Failures were exactly the transient
+preservation (refresh + bootstrap + network) and the 401 non-clear, plus all
+three cold-start rehydration cases.
+
+GREEN after restore: focused specs 74/74, full suite 108 suites / 841 tests.
+
+### Changes
+
+- **C1 — transient refresh no longer logs out.** `doRefreshTokens`'s catch only
+  clears the session and redirects when `classifyAuthError` returns
+  `AUTH_REQUIRED`. A 5xx/network failure calls `markTransient()` and returns
+  false without clearing the token, the in-memory user, the persisted
+  `auth-storage` profile, or navigating.
+- **C2 — bootstrap same gate.** `bootstrapAttempt` clears/redirects only on
+  `AUTH_REQUIRED`; a cold-start transient outage now preserves the persisted
+  profile instead of discarding it.
+- **Mandatory test.** Added `destructive-policy separation (C1/C2)` coverage:
+  503 (refresh), 502 (cold-start bootstrap), and a network `TypeError` all
+  keep `useAuthStore.user` + persisted `auth-storage` and never invoke the
+  redirect seam; a 401 still clears both and redirects once. The redirect is a
+  small injectable seam (`setAuthRedirectForTests`) because jsdom's `location`
+  is non-configurable; production behavior is unchanged and the real clear +
+  redirect path still runs on 401.
+- **I1 — cold-start ownership rehydrated.** `AccountLifecycle.hydrate()`
+  (idempotent) restores the persisted owner; `bootstrapAuth` and every
+  `activateIdentity`/`installEpochTaggedAuth`/`completeLocalAuth` call it, so
+  the different-subject fail-closed guard applies across restarts. Tests cover
+  restore-after-restart, idempotency, and a blocked different-subject result
+  across a restart.
+- **I2 — report corrected.** C3 wording now states same-subject activation is
+  gate-wired/proven and that a real A→B gate traversal is Task 13B; the
+  seam-level A→B test remains.
+- **I3/I4 — hard gate.** The ticket minter `issueAuthInstallTicket` now lives
+  in the lifecycle-owned `lib/offline/install-ticket.ts`, which is not part of
+  any public barrel; `lib/index.ts` no longer re-exports `setAccessToken`
+  (verified: no consumers of the barrel). Internal importers were updated.
+- **M1 — install-ticket success honored.** `installEpochTaggedAuth` binds
+  account-scoped state only when `install(ticket)` returns true; a rejected
+  install now returns `BLOCKED` instead of claiming activation.
+- **M2 — local auth verified.** `completeLocalAuth` decodes the access-token
+  `sub` and requires it to equal `user.id` before activating, and captures the
+  lifecycle epoch like refresh does.
+
+### Deferred minors (recorded, not fixed)
+
+- M3/M4/M5 (as flagged by review) were not separately enumerated here beyond
+  the I3/I4 export tightening.
+
+### Round 1 verification
+
+- RED: mutated code → 7 targeted failures as above.
+- `pnpm --filter @transformlit/web test --runInBand` — **108 suites / 841 tests passed**.
+- `pnpm --filter @transformlit/web typecheck` — passed.
+- `pnpm --filter @transformlit/web build` — passed (Next.js 16.3.6).
+- `git diff --check` — passed.
+- Real-browser/Playwright — **BLOCKED**; no browser result claimed.

@@ -188,3 +188,44 @@ describe('lifecycle barrier durability', () => {
     );
   });
 });
+
+describe('cold-start ownership rehydration (I1)', () => {
+  it('restores the established owner after a restart', async () => {
+    const persistence = new MemoryLifecyclePersistence();
+    const first = new AccountLifecycle(new AccountContext(persistence), persistence);
+    const established = await first.establishIdentity({ subject: 'user-a', epoch: 0 });
+    const epoch = established.status === 'INSTALLED' ? established.owner.epoch : -1;
+
+    // Restart: new in-memory context, same durable persistence.
+    const second = new AccountLifecycle(new AccountContext(persistence), persistence);
+    expect(second.getOwner()).toBeNull();
+
+    const restored = await second.hydrate();
+    expect(restored).toEqual({ subject: 'user-a', epoch });
+    expect(second.getOwner()).toEqual({ subject: 'user-a', epoch });
+    expect(second.requireReplayIdentity()).toEqual({ status: 'READY', owner: { subject: 'user-a', epoch } });
+  });
+
+  it('is idempotent and does not clobber the in-memory owner', async () => {
+    const { lifecycle } = makeLifecycle();
+    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
+
+    const restored = await lifecycle.hydrate();
+    expect(restored).toEqual({ subject: 'user-a', epoch: 1 });
+    expect(lifecycle.getOwner()).toEqual({ subject: 'user-a', epoch: 1 });
+  });
+
+  it('blocks a different-subject result across a restart', async () => {
+    const persistence = new MemoryLifecyclePersistence();
+    const first = new AccountLifecycle(new AccountContext(persistence), persistence);
+    await first.establishIdentity({ subject: 'user-a', epoch: 0 });
+
+    // New tab/restart: owner is restored, so a different subject fails closed.
+    const second = new AccountLifecycle(new AccountContext(persistence), persistence);
+    await second.hydrate();
+
+    const outcome = await second.establishIdentity({ subject: 'user-b', epoch: 0 });
+    expect(outcome.status).toBe('BLOCKED');
+    expect(second.getOwner()?.subject).toBe('user-a');
+  });
+});

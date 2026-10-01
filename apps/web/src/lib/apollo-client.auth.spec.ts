@@ -2,7 +2,7 @@ jest.mock('graphql-ws', () => ({ createClient: jest.fn(() => ({})) }));
 
 import { useAuthStore } from '../store';
 import { removeAccessToken } from './auth';
-import { bootstrapAuth, refreshTokens } from './apollo-client';
+import { bootstrapAuth, refreshTokens, setAuthRedirectForTests } from './apollo-client';
 import { requireReplayIdentity, resetAccountLifecycleForTests } from './offline/account-activation';
 
 function buildJwt(sub: string): string {
@@ -19,15 +19,25 @@ function okResponse(user: { id: string }, token: string) {
   };
 }
 
+const persistedUser = { id: 'user-a', email: 'a@example.com', displayName: 'A' };
+
 describe('auth refresh classification and activation fencing', () => {
   const fetchMock = jest.fn();
+  const redirectMock = jest.fn();
 
   beforeEach(() => {
     resetAccountLifecycleForTests();
     useAuthStore.setState({ user: null, isHydrated: true });
     removeAccessToken();
+    localStorage.clear();
+    redirectMock.mockReset();
+    setAuthRedirectForTests(redirectMock);
     global.fetch = fetchMock as unknown as typeof fetch;
     fetchMock.mockReset();
+  });
+
+  afterEach(() => {
+    setAuthRedirectForTests(null);
   });
 
   it('installs a verified subject on a successful refresh', async () => {
@@ -96,5 +106,55 @@ describe('auth refresh classification and activation fencing', () => {
     } finally {
       Reflect.deleteProperty(globalThis.navigator as Navigator, 'locks');
     }
+  });
+
+  describe('destructive-policy separation (C1/C2)', () => {
+    function seedPersistedProfile(): void {
+      useAuthStore.setState({ user: persistedUser as never, isHydrated: true });
+      localStorage.setItem(
+        'auth-storage',
+        JSON.stringify({ state: { user: persistedUser }, version: 0 }),
+      );
+    }
+
+    it('preserves the in-memory user and persisted profile on a transient refresh failure', async () => {
+      seedPersistedProfile();
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) });
+      await expect(refreshTokens()).resolves.toBe(false);
+
+      expect(useAuthStore.getState().user).toEqual(persistedUser);
+      expect(localStorage.getItem('auth-storage')).toContain('user-a');
+      expect(redirectMock).not.toHaveBeenCalled();
+    });
+
+    it('preserves the persisted profile on a cold-start transient bootstrap failure', async () => {
+      seedPersistedProfile();
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({}) });
+      await expect(bootstrapAuth()).resolves.toBe(false);
+
+      expect(useAuthStore.getState().user).toEqual(persistedUser);
+      expect(localStorage.getItem('auth-storage')).toContain('user-a');
+      expect(redirectMock).not.toHaveBeenCalled();
+    });
+
+    it('preserves state on a network-level refresh failure', async () => {
+      seedPersistedProfile();
+      fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      await expect(refreshTokens()).resolves.toBe(false);
+
+      expect(useAuthStore.getState().user).toEqual(persistedUser);
+      expect(localStorage.getItem('auth-storage')).toContain('user-a');
+      expect(redirectMock).not.toHaveBeenCalled();
+    });
+
+    it('clears the session and redirects on a genuine 401', async () => {
+      seedPersistedProfile();
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
+      await expect(refreshTokens()).resolves.toBe(false);
+
+      expect(useAuthStore.getState().user).toBeNull();
+      expect(localStorage.getItem('auth-storage')).not.toContain('user-a');
+      expect(redirectMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -1,7 +1,8 @@
 import type { GraphQLUser } from '@transformlit/shared';
 import { useAuthStore } from '../../store';
 import { useBibleStore } from '../../store/bible-store';
-import { issueAuthInstallTicket } from '../auth';
+import { decodeJwt } from '../auth';
+import { issueAuthInstallTicket, type AuthInstallTicket } from './install-ticket';
 import { AccountContext } from './account-context';
 import {
   AccountLifecycle,
@@ -41,6 +42,15 @@ export function resetAccountLifecycleForTests(): void {
 }
 
 /**
+ * Restores the persisted local owner after a restart. Idempotent, so it is safe
+ * to call on every bootstrap; this is what makes the different-subject
+ * fail-closed guard apply across restarts.
+ */
+export async function hydrateAccountLifecycle(): Promise<void> {
+  await lifecycle.hydrate();
+}
+
+/**
  * Binds Bible navigation preferences to the activated subject. This is the C3
  * wiring: every successful identity activation calls it so a previous
  * account's last-read position cannot surface under another account.
@@ -54,6 +64,7 @@ function bindAccountScopedState(subject: string): void {
  * UI state on success. Returns the raw outcome so callers can fail closed.
  */
 export async function activateIdentity(verification: IdentityVerification): Promise<InstallOutcome> {
+  await hydrateAccountLifecycle();
   const outcome = await lifecycle.establishIdentity(verification);
   if (outcome.status === 'INSTALLED') {
     bindAccountScopedState(outcome.owner.subject);
@@ -64,27 +75,39 @@ export async function activateIdentity(verification: IdentityVerification): Prom
 /**
  * Installs an epoch-tagged auth result (refresh / OAuth return) through the
  * gate, then installs the token/user via a lifecycle ticket. A stale epoch or
- * subject mismatch installs nothing.
+ * subject mismatch installs nothing. Account-scoped state is bound only after
+ * the token/user install actually succeeds.
  */
 export async function installEpochTaggedAuth<T>(
   result: EpochTaggedResult<T>,
-  install: (ticket: ReturnType<typeof issueAuthInstallTicket>) => boolean,
+  install: (ticket: AuthInstallTicket) => boolean,
 ): Promise<InstallOutcome> {
+  await hydrateAccountLifecycle();
   const outcome = await lifecycle.installIdentity(result);
-  if (outcome.status === 'INSTALLED') {
-    bindAccountScopedState(outcome.owner.subject);
-    install(issueAuthInstallTicket(outcome.owner.subject, outcome.owner.epoch));
+  if (outcome.status !== 'INSTALLED') return outcome;
+
+  const installed = install(issueAuthInstallTicket(outcome.owner.subject, outcome.owner.epoch));
+  if (!installed) {
+    // The store rejected the ticket: do not claim an activated account.
+    return { status: 'BLOCKED', reason: 'EXIT_NOT_IMPLEMENTED' };
   }
+  bindAccountScopedState(outcome.owner.subject);
   return outcome;
 }
 
 /**
- * Completes a local login/registration: establishes the subject, then installs
- * the token/user through the auth store's ticket-gated setter. Returns false
- * (installing nothing) when the lifecycle gate rejects the activation.
+ * Completes a local login/registration. The access-token subject must match the
+ * local user id (never trust the response body alone), then the subject is
+ * established and the token/user installed through the ticket-gated store.
+ * Returns false (installing nothing) when the gate rejects the activation.
  */
 export async function completeLocalAuth(user: GraphQLUser, accessToken: string): Promise<boolean> {
-  const outcome = await activateIdentity({ subject: user.id, epoch: 0 });
+  const subject = decodeJwt(accessToken)?.sub;
+  if (!subject || subject !== user.id) return false;
+
+  await hydrateAccountLifecycle();
+  const epoch = await lifecycle.epoch();
+  const outcome = await activateIdentity({ subject, epoch });
   if (outcome.status !== 'INSTALLED') return false;
   const ticket = issueAuthInstallTicket(outcome.owner.subject, outcome.owner.epoch);
   return useAuthStore.getState().installAuth(user, accessToken, ticket);
