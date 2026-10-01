@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { ConfigService } from '@nestjs/config';
 
 interface PubSubTrigger {
@@ -9,6 +9,7 @@ interface PubSubTrigger {
 @Injectable()
 export class PubSubService implements OnModuleInit, OnModuleDestroy {
   private pool!: Pool;
+  private listenClient?: PoolClient;
   private readonly listeners = new Map<string, PubSubTrigger[]>();
 
   constructor(private readonly config: ConfigService) {}
@@ -17,6 +18,7 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     const url = this.config.get<string>('DATABASE_URL');
     this.pool = new Pool({ connectionString: url });
     const client = await this.pool.connect();
+    this.listenClient = client;
 
     client.on('notification', (msg) => this.handleNotification(msg));
 
@@ -62,6 +64,11 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
+    // Release the dedicated LISTEN connection back to the pool before ending it.
+    // Pool.end() waits for every checked-out client, so an unreleased LISTEN
+    // client would hang shutdown (and the schema export/check commands) forever.
+    this.listenClient?.release();
+    this.listenClient = undefined;
     await this.pool.end();
   }
 
