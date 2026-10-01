@@ -146,3 +146,27 @@ export function queuedOperationsFor(
 export function belongsToOwner(operation: OutboxOperationRecord, owner: AccountOwner): boolean {
   return operation.subject === owner.subject && operation.epoch === owner.epoch;
 }
+
+/**
+ * True when `operation` is a successor whose dependency is still queued, so it
+ * must wait. When the dependency has been acknowledged (removed) the successor
+ * becomes runnable. Shared by the coordinator and the controlled-drain report so
+ * both agree on what "blocked" means.
+ */
+export function isBlockedSuccessor(
+  operation: OutboxOperationRecord,
+  presentOperationIds: ReadonlySet<string>,
+): boolean {
+  return operation.dependsOn !== null && presentOperationIds.has(operation.dependsOn);
+}
+
+/**
+ * A successor operation whose dependency was acknowledged. Its base revision is
+ * advanced to the acknowledged revision; the payload is returned UNCHANGED.
+ */
+export function advanceSuccessorRevision(
+  successor: OutboxOperationRecord,
+  ackRevision: number,
+): OutboxOperationRecord {
+  return { ...successor, baseRevision: ackRevision };
+}

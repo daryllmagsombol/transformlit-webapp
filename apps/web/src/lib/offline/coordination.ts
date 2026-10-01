@@ -30,6 +30,11 @@ export interface LeaseResult {
   lease: LeaseRecord | null;
 }
 
+/** Per-account lease name. Two accounts never contend for the same lease. */
+export function syncLeaseName(subject: string): string {
+  return `sync:${subject}`;
+}
+
 export function isLeaseActive(lease: LeaseRecord | null, now: number): boolean {
   return lease !== null && lease.expiresAt > now;
 }
@@ -104,4 +109,34 @@ export function createLeaseCoordinator({
   }
 
   return { acquire, renew, release };
+}
+
+/**
+ * Whether a lease that was valid when an operation started is still valid after
+ * the operation's network round-trip. A false result means the coordinator must
+ * DISCARD the acknowledgement it just received: another tab may now own sync.
+ */
+export function leaseStillValid(
+  lease: LeaseRecord | null,
+  expectedToken: number,
+  now: number,
+): boolean {
+  return isLeaseActive(lease, now) && lease?.fencingToken === expectedToken;
+}
+
+/** Builds a sync lock over an account's lease; returns null when unavailable. */
+export function createSyncLock(
+  subject: string,
+  ownerId: string,
+  options: { readonly persistence: LeasePersistence; readonly clock: Clock; readonly ttlMs: number },
+): { acquire: () => Promise<{ acquired: boolean; ownerId: string }>; release: () => Promise<void> } {
+  const coordinator = createLeaseCoordinator({ persistence: options.persistence, clock: options.clock });
+  const name = syncLeaseName(subject);
+  return {
+    acquire: async () => {
+      const result = await coordinator.acquire(name, subject, ownerId, options.ttlMs);
+      return { acquired: result.acquired, ownerId: result.lease?.ownerId ?? ownerId };
+    },
+    release: () => coordinator.release(name, ownerId),
+  };
 }

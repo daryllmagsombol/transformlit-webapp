@@ -174,3 +174,16 @@ export async function applyReaderOperation(
   if (!result.data) throw new Error('Reader operation returned no result');
   return result.data.applyBookReaderOperation;
 }
+
+/**
+ * One authenticated dispatch of a queued outbox operation. This is the only
+ * place application code sends a reader operation, so the Task 11 coordinator
+ * never needs its own transport. It returns the generated discriminant verbatim.
+ */
+export type ReaderOperationDispatch = ApplyBookReaderOperationMutation['applyBookReaderOperation'];
+
+export async function dispatchReaderOperation(
+  input: ApplyBookReaderOperationMutationVariables['input'],
+): Promise<ReaderOperationDispatch> {
+  return applyReaderOperation(input);
+}

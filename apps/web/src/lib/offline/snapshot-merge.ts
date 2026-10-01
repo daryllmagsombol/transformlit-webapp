@@ -193,3 +193,46 @@ export function snapshotWatermarkAdvanced(
 export function presentAnnotations(annotations: readonly MergeAnnotation[]): MergeAnnotation[] {
   return annotations.filter((annotation) => annotation.deletedAt === null);
 }
+
+/**
+ * Projects queued outbox operations into the merge's pending view. Task 11's
+ * snapshot refresh uses this so a launch/reconnect refresh always shows the
+ * merge exactly the local work it must never rebase. `payload`/`baseRevision`
+ * are passed by reference and never copied or mutated.
+ */
+export function pendingFromOperations(
+  operations: ReadonlyArray<{
+    readonly operationId: string;
+    readonly kind: MergePendingOperation['kind'];
+    readonly baseRevision: number | null;
+    readonly payload: unknown;
+  }>,
+): MergePendingOperation[] {
+  return operations.map((operation) => ({
+    operationId: operation.operationId,
+    kind: operation.kind,
+    entityId: readString(operation.payload, 'entityId'),
+    clientEntityId: readString(operation.payload, 'clientEntityId'),
+    baseRevision: operation.baseRevision,
+    payload: operation.payload,
+  }));
+}
+
+function readString(payload: unknown, key: string): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value : null;
+}
+
+/**
+ * Proof helper for callers/tests: a merge result preserves pending work iff
+ * every pending operation it was given is returned unchanged (same reference),
+ * so a snapshot refresh can assert it never lost or rebased local work.
+ */
+export function pendingIsPreserved(
+  result: MergeSnapshotResult,
+  pending: readonly MergePendingOperation[],
+): boolean {
+  if (result.pending.length !== pending.length) return false;
+  return pending.every((operation, index) => result.pending[index] === operation);
+}

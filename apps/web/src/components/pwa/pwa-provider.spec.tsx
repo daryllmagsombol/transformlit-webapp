@@ -6,6 +6,24 @@ import {
   type UpdateBarrier,
 } from './pwa-provider';
 
+// The provider wires the Task 11 coordinator; keep this suite isolated from the
+// real sync service (IndexedDB + Apollo) and assert the barrier seam directly.
+const mockCoordinator = {
+  drain: jest.fn().mockResolvedValue({ summary: {}, blockedReason: null }),
+  refreshSnapshots: jest.fn().mockResolvedValue(undefined),
+  controlledDrain: jest.fn().mockResolvedValue({
+    pending: 0,
+    inFlightOrUncertain: 0,
+    blockedSuccessors: 0,
+    conflicts: 0,
+    fullyDrained: true,
+  }),
+};
+
+jest.mock('../../lib/offline/sync-service', () => ({
+  syncCoordinator: () => mockCoordinator,
+}));
+
 type ListenerMap = Record<string, (() => void) | undefined>;
 
 interface FakeWorker {
@@ -181,6 +199,19 @@ describe('PwaProvider', () => {
 
     await waitFor(() => expect(waiting.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' }));
     unregister();
+  });
+
+  it('registers a controlled-drain barrier that accounts for outstanding work', async () => {
+    const { waiting } = await setupWaitingWorker();
+    mockCoordinator.controlledDrain.mockClear();
+
+    renderProvider();
+    fireEvent.click(await screen.findByRole('button', { name: /update now/i }));
+
+    // Activation waits on the registered controlled-drain barrier; outstanding
+    // work must be inspected (not silently counted as drained).
+    await waitFor(() => expect(mockCoordinator.controlledDrain).toHaveBeenCalled());
+    await waitFor(() => expect(waiting.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' }));
   });
 
   it('proceeds immediately when no barriers are registered', async () => {

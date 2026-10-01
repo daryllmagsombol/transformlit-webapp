@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import { UpdatePrompt } from './update-prompt';
+import { syncCoordinator } from '../../lib/offline/sync-service';
 
 /**
  * A barrier that must resolve before a waiting worker is allowed to activate.
@@ -64,17 +65,71 @@ function reloadApplication(): void {
   globalThis.window.location.reload();
 }
 
+/**
+ * Foreground sync triggers for the Task 11 coordinator: launch, reconnect, and
+ * focus. It is best-effort — failures are surfaced by the sync-status UI, not
+ * thrown. This intentionally does NOT rely on Background Sync for correctness.
+ *
+ * It also registers a Task 3 update barrier so a waiting service worker only
+ * activates after a controlled drain reports no outstanding work.
+ */
+function useForegroundSync(registerBarrier: boolean, enabled: boolean): void {
+  useEffect(() => {
+    if (!enabled) return;
+    const browser = globalThis.window;
+    let cancelled = false;
+
+    const run = () => {
+      if (cancelled) return;
+      syncCoordinator().drain().catch(() => {
+        /* the sync-status surface reports failures */
+      });
+    };
+
+    // Launch: refresh authoritative snapshots, then replay queued work.
+    syncCoordinator().refreshSnapshots().catch(() => undefined);
+    run();
+
+    const onFocus = () => run();
+    const onOnline = () => run();
+    // A reconnect is NOT proven by `navigator.onLine`; these events are only
+    // hints to attempt a drain. The coordinator verifies reachability itself.
+    browser.addEventListener('focus', onFocus);
+    browser.addEventListener('online', onOnline);
+
+    return () => {
+      cancelled = true;
+      browser.removeEventListener('focus', onFocus);
+      browser.removeEventListener('online', onOnline);
+    };
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!registerBarrier || !enabled) return;
+    return registerUpdateBarrier(async () => {
+      // Inspect outstanding work before activation. The barrier completing just
+      // means the attempt ran; Task 13B owns blocking activation when the drain
+      // is not fully complete. Work is never silently treated as drained.
+      await syncCoordinator().controlledDrain();
+    });
+  }, [registerBarrier, enabled]);
+}
+
 interface PwaProviderProps {
   readonly children: ReactNode;
   /** Reload entry point, overridable in tests to avoid jsdom navigation. */
   readonly reload?: () => void;
+  /** Disable foreground sync (tests that do not exercise the coordinator). */
+  readonly enableSync?: boolean;
 }
 
-export function PwaProvider({ children, reload = reloadApplication }: PwaProviderProps) {
+export function PwaProvider({ children, reload = reloadApplication, enableSync = true }: PwaProviderProps) {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const waitingWorkerRef = useRef<ServiceWorker | null>(null);
   const consentedRef = useRef(false);
   const reloadedRef = useRef(false);
+
+  useForegroundSync(true, enableSync);
 
   useEffect(() => {
     const browser = globalThis.window;

@@ -1,5 +1,7 @@
 import {
   mergeSnapshot,
+  pendingFromOperations,
+  pendingIsPreserved,
   presentAnnotations,
   snapshotWatermarkAdvanced,
   type AuthoritativeSnapshot,
@@ -197,5 +199,26 @@ describe('presentAnnotations', () => {
   it('filters out soft-deleted rows', () => {
     const rows = [annotation({ id: 'a', deletedAt: null }), annotation({ id: 'b', deletedAt: 5 })];
     expect(presentAnnotations(rows).map((row) => row.id)).toEqual(['a']);
+  });
+});
+
+describe('pending projection for snapshot refresh', () => {
+  it('projects outbox operations and preserves them by reference through a merge', () => {
+    const payload = { clientEntityId: 'client-1', text: 'offline' };
+    const operations = [
+      { operationId: 'op-1', kind: 'ANNOTATION_CREATE' as const, baseRevision: null, payload },
+    ];
+    const pending = pendingFromOperations(operations);
+    expect(pending[0]).toMatchObject({ operationId: 'op-1', clientEntityId: 'client-1', baseRevision: null });
+    // Never a copy of the payload: the merge must see the same reference.
+    expect(pending[0].payload).toBe(payload);
+
+    const result = mergeSnapshot({
+      snapshot: snapshot({ annotations: [annotation({ id: 'server-1', revision: 9 })] }),
+      local: [],
+      pending,
+    });
+    expect(pendingIsPreserved(result, pending)).toBe(true);
+    expect(result.pending[0].baseRevision).toBeNull();
   });
 });
