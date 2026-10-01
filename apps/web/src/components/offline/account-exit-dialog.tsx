@@ -115,6 +115,14 @@ export function AccountExitDialog({
   const hasWork = !work.fullyDrained;
   const recovery = mode === 'recovery';
 
+  let description = 'Your account data on this device will be cleared.';
+  if (recovery) {
+    description =
+      'This device could not confirm your previous session ended, so signing in is blocked. Resetting this device signs you out and permanently discards the previous account’s saved data here.';
+  } else if (hasWork) {
+    description = 'Some changes have not synced yet.';
+  }
+
   return (
     <dialog
       ref={dialogRef}
@@ -129,13 +137,7 @@ export function AccountExitDialog({
         <h2 id={headingId} className="font-display text-headline-h4 text-on-surface">
           {recovery ? 'Session could not be confirmed' : 'Sign out'}
         </h2>
-        <p className="mt-1 font-body text-small text-on-surface-variant">
-          {recovery
-            ? 'This device could not confirm your previous session ended, so signing in is blocked. Resetting this device signs you out and permanently discards the previous account’s saved data here.'
-            : hasWork
-              ? 'Some changes have not synced yet.'
-              : 'Your account data on this device will be cleared.'}
-        </p>
+        <p className="mt-1 font-body text-small text-on-surface-variant">{description}</p>
 
         {!recovery ? (
           <div className="mt-3 rounded-lg border border-outline-variant bg-surface-container-low p-3">
