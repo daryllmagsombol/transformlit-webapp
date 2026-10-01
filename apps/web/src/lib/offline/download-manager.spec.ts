@@ -483,6 +483,37 @@ describe('download manager', () => {
       const active = await harness.database.getActiveBookVersion(SUBJECT, BOOK_ID);
       expect(active?.contentVersion).toBe(1);
     });
+
+    it('reactivates a demoted pinned version so it stays OPENABLE after a newer version was downloaded', async () => {
+      await seedLifecycle(harness.database);
+      // Download v1, then replace with v2 (which demotes v1 to active:false).
+      await harness.manager.startBookDownload(BOOK_ID);
+      harness.registerManifest(buildManifest(2));
+      harness.setManifestVersion(2);
+      await harness.manager.startBookDownload(BOOK_ID);
+
+      const before = await harness.database.getBookVersion(SUBJECT, BOOK_ID, 1);
+      expect(before?.active).toBe(false);
+
+      // An annotation still references v1, so removing the download must PIN and
+      // re-activate it — otherwise getActiveBookVersion returns null and the
+      // offline reader throws BookNotReadyError for content that is still here.
+      await harness.database.putAccountRecord(SUBJECT, EPOCH, 'readerRecords', {
+        id: qualifyKey(SUBJECT, 'highlight', 'h1'),
+        subject: SUBJECT,
+        bookId: BOOK_ID,
+        contentVersion: 1,
+      });
+
+      await harness.manager.removeBookDownload(BOOK_ID);
+
+      const active = await harness.database.getActiveBookVersion(SUBJECT, BOOK_ID);
+      expect(active?.contentVersion).toBe(1);
+      expect(active?.status).toBe('READY');
+      expect(await harness.database.getBookPages(SUBJECT, BOOK_ID, 1)).not.toHaveLength(0);
+      // v2 was not referenced and is gone.
+      expect(await harness.database.getBookVersion(SUBJECT, BOOK_ID, 2)).toBeNull();
+    });
   });
 
   describe('account fencing', () => {

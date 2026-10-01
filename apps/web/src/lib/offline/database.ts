@@ -712,8 +712,23 @@ export class OfflineDatabase {
         guardWrite(tx, subject, epoch, fail, () => {
           const versionStore = tx.objectStore('bookVersions');
           const pageStore = tx.objectStore('bookPages');
+          // The highest retained version becomes the single active/READY version
+          // IN THE SAME TRANSACTION as the removal + manifest repoint, so a
+          // pinned version that a newer download had demoted is openable again
+          // (otherwise getActiveBookVersion returns null despite content being
+          // present, and the offline reader throws BookNotReadyError).
+          const pinned = retain.size > 0 ? Math.max(...retain) : null;
           for (const version of versions) {
-            if (!retain.has(version.contentVersion)) versionStore.delete(version.id);
+            if (!retain.has(version.contentVersion)) {
+              versionStore.delete(version.id);
+              continue;
+            }
+            const shouldBeActive = version.contentVersion === pinned;
+            versionStore.put({
+              ...version,
+              active: shouldBeActive,
+              status: shouldBeActive ? 'READY' : version.status,
+            });
           }
           for (const page of pages) {
             if (!retain.has(page.contentVersion)) pageStore.delete(page.id);
