@@ -81,11 +81,14 @@ query BookReaderAnnotationSnapshot($bookId: ID!) {
 }
 
 # Separate revisioned progress read. Never folded into the annotation snapshot.
+# `revision` is required on the wire so the client can detect a stale base
+# revision instead of silently overwriting a newer write.
 query BookReadProgress($bookId: String!) {
   readProgress(bookId: $bookId) {
     bookId
     currentPage
     scrollY
+    revision
     lastReadAt
   }
 }

@@ -106,6 +106,19 @@ export class BookProgress {
 
   @Field()
   lastReadAt: Date;
+
+  /**
+   * Revision of the authoritative progress row (see `ProgressRecord`). Progress
+   * is the separate revisioned endpoint required by the offline contracts: the
+   * client needs this to detect a stale base revision instead of silently
+   * overwriting a newer write. `0` means no versioned write yet.
+   */
+  @Field(() => Int)
+  revision: number;
+
+  /** Client-supplied provenance for legacy rows; NULL when unknown. */
+  @Field(() => String, { nullable: true })
+  clientEntityId?: string | null;
 }
 
 @ObjectType()

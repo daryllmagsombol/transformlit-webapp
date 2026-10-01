@@ -78,9 +78,11 @@ enum BookFormat {
 type BookProgress {
   book: Book
   bookId: ID!
+  clientEntityId: String
   completedAt: DateTime
   currentPage: Float!
   lastReadAt: DateTime!
+  revision: Int!
   scrollY: Float
 }
 

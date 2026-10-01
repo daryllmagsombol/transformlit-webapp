@@ -120,14 +120,24 @@ export async function fetchPageText(bookId: string, page: number): Promise<PdfPa
   return (await ensureOk(response)).json() as Promise<PdfPageText>;
 }
 
-/** Server-side reading position, used to resume when the URL has no `?page`. */
-export async function fetchReadProgress(bookId: string): Promise<{ currentPage: number } | null> {
+/**
+ * Server-side reading position, used to resume when the URL has no `?page`, and
+ * to detect a stale base revision (progress is the separate REVISIONED
+ * endpoint). The returned record always carries `revision`.
+ */
+export async function fetchReadProgress(
+  bookId: string,
+): Promise<{ currentPage: number; revision: number } | null> {
   const result = await apolloClient.query<BookReadProgressQuery, BookReadProgressQueryVariables>({
     query: BOOK_READ_PROGRESS_QUERY,
     variables: { bookId },
     fetchPolicy: 'no-cache',
   });
-  return result.data?.readProgress ?? null;
+  const progress = result.data?.readProgress;
+  if (!progress) return null;
+  // Compile-time + runtime proof that the revision is on the wire, not dropped.
+  const revision: number = progress.revision;
+  return { currentPage: progress.currentPage, revision };
 }
 
 /**

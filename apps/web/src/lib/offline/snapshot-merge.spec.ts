@@ -1,7 +1,7 @@
 import {
   mergeSnapshot,
   presentAnnotations,
-  snapshotIsNewer,
+  snapshotWatermarkAdvanced,
   type AuthoritativeSnapshot,
   type MergeAnnotation,
   type MergePendingOperation,
@@ -110,6 +110,20 @@ describe('mergeSnapshot', () => {
     ]);
   });
 
+  it('keeps a pending local delete authoritative and records its tombstone', () => {
+    // A local delete is represented as a record with `deletedAt` set plus a
+    // pending `*_DELETE` operation; it must survive a fresher server snapshot.
+    const result = mergeSnapshot({
+      snapshot: snapshot({ annotations: [annotation({ id: 'hl-1', revision: 9, data: { text: 'server' } })] }),
+      local: [annotation({ id: 'hl-1', revision: 5, deletedAt: 20, data: { text: 'local' } })],
+      pending: [pending({ operationId: 'op-del', kind: 'ANNOTATION_DELETE', entityId: 'hl-1', baseRevision: 5 })],
+    });
+    const merged = result.annotations.find((row) => row.id === 'hl-1');
+    expect(merged?.deletedAt).toBe(20);
+    expect(result.tombstones.map((row) => row.entityId)).toContain('hl-1');
+    expect(result.pending[0].kind).toBe('ANNOTATION_DELETE');
+  });
+
   it('never mutates pending base revisions or payloads', () => {
     const operation = pending({
       operationId: 'op-c',
@@ -159,10 +173,23 @@ describe('mergeSnapshot', () => {
   });
 });
 
-describe('snapshotIsNewer', () => {
-  it('is true only when the snapshot revision advances past the last applied', () => {
-    expect(snapshotIsNewer(snapshot({ snapshotRevision: 5 }), 4)).toBe(true);
-    expect(snapshotIsNewer(snapshot({ snapshotRevision: 5 }), 5)).toBe(false);
+describe('snapshotWatermarkAdvanced', () => {
+  it('is true only when the watermark advances past the last applied revision', () => {
+    expect(snapshotWatermarkAdvanced(snapshot({ snapshotRevision: 5 }), 4)).toBe(true);
+    expect(snapshotWatermarkAdvanced(snapshot({ snapshotRevision: 5 }), 5)).toBe(false);
+  });
+
+  it('is a weak hint: a false result does not prove the snapshot is unchanged', () => {
+    // The watermark is a MAX revision. A new entity at revision 1 with a
+    // previously-applied watermark of 5 reports "not advanced", yet the
+    // snapshot genuinely contains a change. Callers must still merge.
+    const later = snapshot({
+      snapshotRevision: 5,
+      annotations: [annotation({ id: 'brand-new', revision: 1, data: { text: 'new' } })],
+    });
+    expect(snapshotWatermarkAdvanced(later, 5)).toBe(false);
+    const merged = mergeSnapshot({ snapshot: later, local: [], pending: [] });
+    expect(merged.annotations.map((row) => row.id)).toEqual(['brand-new']);
   });
 });
 

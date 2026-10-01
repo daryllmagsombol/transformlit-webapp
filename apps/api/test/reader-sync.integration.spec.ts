@@ -113,6 +113,10 @@ describe('Reader sync idempotency', () => {
     expect(replay.result).toEqual(first.result);
     expect(await prisma.readerOperationReceipt.count({ where: { subject } })).toBe(1);
     expect(await prisma.bookProgress.count({ where: { userId: subject, bookId } })).toBe(1);
+    // The GraphQL `readProgress` field resolves this row; it must expose the
+    // revision so the client can detect a stale base revision on the wire.
+    const progress = await books.getProgress(subject, bookId);
+    expect(progress?.revision).toBe(1);
   });
 
   it('rejects operation-ID reuse with a different payload', async () => {

@@ -69,10 +69,12 @@ describe('reader GraphQL documents match the API schema', () => {
     expect(printed).not.toContain('ProgressRecord');
   });
 
-  it('reads progress through its own generated document', () => {
+  it('reads progress through its own generated document, including its revision', () => {
     const printed = print(BookReadProgressDocument as never);
     expect(printed).toContain('readProgress');
     expect(printed).not.toContain('snapshotRevision');
+    // Progress must be revisioned on the wire so conflicts are detectable.
+    expect(printed).toContain('revision');
   });
 
   it('does not maintain competing handwritten reader GraphQL definitions', () => {

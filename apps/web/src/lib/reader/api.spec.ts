@@ -83,9 +83,9 @@ describe('reader api', () => {
     await expect(fetchPageText('book-1', 1)).rejects.toThrow(/401/);
   });
 
-  it('reads the saved page so the reader can resume', async () => {
-    queryMock.mockResolvedValue({ data: { readProgress: { currentPage: 7 } } });
-    await expect(fetchReadProgress('book-1')).resolves.toEqual({ currentPage: 7 });
+  it('reads the saved revisioned progress so the reader can resume and detect conflicts', async () => {
+    queryMock.mockResolvedValue({ data: { readProgress: { currentPage: 7, revision: 3 } } });
+    await expect(fetchReadProgress('book-1')).resolves.toEqual({ currentPage: 7, revision: 3 });
   });
 
   it('returns null when the reader has no saved progress', async () => {

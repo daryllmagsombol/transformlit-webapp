@@ -171,8 +171,21 @@ export function mergeSnapshot(input: MergeSnapshotInput): MergeSnapshotResult {
   };
 }
 
-/** True when a snapshot should prompt a merge (never true for the same boundary). */
-export function snapshotIsNewer(snapshot: AuthoritativeSnapshot, lastAppliedRevision: number): boolean {
+/**
+ * True only when `snapshotRevision` — a MAX-REVISION WATERMARK, not a monotonic
+ * change sequence — has advanced past `lastAppliedRevision`.
+ *
+ * This is a WEAK hint, not a change detector. A snapshot can contain a genuinely
+ * new or updated entity at an equal-or-lower revision than a previously applied
+ * one (e.g. a new entity starting at revision 1 while the watermark is already
+ * 3), so a `false` result does NOT prove the snapshot is unchanged. Callers MUST
+ * always run the per-entity `mergeSnapshot`; never skip a merge because this
+ * returns false. It is named `snapshotWatermarkAdvanced` to make that explicit.
+ */
+export function snapshotWatermarkAdvanced(
+  snapshot: AuthoritativeSnapshot,
+  lastAppliedRevision: number,
+): boolean {
   return snapshot.snapshotRevision > lastAppliedRevision;
 }
 
