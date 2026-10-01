@@ -20,6 +20,9 @@ COPY . .
 
 RUN pnpm exec turbo run build --filter=@transformlit/web...
 
+# Fail the build loudly if the postbuild PWA asset generation did not run.
+RUN test -f apps/web/public/sw.js && test -f apps/web/public/pwa-assets.json
+
 FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
 WORKDIR /workspace
 

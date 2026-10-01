@@ -35,6 +35,10 @@ infra/backend.tfvars
 __generated__/
 packages/graphql/src/__generated__/
 
+# PWA build-generated artifacts (produced by scripts/build-pwa-assets.mjs)
+apps/web/public/sw.js
+apps/web/public/pwa-assets.json
+
 # Local uploads
 /images/uploads/
 

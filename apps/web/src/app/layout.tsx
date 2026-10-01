@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Space_Grotesk, Newsreader, JetBrains_Mono } from 'next/font/google';
 import { ThemeProvider } from 'next-themes';
 import { ToastProvider } from '../components/ui';
+import { PwaProvider } from '../components/pwa/pwa-provider';
 import '../styles/globals.css';
 
 export const metadata: Metadata = {
@@ -77,7 +78,7 @@ export default function RootLayout({
       <body className={`${spaceGrotesk.variable} ${newsreader.variable} ${jetbrainsMono.variable} bg-background text-on-surface font-body overflow-x-hidden paper-texture`}>
         <ThemeProvider attribute="class" defaultTheme="light" disableTransitionOnChange>
           <ToastProvider>
-            {children}
+            <PwaProvider>{children}</PwaProvider>
           </ToastProvider>
         </ThemeProvider>
       </body>
