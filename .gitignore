@@ -68,3 +68,6 @@ Thumbs.db
 
 # Local implementation worktrees
 /.worktrees/
+
+# SDD orchestration scratch (ledgers, briefs, reports, review packages)
+/.superpowers/
