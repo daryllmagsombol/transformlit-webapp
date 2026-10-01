@@ -1,4 +1,17 @@
-import { Controller, Get, Post, HttpCode, Body, Req, Res, UseGuards, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  HttpCode,
+  Body,
+  Req,
+  Res,
+  UseGuards,
+  UnauthorizedException,
+  BadRequestException,
+  ServiceUnavailableException,
+  Logger,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service.js';
@@ -46,6 +59,8 @@ export interface AuthResponse {
 
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(private readonly authService: AuthService) {}
 
   // ── Credential endpoints (plain POST handlers — no JWT guard) ─────────────
@@ -113,18 +128,31 @@ export class AuthController {
   @HttpCode(200)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const raw = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
+    let revocationFailed = false;
     if (raw) {
       try {
-        // Best effort: revoke the refresh family server-side so a captured token
-        // cannot be rotated after sign-out. A failure (or an absent/revoked
-        // cookie) must never block the client from completing logout.
+        // Revoke the refresh family server-side so a captured token cannot be
+        // rotated after sign-out. Absent/unknown/already-revoked cookies are a
+        // successful no-op inside the service.
         await this.authService.logout(raw);
-      } catch {
-        // Swallow: clearing the cookie below is the client-visible contract.
+      } catch (error) {
+        // A failed revocation is NOT a successful logout: the old session may
+        // still be live. Signal it so the client persists a durable
+        // deferred-logout barrier instead of assuming the cookie is gone.
+        revocationFailed = true;
+        this.logger.error(
+          `Refresh-family revocation failed during logout; deferring session invalidation. Cookie present: ${raw.length > 0}. Cause: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
     }
+    // Always clear the client cookie; the response status carries the truth.
     this.clearRefreshCookie(res);
-    return {};
+    if (revocationFailed) {
+      throw new ServiceUnavailableException('Session invalidation failed; sign-out deferred');
+    }
+    return { revoked: true };
   }
 
   // ── OAuth endpoints ────────────────────────────────────────────────────────
