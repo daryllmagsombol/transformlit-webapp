@@ -147,6 +147,13 @@ describe('classifyDispatchError', () => {
     expect(classifyDispatchError(new Error('Failed to fetch'))).toBe('TRANSIENT');
   });
 
+  it('classifies HTTP 400 as a non-retryable server rejection', () => {
+    // The server's validateOperation / hash-mismatch BadRequestException is a
+    // contract rejection: retrying the same input can never succeed.
+    expect(classifyDispatchError({ status: 400 })).toBe('REJECTED');
+    expect(classifyDispatchError(new AuthHttpError(400))).toBe('REJECTED');
+  });
+
   it('classifies storage failures distinctly and never as transient', () => {
     expect(classifyDispatchError(new OfflineStorageError('quota'))).toBe('STORAGE_FAILURE');
     expect(classifyDispatchError(new DOMException('quota', 'QuotaExceededError'))).toBe('STORAGE_FAILURE');
@@ -279,6 +286,76 @@ describe('SyncCoordinator', () => {
     expect(harness.store.rows).toHaveLength(1);
     expect(harness.store.rows[0].dispatchState).toBe('PENDING');
     expect(harness.store.rows[0].attemptCount).toBe(1);
+  });
+
+  it('does not re-dispatch a backed-off operation before its nextAttemptAt', async () => {
+    const harness = makeHarness();
+    harness.store.rows.push(operation({ id: 'a', seq: 1 }));
+    harness.send.mockRejectedValueOnce(new Error('Failed to fetch'));
+
+    await harness.coordinator.drain();
+    expect(harness.send).toHaveBeenCalledTimes(1);
+    const nextAttemptAt = harness.store.rows[0].nextAttemptAt ?? 0;
+    expect(nextAttemptAt).toBeGreaterThan(harness.clock.value);
+
+    // A consecutive drain fires before the durable backoff window elapses: the
+    // op must NOT be re-dispatched.
+    await harness.coordinator.drain();
+    expect(harness.send).toHaveBeenCalledTimes(1);
+
+    // Once the window elapses the op is dispatchable again.
+    harness.clock.value = nextAttemptAt;
+    harness.send.mockResolvedValueOnce({ kind: 'APPLIED', entityId: 'server-1', revision: 2, receiptId: 'r1' });
+    await harness.coordinator.drain();
+    expect(harness.send).toHaveBeenCalledTimes(2);
+    expect(harness.store.rows).toHaveLength(0);
+  });
+
+  it('retains a transiently-failing operation TERMINAL after a bounded attempt budget', async () => {
+    const harness = makeHarness({ maxAttempts: 3 });
+    harness.store.rows.push(operation({ id: 'a', seq: 1 }));
+    harness.send.mockRejectedValue(new Error('Failed to fetch'));
+
+    let result = await harness.coordinator.drain();
+    expect(harness.store.rows[0].attemptCount).toBe(1);
+    expect(harness.store.rows[0].dispatchState).toBe('PENDING');
+
+    harness.clock.value += 1_000;
+    result = await harness.coordinator.drain();
+    expect(harness.store.rows[0].attemptCount).toBe(2);
+    expect(harness.store.rows[0].dispatchState).toBe('PENDING');
+
+    harness.clock.value += 1_000;
+    result = await harness.coordinator.drain();
+
+    expect(result.summary.transientExhausted).toBe(1);
+    expect(harness.store.rows).toHaveLength(1);
+    expect(harness.store.rows[0].dispatchState).toBe('TERMINAL');
+    expect(harness.store.rows[0].terminalReason).toBe('RETRY_EXHAUSTED');
+
+    // A later drain never re-dispatches a terminal op.
+    const calls = harness.send.mock.calls.length;
+    harness.clock.value += 1_000;
+    await harness.coordinator.drain();
+    expect(harness.send).toHaveBeenCalledTimes(calls);
+  });
+
+  it('retains an HTTP 400 server rejection TERMINAL instead of retrying forever', async () => {
+    const harness = makeHarness();
+    harness.store.rows.push(operation({ id: 'a', seq: 1 }));
+    harness.send.mockRejectedValue({ status: 400 });
+
+    const result = await harness.coordinator.drain();
+
+    expect(result.summary.rejected).toBe(1);
+    expect(result.summary.transient).toBe(0);
+    expect(harness.store.rows[0].dispatchState).toBe('TERMINAL');
+    expect(harness.store.rows[0].terminalReason).toBe('REJECTED');
+
+    // It is not re-sent on a subsequent drain.
+    harness.clock.value += 1_000;
+    await harness.coordinator.drain();
+    expect(harness.send).toHaveBeenCalledTimes(1);
   });
 
   it('classifies access-denied distinctly and retains the op (terminal until state changes)', async () => {
@@ -415,6 +492,7 @@ describe('SyncCoordinator', () => {
 
     // A later successful retry must still send the pristine payload fields.
     harness.send.mockResolvedValueOnce({ kind: 'APPLIED', entityId: 'server-1', revision: 2, receiptId: 'r1' });
+    harness.clock.value = harness.store.rows[0].nextAttemptAt ?? harness.clock.value;
     await harness.coordinator.drain();
     expect((harness.send.mock.calls[1][0] as { text: unknown }).text).toEqual('local');
     expect((harness.send.mock.calls[1][0] as { payload?: unknown }).payload).toBeUndefined();

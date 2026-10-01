@@ -8,12 +8,13 @@ import {
   type OutboxReceiptRecord,
   type ReplayIdentity,
 } from './contracts';
-import type { OutboxOperationRecord } from './outbox';
+import type { OutboxOperationRecord, OutboxTerminalReason } from './outbox';
 import {
   accessDeniedOperations,
   advanceSuccessorRevision,
   incompatibleVersionOperations,
   isBlockedSuccessor,
+  isReadyForDispatch,
   orderForDispatch,
 } from './outbox';
 import { leaseStillValid } from './coordination';
@@ -69,10 +70,10 @@ export interface PersistedConflictCopy {
 
 /**
  * Transport/server failure classification, kept distinct from operation
- * outcomes. The six classes map to distinct UX: bounded retry (TRANSIENT),
+ * outcomes. The classes map to distinct UX: bounded retry (TRANSIENT),
  * reauthentication (AUTH_REQUIRED), permanent recovery/discard
- * (ACCESS_DENIED / INCOMPATIBLE_VERSION), user resolution (CONFLICT), and a
- * storage fault that must never be retried as a transport error
+ * (ACCESS_DENIED / INCOMPATIBLE_VERSION / REJECTED), user resolution (CONFLICT),
+ * and a storage fault that must never be retried as a transport error
  * (STORAGE_FAILURE).
  */
 export type DispatchFailure =
@@ -81,6 +82,7 @@ export type DispatchFailure =
   | 'ACCESS_DENIED'
   | 'CONFLICT'
   | 'INCOMPATIBLE_VERSION'
+  | 'REJECTED'
   | 'STORAGE_FAILURE';
 
 export interface OutboxStore {
@@ -233,6 +235,8 @@ export interface CoordinatorDeps {
   readonly now?: () => number;
   readonly baseBackoffMs?: number;
   readonly maxBackoffMs?: number;
+  /** Transient retry budget before an operation is retained TERMINAL. */
+  readonly maxAttempts?: number;
   readonly leaseTtlMs?: number;
   /** Test/observability seam: receives every summary transition. */
   readonly onStatus?: (status: CoordinatorStatus) => void;
@@ -244,6 +248,10 @@ export interface DrainSummary {
   accessDenied: number;
   incompatibleVersion: number;
   transient: number;
+  /** Transient retries that exhausted their bounded budget (now `TERMINAL`). */
+  transientExhausted: number;
+  /** Server contract rejections (HTTP 400) retained `TERMINAL`. */
+  rejected: number;
   stale: number;
   storageFailure: number;
   authRequired: number;
@@ -306,6 +314,13 @@ export interface SnapshotRefreshResult {
 const DEFAULT_BASE_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_BACKOFF_MS = 30_000;
 const DEFAULT_LEASE_TTL_MS = 30_000;
+/**
+ * Bounded transient retry budget. After this many failed attempts the operation
+ * is retained `TERMINAL` (`RETRY_EXHAUSTED`) instead of retrying forever, so a
+ * poison head cannot loop indefinitely. It stays user-recoverable / re-evaluable
+ * rather than being silently discarded.
+ */
+const DEFAULT_MAX_ATTEMPTS = 5;
 
 function statusOf(error: unknown): number | null {
   if (error instanceof AuthHttpError) return error.status;
@@ -322,12 +337,17 @@ function statusOf(error: unknown): number | null {
  * reauthentication, permanent recovery/discard, bounded retry, or a storage
  * fault. IndexedDB/storage errors are classified FIRST and are never treated as
  * a transient network failure that would retry forever.
+ *
+ * HTTP 400 is a server contract rejection (e.g. the server's
+ * `validateOperation` / hash-mismatch `BadRequestException`): it is NOT
+ * retryable, so it classifies as a terminal rejection rather than TRANSIENT.
  */
 export function classifyDispatchError(error: unknown): DispatchFailure {
   if (error instanceof OfflineStorageError) return 'STORAGE_FAILURE';
   if (isStorageDomException(error)) return 'STORAGE_FAILURE';
   const status = statusOf(error);
   if (status === 401) return 'AUTH_REQUIRED';
+  if (status === 400) return 'REJECTED';
   if (status === 403) return 'ACCESS_DENIED';
   if (status === 409) return 'CONFLICT';
   if (status === 422) return 'INCOMPATIBLE_VERSION';
@@ -383,6 +403,8 @@ function emptySummary(): DrainSummary {
     accessDenied: 0,
     incompatibleVersion: 0,
     transient: 0,
+    transientExhausted: 0,
+    rejected: 0,
     stale: 0,
     storageFailure: 0,
     authRequired: 0,
@@ -402,6 +424,7 @@ export class SyncCoordinator {
   private readonly now: () => number;
   private readonly baseBackoffMs: number;
   private readonly maxBackoffMs: number;
+  private readonly maxAttempts: number;
   private readonly leaseTtlMs: number;
   private readonly listeners = new Set<(status: CoordinatorStatus) => void>();
   private lastStatus: CoordinatorStatus | null = null;
@@ -412,6 +435,7 @@ export class SyncCoordinator {
     this.now = deps.now ?? (() => Date.now());
     this.baseBackoffMs = deps.baseBackoffMs ?? DEFAULT_BASE_BACKOFF_MS;
     this.maxBackoffMs = deps.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
+    this.maxAttempts = deps.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     this.leaseTtlMs = deps.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
   }
 
@@ -543,6 +567,12 @@ export class SyncCoordinator {
     for (const operation of ordered) {
       const current = working.get(operation.id);
       if (!current) continue;
+      // Terminal outcomes are re-evaluated only when user/account/content state
+      // changes; a drain never re-dispatches them.
+      if (current.dispatchState === 'TERMINAL') continue;
+      // Durable backoff: an operation still inside its `nextAttemptAt` window is
+      // not ready, so consecutive drains cannot immediately re-dispatch it.
+      if (!isReadyForDispatch(current, this.now())) continue;
       if (pausedEntities.has(current.entityKey)) continue;
       if (isBlockedSuccessor(current, new Set(working.keys()))) continue;
       if (this.ownerChanged(owner)) break;
@@ -598,6 +628,14 @@ export class SyncCoordinator {
         summary.incompatibleVersion += failure === 'INCOMPATIBLE_VERSION' ? 1 : 0;
         return { removed: false, paused: false, ackRevision: null, blocked: false };
       }
+      if (failure === 'REJECTED') {
+        // An HTTP 400 is a server contract rejection (e.g. hash-mismatch /
+        // validateOperation). Retrying re-sends the same invalid input, so it is
+        // retained TERMINAL rather than looping forever.
+        await this.retainTerminal(operation, 'REJECTED');
+        summary.rejected += 1;
+        return { removed: false, paused: false, ackRevision: null, blocked: false };
+      }
       if (failure === 'CONFLICT') {
         // A transport 409 with no parsed outcome is a durable conflict: mark it
         // FAILED (user-resolvable) instead of rescheduling it forever.
@@ -610,10 +648,10 @@ export class SyncCoordinator {
         return { removed: false, paused: true, ackRevision: null, blocked: false };
       }
       // Truly transient network/5xx faults: reschedule WITH backoff, preserving
-      // the immutable id/payload.
-      await this.restorePending(operation);
-      if (failure === 'STORAGE_FAILURE') summary.storageFailure += 1;
-      else summary.transient += 1;
+      // the immutable id/payload — but only within a BOUNDED retry budget. Once
+      // exhausted the operation is retained TERMINAL (user-recoverable) so a
+      // poison head cannot loop forever.
+      await this.rescheduleOrExhaust(operation, failure, summary);
       return { removed: false, paused: false, ackRevision: null, blocked: false };
     }
 
@@ -733,14 +771,38 @@ export class SyncCoordinator {
    */
   private async retainTerminal(
     operation: OutboxOperationRecord,
-    terminalReason: 'ACCESS_DENIED' | 'INCOMPATIBLE_VERSION',
+    terminalReason: OutboxTerminalReason,
   ): Promise<void> {
     await this.deps.store.update({
       ...operation,
       dispatchState: 'TERMINAL',
       terminalReason,
       attemptCount: operation.attemptCount + 1,
+      // A terminal operation is not scheduled for another attempt; clear any
+      // stale backoff window so a later explicit re-evaluation is not gated.
+      nextAttemptAt: null,
     });
+  }
+
+  /**
+   * Bounded retry policy for a transient/storage failure. Below the attempt
+   * maximum the operation is rescheduled with durable backoff. At the maximum it
+   * is retained `TERMINAL` (`RETRY_EXHAUSTED`): a poison head cannot be retried
+   * forever, yet the immutable id/payload is preserved for explicit recovery.
+   */
+  private async rescheduleOrExhaust(
+    operation: OutboxOperationRecord,
+    failure: DispatchFailure,
+    summary: DrainSummary,
+  ): Promise<void> {
+    if (operation.attemptCount + 1 >= this.maxAttempts) {
+      await this.retainTerminal(operation, 'RETRY_EXHAUSTED');
+      summary.transientExhausted += 1;
+      return;
+    }
+    await this.restorePending(operation);
+    if (failure === 'STORAGE_FAILURE') summary.storageFailure += 1;
+    else summary.transient += 1;
   }
 
   /**

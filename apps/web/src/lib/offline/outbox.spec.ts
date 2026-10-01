@@ -5,6 +5,7 @@ import {
   dispatchStateOf,
   incompatibleVersionOperations,
   isCoalescable,
+  isReadyForDispatch,
   nextLocalSequence,
   orderForDispatch,
   type OutboxOperationRecord,
@@ -87,6 +88,18 @@ describe('outbox ordering and state', () => {
   it('computes the next local sequence from existing operations', () => {
     expect(nextLocalSequence([])).toBe(1);
     expect(nextLocalSequence([operation({ id: 'a', seq: 4 }), operation({ id: 'b', seq: 9 })])).toBe(10);
+  });
+
+  it('treats an operation inside its durable backoff window as not ready', () => {
+    const now = 1_000;
+    const waiting = operation({ id: 'w', seq: 1, nextAttemptAt: now + 5_000 });
+    const ready = operation({ id: 'r', seq: 2, nextAttemptAt: now - 1 });
+    const unscheduled = operation({ id: 'u', seq: 3 });
+    expect(isReadyForDispatch(waiting, now)).toBe(false);
+    expect(isReadyForDispatch(ready, now)).toBe(true);
+    expect(isReadyForDispatch(unscheduled, now)).toBe(true);
+    // A ready-now window (equal boundary) is dispatchable.
+    expect(isReadyForDispatch(operation({ id: 'e', seq: 4, nextAttemptAt: now }), now)).toBe(true);
   });
 
   it('rejects malformed operations that are not Error subclassed', () => {

@@ -190,6 +190,30 @@ describe('resolution plans', () => {
     expect(plan.upserts.some((u) => u.id === sibling.id)).toBe(false);
   });
 
+  it('preserves a delete-kind successor as a DELETE when retargeted (never resurrected as an update)', () => {
+    const deleteSuccessor = op({
+      id: 'd',
+      seq: 2,
+      kind: 'ANNOTATION_DELETE',
+      dependsOn: base.id,
+      baseRevision: 2,
+      payload: { entityId: 'server-1', baseRevision: 2 },
+    });
+    const operations = [base, deleteSuccessor];
+    const conflict = listConflictViews(operations, [copy()], [])[0];
+
+    const plan = planRetarget(conflict, operations, copy(), [deleteSuccessor.operationId], context(() => 'new-d'));
+
+    const retargeted = plan.upserts.find((u) => u.operationId === 'new-d');
+    expect(retargeted?.kind).toBe('ANNOTATION_DELETE');
+    expect(retargeted?.baseRevision).toBe(3);
+    // Targets the original server entity at the acknowledged revision; no
+    // conflict-copy edit payload is fabricated.
+    expect(retargeted?.payload).toMatchObject({ entityId: 'server-1', baseRevision: 3 });
+    expect(retargeted?.payload).not.toHaveProperty('targetKind');
+    expect(retargeted?.dispatchState).toBe('PENDING');
+  });
+
   it('keeps the offline copy by retargeting every direct successor', () => {
     const operations = [base, successor, descendant];
     const conflict = listConflictViews(operations, [copy()], [])[0];
@@ -368,6 +392,29 @@ describe('ConflictResolver over durable state', () => {
     const rows = await listOutbox();
     expect(rows.some((row) => row.id === sibling.id)).toBe(true);
     expect(rows).toHaveLength(2); // retargeted op + untouched sibling
+  });
+
+  it('explicit retarget preserves a delete-kind successor as a delete (not an update)', async () => {
+    const base = conflicted('a');
+    const deleteSuccessor = op({
+      id: 'd',
+      seq: 2,
+      kind: 'ANNOTATION_DELETE',
+      dependsOn: base.id,
+      baseRevision: 2,
+      payload: { entityId: 'server-1', baseRevision: 2 },
+    });
+    await seed([base, deleteSuccessor], [copy()]);
+    const conflict = (await resolver().listConflicts(BOOK))[0];
+
+    const result = await resolver().retarget(conflict, [deleteSuccessor.operationId]);
+
+    expect(result.status).toBe('RESOLVED');
+    const rows = await listOutbox();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'ANNOTATION_DELETE', baseRevision: 3 });
+    expect(rows[0].payload).toMatchObject({ entityId: 'server-1', baseRevision: 3 });
+    expect(rows[0].payload).not.toHaveProperty('targetKind');
   });
 
   it('commits the resolution atomically: a mid-transaction fault cannot lose the retargeted successor, and it is retryable', async () => {

@@ -255,38 +255,68 @@ export function progressChoicePage(conflict: ConflictView, choice: ProgressChoic
 /** The value a later edit contributes on top of the conflict copy's content. */
 const RETARGET_PAYLOAD_KEYS = ['page', 'text', 'note', 'color', 'anchor'] as const;
 
+/**
+ * A retargeted DELETE keeps its delete intent: it targets the ORIGINAL server
+ * entity at the conflict copy's acknowledged revision. Only the base revision is
+ * adopted from the copy — a delete has no editable page/text payload to inherit.
+ */
+function deleteRetargetPayload(
+  successor: OutboxOperationRecord,
+  copy: ConflictCopyView,
+): Readonly<Record<string, unknown>> {
+  return {
+    entityId: readString(successor.payload, 'entityId') ?? copy.sourceEntityId,
+    baseRevision: copy.revision,
+  };
+}
+
+function updateRetargetPayload(
+  successor: OutboxOperationRecord,
+  copy: ConflictCopyView,
+): Readonly<Record<string, unknown>> {
+  const overrides: Record<string, unknown> = {};
+  for (const key of RETARGET_PAYLOAD_KEYS) {
+    if (key in successor.payload) overrides[key] = successor.payload[key];
+  }
+  return {
+    entityId: copy.serverId,
+    targetKind: 'CONFLICT_COPY',
+    baseRevision: copy.revision,
+    page: copy.page,
+    text: copy.text ?? '',
+    note: copy.note,
+    color: copy.color,
+    anchor: copy.anchor,
+    ...overrides,
+  };
+}
+
 function retargetOperation(
   successor: OutboxOperationRecord,
   copy: ConflictCopyView,
   context: ConflictPlanContext,
 ): OutboxOperationRecord {
   const operationId = context.newId();
-  const overrides: Record<string, unknown> = {};
-  for (const key of RETARGET_PAYLOAD_KEYS) {
-    if (key in successor.payload) overrides[key] = successor.payload[key];
-  }
+  const deleteKind = isDeleteKind(successor.kind);
   return {
     ...successor,
     id: namespacedId(context, operationId),
     operationId,
-    kind: 'ANNOTATION_UPDATE',
+    // A delete successor stays a delete; only a mutating successor is
+    // re-issued as an update against the conflict copy.
+    kind: deleteKind ? successor.kind : 'ANNOTATION_UPDATE',
     baseRevision: copy.revision,
     // Preserve the successor's local sequence and dependency so ordering and
     // provenance are unchanged; descendants are rewired onto the new op.
     seq: successor.seq,
-    payload: {
-      entityId: copy.serverId,
-      targetKind: 'CONFLICT_COPY',
-      baseRevision: copy.revision,
-      page: copy.page,
-      text: copy.text ?? '',
-      note: copy.note,
-      color: copy.color,
-      anchor: copy.anchor,
-      ...overrides,
-    },
+    payload: deleteKind
+      ? deleteRetargetPayload(successor, copy)
+      : updateRetargetPayload(successor, copy),
     dispatchState: 'PENDING',
     attemptCount: 0,
+    // A fresh retargeted operation is immediately dispatchable: never inherit a
+    // stale backoff window from the replaced successor.
+    nextAttemptAt: null,
     createdAt: context.now,
   };
 }

@@ -63,8 +63,16 @@ export type OutboxOperationKind =
 
 export type OutboxDispatchState = 'PENDING' | 'DISPATCHING' | 'DISPATCHED' | 'FAILED' | 'TERMINAL';
 
-/** Why a `TERMINAL` operation is terminal (both are re-evaluable, not conflicts). */
-export type OutboxTerminalReason = 'ACCESS_DENIED' | 'INCOMPATIBLE_VERSION';
+/**
+ * Why a `TERMINAL` operation is terminal. All reasons are re-evaluable (not
+ * conflicts): access denial, content-version incompatibility, a server contract
+ * rejection (e.g. HTTP 400), or a bounded transient retry that was exhausted.
+ */
+export type OutboxTerminalReason =
+  | 'ACCESS_DENIED'
+  | 'INCOMPATIBLE_VERSION'
+  | 'REJECTED'
+  | 'RETRY_EXHAUSTED';
 
 /** Terminal operations whose content version was unavailable/incompatible. */
 export function incompatibleVersionOperations(
@@ -136,6 +144,16 @@ export function orderForDispatch(
   operations: readonly OutboxOperationRecord[],
 ): OutboxOperationRecord[] {
   return [...operations].sort((a, b) => a.seq - b.seq);
+}
+
+/**
+ * True when an operation's durable backoff window has elapsed, so it may be
+ * dispatched now. Operations without `nextAttemptAt` are always ready.
+ */
+export function isReadyForDispatch(operation: OutboxOperationRecord, now: number): boolean {
+  const nextAttemptAt = operation.nextAttemptAt;
+  if (typeof nextAttemptAt !== 'number') return true;
+  return nextAttemptAt <= now;
 }
 
 /**
