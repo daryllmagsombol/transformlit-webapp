@@ -91,7 +91,15 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
+    ThrottlerModule.forRoot([
+      { ttl: 60000, limit: 120 },
+      // Downloads get their own bounded bucket so whole-book fetches cannot
+      // exhaust (or be starved by) the shared reading/GraphQL budget. The
+      // global default here is the same permissive ceiling as `default` so the
+      // named bucket never throttles unrelated routes; download handlers apply
+      // the stricter per-route override.
+      { name: 'download', ttl: 60000, limit: 120 },
+    ]),
 
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,

@@ -12,7 +12,8 @@ describe('BooksController', () => {
     const sessions = { create: jest.fn().mockResolvedValue('raw-token'), resolve: jest.fn() };
     const storage = { getBuffer: jest.fn(), getStream: jest.fn() };
     const views = { record: jest.fn().mockResolvedValue(undefined) };
-    return { controller: new BooksController(books as never, sessions as never, storage as never, views as never), books, sessions, storage, views };
+    const downloads = { getManifest: jest.fn(), getAsset: jest.fn(), getAssetById: jest.fn() };
+    return { controller: new BooksController(books as never, sessions as never, storage as never, views as never, downloads as never), books, sessions, storage, views, downloads };
   }
 
   const authed = { user: { id: 'user-1', role: 'MEMBER' } } as never;
@@ -114,5 +115,119 @@ describe('BooksController', () => {
   it('rate-limits page frame and text requests to 90 per minute', () => {
     expect(Reflect.getMetadata('THROTTLER:LIMITdefault', BooksController.prototype.getFrame)).toBe(90);
     expect(Reflect.getMetadata('THROTTLER:LIMITdefault', BooksController.prototype.getText)).toBe(90);
+  });
+
+  describe('offline downloads', () => {
+    const manifest = {
+      contractVersion: 1,
+      bookId: 'book-1',
+      contentVersion: 2,
+      title: 'Pinned',
+      author: null,
+      description: null,
+      coverAssetId: null,
+      totalPages: 1,
+      toc: [],
+      pages: [],
+      assets: [],
+    };
+
+    function buildDownloads(overrides: Record<string, unknown> = {}) {
+      const downloads = {
+        getManifest: jest.fn().mockResolvedValue(manifest),
+        getAsset: jest.fn().mockResolvedValue({
+          buffer: Buffer.from('bytes'),
+          mediaType: 'image/png',
+          byteLength: 5,
+          sha256: 'a'.repeat(64),
+        }),
+        getAssetById: jest.fn().mockResolvedValue({
+          buffer: Buffer.from('bytes'),
+          mediaType: 'image/png',
+          byteLength: 5,
+          sha256: 'a'.repeat(64),
+          kind: 'frame',
+          pageNumber: 1,
+        }),
+        ...overrides,
+      };
+      const base = build();
+      const controller = new BooksController(
+        base.books as never,
+        base.sessions as never,
+        base.storage as never,
+        base.views as never,
+        downloads as never,
+      );
+      return { ...base, controller, downloads };
+    }
+
+    it('serves the manifest with bearer auth, current access, and no-store headers', async () => {
+      const { controller, downloads } = buildDownloads();
+      const res = { setHeader: jest.fn() };
+      const result = await controller.getOfflineManifest('book-1', 2, authed, res as never);
+      expect(downloads.getManifest).toHaveBeenCalledWith('book-1', 'user-1', 2);
+      expect(result).toBe(manifest);
+      expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store, private');
+      expect(res.setHeader).toHaveBeenCalledWith('Vary', 'Authorization');
+    });
+
+    it('defaults to the latest retained version when no version is supplied', async () => {
+      const { controller, downloads } = buildDownloads();
+      await controller.getOfflineManifest('book-1', undefined, authed, { setHeader: jest.fn() } as never);
+      expect(downloads.getManifest).toHaveBeenCalledWith('book-1', 'user-1', undefined);
+    });
+
+    it('streams a pinned frame with length, type and sha256 ETag', async () => {
+      const { controller, downloads } = buildDownloads();
+      const res = { setHeader: jest.fn(), type: jest.fn(), send: jest.fn() };
+      await controller.getOfflineFrame('book-1', 2, 1, authed, res as never);
+      expect(downloads.getAsset).toHaveBeenCalledWith('book-1', 'user-1', 2, 1, 'frame');
+      expect(res.type).toHaveBeenCalledWith('image/png');
+      expect(res.send).toHaveBeenCalledWith(Buffer.from('bytes'));
+      expect(res.setHeader).toHaveBeenCalledWith('Content-Length', 5);
+      expect(res.setHeader).toHaveBeenCalledWith('ETag', `"sha256-${'a'.repeat(64)}"`);
+      expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store, private');
+      expect(res.setHeader).toHaveBeenCalledWith('Vary', 'Authorization');
+      expect(res.setHeader).toHaveBeenCalledWith('X-Content-Type-Options', 'nosniff');
+    });
+
+    it('serves the exact empty text-layer bytes as a download asset', async () => {
+      const { controller } = buildDownloads({
+        getAsset: jest.fn().mockResolvedValue({
+          buffer: Buffer.from('{"items":[]}'),
+          mediaType: 'application/json',
+          byteLength: 12,
+          sha256: 'b'.repeat(64),
+        }),
+      });
+      const res = { setHeader: jest.fn(), type: jest.fn(), send: jest.fn() };
+      await controller.getOfflineText('book-1', 2, 1, authed, res as never);
+      expect(res.send).toHaveBeenCalledWith(Buffer.from('{"items":[]}'));
+      expect(res.type).toHaveBeenCalledWith('application/json');
+    });
+
+    it('resolves a version-pinned asset by its opaque asset id', async () => {
+      const { controller, downloads } = buildDownloads();
+      const res = { setHeader: jest.fn(), type: jest.fn(), send: jest.fn() };
+      await controller.getOfflineAsset('book-1', 2, 'page-1:text', authed, res as never);
+      expect(downloads.getAssetById).toHaveBeenCalledWith('book-1', 'user-1', 2, 'page-1:text');
+      expect(res.send).toHaveBeenCalledWith(Buffer.from('bytes'));
+    });
+
+    it('never creates reading sessions or page-view analytics for downloads', async () => {
+      const { controller, sessions, views } = buildDownloads();
+      await controller.getOfflineManifest('book-1', 2, authed, { setHeader: jest.fn() } as never);
+      await controller.getOfflineFrame('book-1', 2, 1, authed, { setHeader: jest.fn(), type: jest.fn(), send: jest.fn() } as never);
+      expect(sessions.create).not.toHaveBeenCalled();
+      expect(views.record).not.toHaveBeenCalled();
+    });
+
+    it('keeps offline routes on their own bounded throttle, separate from page routes', () => {
+      expect(Reflect.getMetadata('THROTTLER:LIMITdownload', BooksController.prototype.getOfflineManifest)).toBe(30);
+      expect(Reflect.getMetadata('THROTTLER:LIMITdownload', BooksController.prototype.getOfflineFrame)).toBe(30);
+      expect(Reflect.getMetadata('THROTTLER:LIMITdownload', BooksController.prototype.getOfflineText)).toBe(30);
+      expect(Reflect.getMetadata('THROTTLER:LIMITdownload', BooksController.prototype.getOfflineAsset)).toBe(30);
+    });
   });
 });

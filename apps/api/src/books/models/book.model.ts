@@ -1,4 +1,13 @@
-import { Field, ObjectType, InputType, ID, Int, registerEnumType } from '@nestjs/graphql';
+import {
+  Field,
+  ObjectType,
+  InputType,
+  ID,
+  Int,
+  Float,
+  registerEnumType,
+  createUnionType,
+} from '@nestjs/graphql';
 import { BookAccessLevel, BookFormat, BookStatus, ConversionStatus } from '@transformlit/shared';
 
 registerEnumType(BookAccessLevel, { name: 'BookAccessLevel' });
@@ -215,4 +224,298 @@ export class AddHighlightInput {
 
   @Field({ nullable: true })
   color?: string;
+}
+
+// ── Offline reader operation envelope (Task 8) ──────────────────────────────
+
+export enum OperationKind {
+  PROGRESS_SET = 'PROGRESS_SET',
+  BOOKMARK_ADD = 'BOOKMARK_ADD',
+  BOOKMARK_REMOVE = 'BOOKMARK_REMOVE',
+  ANNOTATION_CREATE = 'ANNOTATION_CREATE',
+  ANNOTATION_UPDATE = 'ANNOTATION_UPDATE',
+  ANNOTATION_DELETE = 'ANNOTATION_DELETE',
+}
+
+export enum OperationTargetKind {
+  ANNOTATION = 'ANNOTATION',
+  CONFLICT_COPY = 'CONFLICT_COPY',
+}
+
+export enum OperationResultKind {
+  APPLIED = 'APPLIED',
+  CONFLICT = 'CONFLICT',
+  INCOMPATIBLE_VERSION = 'INCOMPATIBLE_VERSION',
+  ACCESS_DENIED = 'ACCESS_DENIED',
+}
+
+export enum ReaderEntityKind {
+  PROGRESS = 'PROGRESS',
+  BOOKMARK = 'BOOKMARK',
+  ANNOTATION = 'ANNOTATION',
+}
+
+export enum ConflictReason {
+  STALE_REVISION = 'STALE_REVISION',
+  DELETE_VS_EDIT = 'DELETE_VS_EDIT',
+}
+
+registerEnumType(OperationKind, { name: 'OperationKind' });
+registerEnumType(OperationTargetKind, { name: 'OperationTargetKind' });
+registerEnumType(OperationResultKind, { name: 'OperationResultKind' });
+registerEnumType(ReaderEntityKind, { name: 'ReaderEntityKind' });
+registerEnumType(ConflictReason, { name: 'ConflictReason' });
+
+@InputType()
+export class PageTextAnchorV1Input {
+  @Field(() => Int) version: number;
+
+  @Field(() => Int) page: number;
+
+  @Field(() => Int) startOffset: number;
+
+  @Field(() => Int) endOffset: number;
+}
+
+@ObjectType()
+export class PageTextAnchorV1 {
+  @Field(() => Int) version: number;
+
+  @Field(() => Int) page: number;
+
+  @Field(() => Int) startOffset: number;
+
+  @Field(() => Int) endOffset: number;
+}
+
+/**
+ * Flattened typed operation envelope. Per-kind fields are required even though
+ * represented as optional GraphQL fields; the server validates exact field
+ * presence for the declared `kind` before applying anything.
+ */
+@InputType()
+export class ReaderOperationInput {
+  @Field() operationId: string;
+
+  @Field(() => ID) bookId: string;
+
+  @Field(() => Int) contentVersion: number;
+
+  @Field(() => OperationKind) kind: OperationKind;
+
+  @Field(() => ID, { nullable: true }) entityId?: string | null;
+
+  @Field(() => String, { nullable: true }) clientEntityId?: string | null;
+
+  @Field(() => OperationTargetKind, { nullable: true }) targetKind?: OperationTargetKind | null;
+
+  @Field(() => Int, { nullable: true }) baseRevision?: number | null;
+
+  @Field(() => Int, { nullable: true }) currentPage?: number | null;
+
+  @Field(() => Float, { nullable: true }) scrollY?: number | null;
+
+  @Field(() => Int, { nullable: true }) page?: number | null;
+
+  @Field(() => String, { nullable: true }) label?: string | null;
+
+  @Field(() => String, { nullable: true }) color?: string | null;
+
+  @Field(() => PageTextAnchorV1Input, { nullable: true })
+  anchor?: PageTextAnchorV1Input | null;
+
+  @Field(() => String, { nullable: true }) text?: string | null;
+
+  @Field(() => String, { nullable: true }) note?: string | null;
+}
+
+@ObjectType()
+export class BookmarkRecord {
+  @Field(() => ID) id: string;
+
+  /** Null for migrated legacy rows whose provenance is unknown. */
+  @Field(() => String, { nullable: true }) clientEntityId?: string | null;
+
+  @Field(() => ID) bookId: string;
+
+  @Field(() => Int) page: number;
+
+  @Field(() => String, { nullable: true }) label?: string | null;
+
+  @Field(() => String, { nullable: true }) color?: string | null;
+
+  @Field(() => PageTextAnchorV1, { nullable: true }) anchor?: PageTextAnchorV1 | null;
+
+  @Field(() => Int) contentVersion: number;
+
+  @Field(() => Int) revision: number;
+
+  @Field(() => Date) createdAt: Date;
+
+  @Field(() => Date, { nullable: true }) deletedAt?: Date | null;
+}
+
+@ObjectType()
+export class HighlightRecord {
+  @Field(() => ID) id: string;
+
+  /** Null for migrated legacy rows whose provenance is unknown. */
+  @Field(() => String, { nullable: true }) clientEntityId?: string | null;
+
+  @Field(() => ID) bookId: string;
+
+  @Field(() => Int) page: number;
+
+  @Field(() => String) text: string;
+
+  @Field(() => String, { nullable: true }) note?: string | null;
+
+  @Field(() => String, { nullable: true }) color?: string | null;
+
+  /**
+   * Nullable: a migrated legacy highlight (pre-anchor) has no trustworthy
+   * text-layer anchor. Never invented to satisfy a non-null shape.
+   */
+  @Field(() => PageTextAnchorV1, { nullable: true }) anchor?: PageTextAnchorV1 | null;
+
+  @Field(() => Int) contentVersion: number;
+
+  @Field(() => Int) revision: number;
+
+  @Field(() => Date) createdAt: Date;
+
+  @Field(() => Date) updatedAt: Date;
+
+  @Field(() => Date, { nullable: true }) deletedAt?: Date | null;
+}
+
+@ObjectType()
+export class ProgressRecord {
+  @Field(() => ID) bookId: string;
+
+  @Field(() => Int) currentPage: number;
+
+  @Field(() => Float, { nullable: true }) scrollY?: number | null;
+
+  @Field(() => Int) revision: number;
+
+  @Field(() => Date) lastReadAt: Date;
+}
+
+@ObjectType()
+export class ConflictCopy {
+  @Field(() => ID) id: string;
+
+  @Field() operationId: string;
+
+  @Field(() => ID) sourceEntityId: string;
+
+  @Field(() => ID) bookId: string;
+
+  @Field(() => Int) contentVersion: number;
+
+  @Field(() => Int) page: number;
+
+  @Field(() => String) text: string;
+
+  @Field(() => String, { nullable: true }) note?: string | null;
+
+  @Field(() => String, { nullable: true }) color?: string | null;
+
+  /**
+   * Nullable: a delete-vs-edit conflict has no text-layer provenance to
+   * preserve, and migrated legacy rows have no trustworthy anchor. Never
+   * invented to satisfy a non-null contract.
+   */
+  @Field(() => PageTextAnchorV1, { nullable: true }) anchor?: PageTextAnchorV1 | null;
+
+  @Field(() => Int) revision: number;
+
+  @Field(() => ConflictReason) reason: ConflictReason;
+
+  @Field(() => Date) createdAt: Date;
+}
+
+@ObjectType()
+export class ReaderTombstone {
+  @Field(() => ID) entityId: string;
+
+  @Field(() => ReaderEntityKind) kind: ReaderEntityKind;
+
+  @Field(() => Int) revision: number;
+
+  @Field() deletedAt: Date;
+}
+
+export const ReaderServerValue = createUnionType({
+  name: 'ReaderServerValue',
+  types: () => [BookmarkRecord, HighlightRecord, ConflictCopy, ProgressRecord] as const,
+  resolveType: (value: { __typename?: string }) => value?.__typename,
+});
+
+@ObjectType()
+export class ReaderOperationApplied {
+  @Field(() => OperationResultKind) kind: OperationResultKind;
+
+  @Field(() => ID) entityId: string;
+
+  @Field(() => Int) revision: number;
+
+  @Field(() => ID) receiptId: string;
+}
+
+@ObjectType()
+export class ReaderOperationConflict {
+  @Field(() => OperationResultKind) kind: OperationResultKind;
+
+  @Field(() => ID) entityId: string;
+
+  @Field(() => Int) serverRevision: number;
+
+  @Field(() => ReaderServerValue) serverValue: typeof ReaderServerValue;
+
+  @Field(() => ConflictCopy, { nullable: true }) conflictCopy?: ConflictCopy | null;
+}
+
+@ObjectType()
+export class ReaderOperationIncompatibleVersion {
+  @Field(() => OperationResultKind) kind: OperationResultKind;
+
+  @Field(() => Int) requestedContentVersion: number;
+
+  @Field(() => [Int]) supportedContentVersions: number[];
+}
+
+@ObjectType()
+export class ReaderOperationAccessDenied {
+  @Field(() => OperationResultKind) kind: OperationResultKind;
+
+  @Field(() => ID) resourceId: string;
+
+  @Field() reason: string;
+}
+
+export const ReaderOperationResultVariant = createUnionType({
+  name: 'ReaderOperationResultVariant',
+  types: () =>
+    [
+      ReaderOperationApplied,
+      ReaderOperationConflict,
+      ReaderOperationIncompatibleVersion,
+      ReaderOperationAccessDenied,
+    ] as const,
+  resolveType: (value: { kind: OperationResultKind }) =>
+    ({
+      [OperationResultKind.APPLIED]: ReaderOperationApplied,
+      [OperationResultKind.CONFLICT]: ReaderOperationConflict,
+      [OperationResultKind.INCOMPATIBLE_VERSION]: ReaderOperationIncompatibleVersion,
+      [OperationResultKind.ACCESS_DENIED]: ReaderOperationAccessDenied,
+    })[value.kind],
+});
+
+@ObjectType()
+export class ReaderOperationResult {
+  @Field() operationId: string;
+
+  @Field(() => ReaderOperationResultVariant) result: typeof ReaderOperationResultVariant;
 }

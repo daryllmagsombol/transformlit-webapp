@@ -82,6 +82,39 @@ describe('Reader schema', () => {
     expect(book.format).toBeNull();
   });
 
+  it('stores receipts, tombstones and conflict copies with revision provenance', async () => {
+    const stamp = Date.now();
+    const user = await prisma.user.create({
+      data: { email: `sync${stamp}@example.com`, emailNormalized: `sync${stamp}@example.com`, displayName: 'Sync Reader' },
+    });
+    const book = await prisma.book.create({
+      data: { title: 'Sync storage', status: 'PUBLISHED', conversionStatus: 'READY', accessLevel: 'FREE' },
+    });
+    const receipt = await prisma.readerOperationReceipt.create({
+      data: { subject: user.id, operationId: `op-${stamp}`, payloadHash: 'hash', result: { kind: 'APPLIED' } },
+    });
+    expect(receipt.id).toBeTruthy();
+    await prisma.readerTombstone.create({ data: { subject: user.id, entityId: `bm-${stamp}`, kind: 'BOOKMARK', revision: 2 } });
+    expect(await prisma.readerTombstone.count({ where: { subject: user.id } })).toBe(1);
+    await prisma.conflictCopy.create({
+      data: {
+        subject: user.id,
+        operationId: `op-${stamp}`,
+        sourceEntityId: `hl-${stamp}`,
+        bookId: book.id,
+        contentVersion: 1,
+        page: 1,
+        text: 'offline edit',
+        anchor: { version: 1, page: 1, startOffset: 0, endOffset: 5 },
+        reason: 'STALE_REVISION',
+      },
+    });
+    expect(await prisma.conflictCopy.count({ where: { subject: user.id } })).toBe(1);
+    // Progress defaults to revision 0 (no prior revision) on a legacy row.
+    const progress = await prisma.bookProgress.create({ data: { userId: user.id, bookId: book.id, currentPage: 1 } });
+    expect(progress.revision).toBe(0);
+  });
+
   it('stores pages, toc entries, jobs, sessions and page views', async () => {
     const stamp = Date.now();
     const user = await prisma.user.create({

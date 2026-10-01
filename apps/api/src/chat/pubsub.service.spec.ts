@@ -6,14 +6,17 @@ const mockClient = {
   on: jest.fn(),
   query: jest.fn().mockResolvedValue({}),
   end: jest.fn().mockResolvedValue(undefined),
+  release: jest.fn(),
+};
+
+const mockPool = {
+  connect: jest.fn().mockResolvedValue(mockClient),
+  query: jest.fn().mockResolvedValue({}),
+  end: jest.fn().mockResolvedValue(undefined),
 };
 
 jest.mock('pg', () => ({
-  Pool: jest.fn().mockImplementation(() => ({
-    connect: jest.fn().mockResolvedValue(mockClient),
-    query: jest.fn().mockResolvedValue({}),
-    end: jest.fn().mockResolvedValue(undefined),
-  })),
+  Pool: jest.fn().mockImplementation(() => mockPool),
 }));
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -47,6 +50,18 @@ describe('PubSubService', () => {
     expect(mockClient.on).toHaveBeenCalledWith('notification', expect.any(Function));
     expect(mockClient.query).toHaveBeenCalledWith('LISTEN "messageAdded"');
     expect(mockClient.query).toHaveBeenCalledWith('LISTEN "notificationReceived"');
+  });
+
+  it('releases the dedicated LISTEN connection before ending the pool on destroy', async () => {
+    await service.onModuleDestroy();
+
+    // Pool.end() blocks until every checked-out client is released, so the
+    // LISTEN client must be released first or shutdown hangs forever.
+    expect(mockClient.release).toHaveBeenCalledTimes(1);
+    expect(mockPool.end).toHaveBeenCalledTimes(1);
+    expect(mockClient.release.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPool.end.mock.invocationCallOrder[0],
+    );
   });
 
   it('does not throw on a malformed JSON payload and does not resolve waiting triggers', async () => {

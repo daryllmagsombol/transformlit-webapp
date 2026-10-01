@@ -2,18 +2,23 @@ import { Resolver, Query, Mutation, Args, ResolveField, Parent } from '@nestjs/g
 import { UseGuards, BadRequestException } from '@nestjs/common';
 import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { BooksService, ReadableBookFacts } from './books.service.js';
+import { ReaderMutationsService } from './reader-mutations.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import {
   Book, BookProgress, Bookmark, Highlight, BookTocEntry,
   UploadBookInput, UpdateBookInput, SaveProgressInput,
   AddBookmarkInput, AddHighlightInput,
+  ReaderOperationInput, ReaderOperationResult,
 } from './models/book.model.js';
 import { GraphQLUpload, FileUpload } from 'graphql-upload-ts';
 
 @Resolver(() => Book)
 export class BooksResolver {
-  constructor(private readonly booksService: BooksService) {}
+  constructor(
+    private readonly booksService: BooksService,
+    private readonly readerMutations: ReaderMutationsService,
+  ) {}
 
   @Query(() => [Book], { name: 'books' })
   @UseGuards(JwtAuthGuard)
@@ -190,5 +195,19 @@ export class BooksResolver {
   ) {
     await this.booksService.removeHighlight(id, user.id);
     return true;
+  }
+
+  /**
+   * Single replay-safe entry point for every queued offline reader mutation.
+   * Ownership comes only from the authenticated subject; the result is a typed
+   * APPLIED/CONFLICT/INCOMPATIBLE_VERSION/ACCESS_DENIED discriminant.
+   */
+  @Mutation(() => ReaderOperationResult, { name: 'applyBookReaderOperation' })
+  @UseGuards(JwtAuthGuard)
+  async applyBookReaderOperation(
+    @CurrentUser() user: { id: string },
+    @Args('input') input: ReaderOperationInput,
+  ) {
+    return this.readerMutations.applyOperation(user.id, input);
   }
 }
