@@ -56,6 +56,7 @@ describe('PWA reader sync migration', () => {
       );
       const names = rows.map((row) => row.migration_name);
       expect(names).toContain('20261001000200_pwa_reader_sync');
+      expect(names).toContain('20261001000300_pwa_contract_cleanup');
       expect(rows.every((row) => row.finished_at !== null)).toBe(true);
 
       const tables = await pool.query<{ table_name: string }>(
@@ -94,6 +95,35 @@ describe('PWA reader sync migration', () => {
       const after = await pool.query('SELECT "currentPage", revision FROM book_progress WHERE "userId" = $1 AND "bookId" = $2', [fixture.user.id, fixture.book.id]);
       expect(after.rows[0].currentPage).toBe(fixture.progress.currentPage);
       expect(after.rows[0].revision).toBe(0);
+    } finally {
+      await pool.end();
+    }
+  }, 180000);
+
+  it('enforces sourceEntityId NOT NULL at the DB boundary without deleting conflicting rows', async () => {
+    const pool = new Pool({ connectionString: databaseUrl });
+    try {
+      const column = await pool.query<{ is_nullable: string }>(
+        `SELECT is_nullable FROM information_schema.columns WHERE table_name = 'conflict_copies' AND column_name = 'sourceEntityId'`,
+      );
+      expect(column.rows[0]?.is_nullable).toBe('NO');
+
+      // A row that predates the constraint would have been backfilled with its
+      // own id, so every existing row is non-null and preserved.
+      const nulls = await pool.query('SELECT count(*)::int AS count FROM conflict_copies WHERE "sourceEntityId" IS NULL');
+      expect(nulls.rows[0].count).toBe(0);
+
+      // A new null is rejected by the database.
+      const fixture = JSON.parse(
+        readFileSync(join(__dirname, 'fixtures/pwa-migration/legacy-reader-rows.json'), 'utf8'),
+      ) as LegacyRows;
+      await expect(
+        pool.query(
+          `INSERT INTO conflict_copies (id, subject, "operationId", "sourceEntityId", "bookId", "contentVersion", page, text, revision, reason)
+           VALUES (gen_random_uuid()::text, $1, 'op-null', NULL, $2, 1, 1, 'x', 1, 'STALE_REVISION')`,
+          [fixture.user.id, fixture.book.id],
+        ),
+      ).rejects.toThrow();
     } finally {
       await pool.end();
     }
