@@ -149,7 +149,7 @@ function ProgressActions({
   readonly onResolveProgress?: (conflict: ConflictView, choice: ProgressChoice) => void;
 }) {
   if (!onResolveProgress) return null;
-  const serverPageKnown = serverProgressPage(conflict) !== null;
+  const serverPageUnknown = serverProgressPage(conflict) === null;
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-2">
@@ -161,11 +161,11 @@ function ProgressActions({
         />
         <ChoiceButton
           label="Resume at server page"
-          disabled={busy || !serverPageKnown}
+          disabled={busy || serverPageUnknown}
           onClick={() => onResolveProgress(conflict, 'SERVER')}
         />
       </div>
-      {!serverPageKnown ? (
+      {serverPageUnknown ? (
         <p role="status" aria-live="polite" className="font-small text-small text-on-surface-variant">
           The server position is not available yet; you can still resume at your page.
         </p>
