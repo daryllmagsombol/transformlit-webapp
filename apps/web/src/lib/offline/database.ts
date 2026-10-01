@@ -500,14 +500,50 @@ export class OfflineDatabase {
   /**
    * Records a durable acknowledgement and removes the queued operation in one
    * transaction. A crash before `oncomplete` leaves the operation replayable.
+   *
+   * `successors` (optional) are rebased successor operations that MUST commit in
+   * the SAME transaction as the receipt + removal, so a crash can never leave a
+   * removed predecessor beside a successor still carrying a stale base revision.
    */
-  async acknowledgeOperation(subject: string, epoch: number, outboxId: string, receipt: unknown): Promise<void> {
+  async acknowledgeOperation(
+    subject: string,
+    epoch: number,
+    outboxId: string,
+    receipt: unknown,
+    successors: readonly unknown[] = [],
+  ): Promise<void> {
     assertRecordSubject(subject, receipt);
+    for (const successor of successors) assertRecordSubject(subject, successor);
     const db = await this.db();
     await runTransaction<void>(db, ['lifecycle', 'outbox', 'receipts'], 'readwrite', (tx, done, fail) => {
       guardWrite(tx, subject, epoch, fail, () => {
         tx.objectStore('receipts').put(receipt as unknown as IDBValidKey);
-        tx.objectStore('outbox').delete(outboxId);
+        const outbox = tx.objectStore('outbox');
+        for (const successor of successors) outbox.put(successor as unknown as IDBValidKey);
+        outbox.delete(outboxId);
+        done(undefined);
+      });
+    });
+  }
+
+  /**
+   * Atomically upserts rebased successors and removes discarded predecessors in
+   * one fenced transaction. Used by conflict discard so a dependent chain is
+   * never half-removed (successor left runnable with a stale base revision).
+   */
+  async commitOutboxChanges(
+    subject: string,
+    epoch: number,
+    upserts: readonly unknown[],
+    removeIds: readonly string[],
+  ): Promise<void> {
+    for (const upsert of upserts) assertRecordSubject(subject, upsert);
+    const db = await this.db();
+    await runTransaction<void>(db, ['lifecycle', 'outbox'], 'readwrite', (tx, done, fail) => {
+      guardWrite(tx, subject, epoch, fail, () => {
+        const outbox = tx.objectStore('outbox');
+        for (const upsert of upserts) outbox.put(upsert as unknown as IDBValidKey);
+        for (const id of removeIds) outbox.delete(id);
         done(undefined);
       });
     });

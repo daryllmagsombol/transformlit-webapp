@@ -3,8 +3,10 @@ import {
   OfflineStorageError,
   receiptKey,
   type AccountOwner,
+  type ConflictCopyRecord,
   type LeaseRecord,
   type OutboxReceiptRecord,
+  type ReplayIdentity,
 } from './contracts';
 import type { OutboxOperationRecord } from './outbox';
 import {
@@ -35,6 +37,11 @@ export type OperationOutcome =
       readonly serverRevision: number;
       readonly serverValue: unknown;
       readonly conflictCopyId?: string | null;
+      /**
+       * The full server conflict copy, when returned. Persisted immediately on
+       * conflict so "keep my edit" works before any snapshot refresh.
+       */
+      readonly conflictCopy?: PersistedConflictCopy | null;
     }
   | { readonly kind: 'ACCESS_DENIED'; readonly resourceId: string; readonly reason: string }
   | {
@@ -42,6 +49,23 @@ export type OperationOutcome =
       readonly requestedContentVersion: number;
       readonly supportedContentVersions: readonly number[];
     };
+
+/** The server conflict copy in durable (epoch-ms) form. */
+export interface PersistedConflictCopy {
+  readonly id: string;
+  readonly operationId: string;
+  readonly sourceEntityId: string;
+  readonly bookId: string;
+  readonly contentVersion: number;
+  readonly page: number;
+  readonly text: string;
+  readonly note: string | null;
+  readonly color: string | null;
+  readonly anchor: unknown;
+  readonly revision: number;
+  readonly reason: ConflictCopyRecord['reason'];
+  readonly createdAt: number;
+}
 
 /**
  * Transport/server failure classification, kept distinct from operation
@@ -69,6 +93,18 @@ export interface OutboxStore {
    * an ack without importing the reader-records store.
    */
   markEntitySynced?(entityKey: string, subject: string, epoch: number): Promise<void>;
+  /**
+   * Atomically upserts rebased successors and removes discarded predecessors in
+   * ONE transaction. Optional: without it, `discardConflicts` falls back to
+   * sequential updates/removes (still leaving successors runnable, but not
+   * crash-atomic). Production wires this to the IndexedDB resolver commit.
+   */
+  commitDiscard?(
+    subject: string,
+    epoch: number,
+    upserts: readonly OutboxOperationRecord[],
+    removeIds: readonly string[],
+  ): Promise<void>;
 }
 
 /**
@@ -91,6 +127,13 @@ export interface ReceiptStore {
     subject: string,
     epoch: number,
     receipt: OutboxReceiptRecord,
+    /**
+     * Successor operations whose base revision must be rebased. When supplied,
+     * the receipt, the operation removal, AND the successor updates commit in
+     * ONE transaction, so a crash can never leave a removed predecessor beside a
+     * successor still carrying a stale `baseRevision`.
+     */
+    successors?: readonly OutboxOperationRecord[],
   ): Promise<void>;
   recordRetained(subject: string, epoch: number, receipt: OutboxReceiptRecord): Promise<void>;
 }
@@ -135,9 +178,37 @@ export interface CoordinatorDeps {
    * caller's subject still matches the operation's owner.
    */
   readonly send: (input: unknown) => Promise<OperationOutcome>;
-  readonly lifecycle: { readonly getOwner: () => AccountOwner | null };
+  readonly lifecycle: {
+    readonly getOwner: () => AccountOwner | null;
+    /**
+     * Whether replay may proceed for the established owner. Optional for
+     * read-only/test contexts; when present, a non-READY result (e.g. a genuine
+     * 401 parked as AUTH_REQUIRED) BLOCKS the drain instead of retrying forever.
+     */
+    readonly requireReplayIdentity?: () => ReplayIdentity;
+  };
   readonly snapshot: SnapshotSource;
   readonly snapshotStore?: SnapshotApplyStore;
+  /**
+   * Reads the CURRENT local annotation set for a book (subject-scoped, including
+   * soft-deleted rows). The merge needs the real local state so a server
+   * tombstone removes a stale live row and a cross-device change is visible.
+   * Optional; when absent `refreshSnapshots` passes an empty local set.
+   */
+  readonly readLocalAnnotations?: (
+    subject: string,
+    bookId: string,
+  ) => Promise<readonly MergeAnnotation[]>;
+  /**
+   * Persists one conflict copy the coordinator received as a conflict outcome,
+   * so "keep my edit" is available immediately rather than only after a later
+   * snapshot refresh. Optional.
+   */
+  readonly persistConflictCopy?: (
+    owner: AccountOwner,
+    operation: OutboxOperationRecord,
+    outcome: Extract<OperationOutcome, { kind: 'CONFLICT' }>,
+  ) => Promise<void>;
   /**
    * Counts durable local reader records that are NOT backed by an outbox
    * operation (local-only work that would be lost on sign-out). Optional; when
@@ -166,7 +237,7 @@ export interface DrainSummary {
 
 export interface DrainResult {
   readonly summary: DrainSummary;
-  readonly blockedReason: 'NO_OWNER' | 'LEASE_HELD' | null;
+  readonly blockedReason: 'NO_OWNER' | 'LEASE_HELD' | 'AUTH_REQUIRED' | null;
 }
 
 export interface ControlledDrainReport {
@@ -266,6 +337,31 @@ function isStorageDomException(error: unknown): boolean {
   );
 }
 
+/**
+ * Transitive closure of operations to remove when discarding conflicted edits:
+ * every conflicted root plus all (transitive) successors that depend on it.
+ * Removing a conflicted predecessor without its successors would dispatch them
+ * against a stale base revision, so they are discarded together.
+ */
+function collectDiscardClosure(
+  roots: readonly OutboxOperationRecord[],
+  all: readonly OutboxOperationRecord[],
+): string[] {
+  const remove = new Set(roots.map((operation) => operation.id));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const operation of all) {
+      if (remove.has(operation.id)) continue;
+      if (operation.dependsOn !== null && remove.has(operation.dependsOn)) {
+        remove.add(operation.id);
+        changed = true;
+      }
+    }
+  }
+  return [...remove];
+}
+
 function emptySummary(): DrainSummary {
   return {
     applied: 0,
@@ -335,10 +431,20 @@ export class SyncCoordinator {
     if (!owner) return 0;
     const operations = await this.deps.store.list(owner.subject);
     const conflicted = operations.filter((operation) => operation.dispatchState === 'FAILED');
-    for (const operation of conflicted) {
-      await this.deps.store.remove(operation.id);
+    if (conflicted.length === 0) return 0;
+
+    // Discarding the conflicted edit MUST also discard every successor that
+    // depended on it (transitively): leaving a successor behind would let it
+    // dispatch against a stale `baseRevision` with no surviving predecessor. We
+    // remove the whole dependent chain atomically rather than orphan it.
+    const removeIds = collectDiscardClosure(conflicted, operations);
+    const upserts: OutboxOperationRecord[] = [];
+    if (this.deps.store.commitDiscard) {
+      await this.deps.store.commitDiscard(owner.subject, owner.epoch, upserts, removeIds);
+    } else {
+      for (const id of removeIds) await this.deps.store.remove(id);
     }
-    const remaining = operations.filter((operation) => operation.dispatchState !== 'FAILED');
+    const remaining = operations.filter((operation) => !removeIds.includes(operation.id));
     this.emitStatus('IDLE', remaining, emptySummary(), null);
     return conflicted.length;
   }
@@ -362,6 +468,21 @@ export class SyncCoordinator {
     const initialOwner = lifecycle.getOwner();
     if (!initialOwner) return this.blocked('NO_OWNER', summary);
 
+    // A genuine 401 parks replay as AUTH_REQUIRED. Replaying in that state would
+    // re-send every queued operation, count each failure, and retry forever
+    // instead of pausing for same-subject reauthentication. Fail closed BEFORE
+    // acquiring the lease or dispatching anything.
+    const replay = lifecycle.requireReplayIdentity?.();
+    if (replay && replay.status !== 'READY') {
+      if (replay.reason === 'AUTH_REQUIRED') summary.authRequired += 1;
+      return this.blocked('AUTH_REQUIRED', summary);
+    }
+    if (replay && (replay.owner.subject !== initialOwner.subject || replay.owner.epoch !== initialOwner.epoch)) {
+      // The verified replay identity must agree with the owner we are about to
+      // dispatch for; otherwise the subject changed under us.
+      return this.blocked('NO_OWNER', summary);
+    }
+
     const lock = this.deps.lock;
     let lease: LeaseRecord | null = null;
     if (lock) {
@@ -373,13 +494,13 @@ export class SyncCoordinator {
     try {
       if (lifecycle.getOwner()?.subject !== initialOwner.subject) return this.blocked('NO_OWNER', summary);
       const operations = await this.deps.store.list(initialOwner.subject);
-      await this.processOperations(initialOwner, orderForDispatch(operations), summary, lease);
+      const blockedRun = await this.processOperations(initialOwner, orderForDispatch(operations), summary, lease);
       // Re-read the DURABLE queue for the final status: dispatch updated each
       // operation's dispatchState (PENDING/FAILED/TERMINAL), so the in-memory
       // working copy is stale for conflict/terminal counts.
       const settled = await this.deps.store.list(initialOwner.subject);
-      this.emitStatus('IDLE', settled, summary, null);
-      return { summary, blockedReason: null };
+      this.emitStatus(blockedRun ? 'BLOCKED' : 'IDLE', settled, summary, null);
+      return { summary, blockedReason: blockedRun ? 'AUTH_REQUIRED' : null };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Sync failed';
       this.emitStatus('ERROR', [], summary, message);
@@ -389,12 +510,17 @@ export class SyncCoordinator {
     }
   }
 
+  /**
+   * Dispatches the ordered queue. Returns true when the run was BLOCKED by a
+   * genuine auth rejection (so the caller reports AUTH_REQUIRED rather than a
+   * successful drain).
+   */
   private async processOperations(
     owner: AccountOwner,
     ordered: readonly OutboxOperationRecord[],
     summary: DrainSummary,
     lease: LeaseRecord | null,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Mutable working copy so a successor's advanced base revision is visible
     // when its turn comes, without mutating the persisted payload.
     const working = new Map(ordered.map((operation) => [operation.id, operation]));
@@ -410,6 +536,11 @@ export class SyncCoordinator {
       const effect = await this.dispatch(owner, current, summary, lease);
       if (effect.removed) working.delete(operation.id);
       if (effect.paused) pausedEntities.add(current.entityKey);
+      if (effect.blocked) {
+        // A genuine auth rejection pauses the ENTIRE run: stop dispatching the
+        // remaining queue so valid credentials are not hammered.
+        return true;
+      }
       if (effect.ackRevision !== null) {
         for (const [id, candidate] of working) {
           if (candidate.dependsOn === operation.id) {
@@ -418,6 +549,7 @@ export class SyncCoordinator {
         }
       }
     }
+    return false;
   }
 
   /** Returns the reconciliation effect on the current run. */
@@ -426,7 +558,7 @@ export class SyncCoordinator {
     operation: OutboxOperationRecord,
     summary: DrainSummary,
     lease: LeaseRecord | null,
-  ): Promise<{ removed: boolean; paused: boolean; ackRevision: number | null }> {
+  ): Promise<{ removed: boolean; paused: boolean; ackRevision: number | null; blocked: boolean }> {
     await this.deps.store.update({ ...operation, dispatchState: 'DISPATCHING' });
 
     let outcome: OperationOutcome;
@@ -434,13 +566,39 @@ export class SyncCoordinator {
       outcome = await this.deps.send(this.buildInput(operation));
     } catch (error) {
       const failure = classifyDispatchError(error);
-      // A transport failure is NOT an acknowledgement: the operation keeps its
-      // immutable id/payload and is retried later.
+      if (failure === 'AUTH_REQUIRED') {
+        // A genuine 401 is NOT a transport retry: return the operation to
+        // PENDING (no attempt penalty) and BLOCK the whole run so the remaining
+        // queue is not hammered with the same rejected credentials.
+        await this.deps.store.update({ ...operation, dispatchState: 'PENDING' });
+        summary.authRequired += 1;
+        return { removed: false, paused: true, ackRevision: null, blocked: true };
+      }
+      if (failure === 'ACCESS_DENIED' || failure === 'INCOMPATIBLE_VERSION') {
+        // Non-transient server classifications are TERMINAL, not retried
+        // forever. They are re-evaluated only when user/account/content changes.
+        await this.retainTerminal(operation, failure);
+        summary.accessDenied += failure === 'ACCESS_DENIED' ? 1 : 0;
+        summary.incompatibleVersion += failure === 'INCOMPATIBLE_VERSION' ? 1 : 0;
+        return { removed: false, paused: false, ackRevision: null, blocked: false };
+      }
+      if (failure === 'CONFLICT') {
+        // A transport 409 with no parsed outcome is a durable conflict: mark it
+        // FAILED (user-resolvable) instead of rescheduling it forever.
+        await this.deps.store.update({
+          ...operation,
+          dispatchState: 'FAILED',
+          attemptCount: operation.attemptCount + 1,
+        });
+        summary.conflict += 1;
+        return { removed: false, paused: true, ackRevision: null, blocked: false };
+      }
+      // Truly transient network/5xx faults: reschedule WITH backoff, preserving
+      // the immutable id/payload.
       await this.restorePending(operation);
-      if (failure === 'TRANSIENT') summary.transient += 1;
-      else if (failure === 'STORAGE_FAILURE') summary.storageFailure += 1;
-      else this.markTerminal(failure, summary);
-      return { removed: false, paused: false, ackRevision: null };
+      if (failure === 'STORAGE_FAILURE') summary.storageFailure += 1;
+      else summary.transient += 1;
+      return { removed: false, paused: false, ackRevision: null, blocked: false };
     }
 
     // Discard stale results: the account changed or the sync lease is no longer
@@ -449,10 +607,11 @@ export class SyncCoordinator {
     if (this.ownerChanged(owner) || (await this.leaseLost(lease))) {
       await this.restorePending(operation);
       summary.stale += 1;
-      return { removed: false, paused: false, ackRevision: null };
+      return { removed: false, paused: false, ackRevision: null, blocked: false };
     }
 
-    return this.reconcile(operation, outcome, summary);
+    const effect = await this.reconcile(owner, operation, outcome, summary);
+    return { ...effect, blocked: false };
   }
 
   /**
@@ -468,15 +627,16 @@ export class SyncCoordinator {
   }
 
   private async reconcile(
+    owner: AccountOwner,
     operation: OutboxOperationRecord,
     outcome: OperationOutcome,
     summary: DrainSummary,
-  ): Promise<{ removed: boolean; paused: boolean; ackRevision: number | null }> {
+  ): Promise<{ removed: boolean; paused: boolean; ackRevision: number | null; blocked: boolean }> {
     switch (outcome.kind) {
       case 'APPLIED':
         await this.applyAck(operation, outcome);
         summary.applied += 1;
-        return { removed: true, paused: false, ackRevision: outcome.revision };
+        return { removed: true, paused: false, ackRevision: outcome.revision, blocked: false };
       case 'CONFLICT':
         // Conflict receipts are durable, but the operation is RETAINED so its
         // successors stay blocked until the user resolves (retarget/discard).
@@ -489,19 +649,22 @@ export class SyncCoordinator {
           resultKind: 'CONFLICT',
           acknowledgedAt: this.now(),
         });
+        // Persist the returned conflict copy immediately so "keep my edit" is
+        // usable before the next snapshot refresh.
+        await this.deps.persistConflictCopy?.(owner, operation, outcome);
         await this.deps.store.update({ ...operation, dispatchState: 'FAILED', attemptCount: operation.attemptCount + 1 });
         summary.conflict += 1;
-        return { removed: false, paused: true, ackRevision: null };
+        return { removed: false, paused: true, ackRevision: null, blocked: false };
       case 'ACCESS_DENIED':
         await this.retainTerminal(operation, 'ACCESS_DENIED');
         summary.accessDenied += 1;
-        return { removed: false, paused: false, ackRevision: null };
+        return { removed: false, paused: false, ackRevision: null, blocked: false };
       case 'INCOMPATIBLE_VERSION':
         await this.retainTerminal(operation, 'INCOMPATIBLE_VERSION');
         summary.incompatibleVersion += 1;
-        return { removed: false, paused: false, ackRevision: null };
+        return { removed: false, paused: false, ackRevision: null, blocked: false };
       default:
-        return { removed: false, paused: false, ackRevision: null };
+        return { removed: false, paused: false, ackRevision: null, blocked: false };
     }
   }
 
@@ -524,17 +687,23 @@ export class SyncCoordinator {
       resultKind: 'APPLIED',
       acknowledgedAt: this.now(),
     };
-    await this.deps.receipts.recordAndRemove(operation.id, operation.subject, operation.epoch, receipt);
+    // Discover successors BEFORE the atomic commit so the receipt, the removal,
+    // and the successor rebase all commit in ONE transaction. A crash can then
+    // never leave a removed predecessor beside a stale-revision successor.
+    const siblings = await this.deps.store.list(operation.subject);
+    const successors = siblings
+      .filter((sibling) => sibling.dependsOn === operation.id)
+      .map((sibling) => advanceSuccessorRevision(sibling, outcome.revision));
+    await this.deps.receipts.recordAndRemove(
+      operation.id,
+      operation.subject,
+      operation.epoch,
+      receipt,
+      successors,
+    );
     // Clear the local record's "local-only" provenance now that the server has
     // acknowledged it (best-effort).
     await this.deps.store.markEntitySynced?.(operation.entityKey, operation.subject, operation.epoch);
-
-    // Advance ONLY the successor's base revision; never its payload.
-    const siblings = await this.deps.store.list(operation.subject);
-    for (const sibling of siblings) {
-      if (sibling.dependsOn !== operation.id) continue;
-      await this.deps.store.update(advanceSuccessorRevision(sibling, outcome.revision));
-    }
   }
 
   /**
@@ -574,17 +743,13 @@ export class SyncCoordinator {
     });
   }
 
-  private markTerminal(failure: DispatchFailure, summary: DrainSummary): void {
-    if (failure === 'AUTH_REQUIRED') summary.authRequired += 1;
-    else if (failure === 'ACCESS_DENIED') summary.accessDenied += 1;
-    else if (failure === 'CONFLICT') summary.conflict += 1;
-    else if (failure === 'INCOMPATIBLE_VERSION') summary.incompatibleVersion += 1;
-  }
-
   private buildInput(operation: OutboxOperationRecord): Readonly<Record<string, unknown>> {
     // The payload is passed through EXACTLY as stored. Scheduling metadata
     // (`attemptCount`/`nextAttemptAt`) lives on the record, not in the payload,
-    // so it can never be dispatched to the server.
+    // so it can never be dispatched to the server. The nested `payload` object is
+    // deliberately NOT included: `ReaderOperationInput` is a FLATTENED envelope
+    // with no `payload` field, so dispatching only the per-kind fields plus the
+    // envelope fields avoids relying on server-side ValidationPipe stripping.
     return {
       ...operation.payload,
       operationId: operation.operationId,
@@ -592,7 +757,6 @@ export class SyncCoordinator {
       contentVersion: operation.contentVersion,
       kind: operation.kind,
       baseRevision: operation.baseRevision,
-      payload: operation.payload,
     };
   }
 
@@ -601,7 +765,7 @@ export class SyncCoordinator {
     return !current || current.subject !== owner.subject || current.epoch !== owner.epoch;
   }
 
-  private blocked(reason: 'NO_OWNER' | 'LEASE_HELD', summary: DrainSummary): DrainResult {
+  private blocked(reason: 'NO_OWNER' | 'LEASE_HELD' | 'AUTH_REQUIRED', summary: DrainSummary): DrainResult {
     this.emitStatus('BLOCKED', [], summary, null);
     return { summary, blockedReason: reason };
   }
@@ -641,9 +805,7 @@ export class SyncCoordinator {
    * never rebased and their payload/base revision is preserved. Returns what was
    * fetched/merged so callers can surface conflicts.
    */
-  async refreshSnapshots(
-    localAnnotations: readonly MergeAnnotation[] = [],
-  ): Promise<SnapshotRefreshResult> {
+  async refreshSnapshots(): Promise<SnapshotRefreshResult> {
     const empty: SnapshotRefreshResult = { books: 0, annotations: 0, tombstones: 0, conflicts: 0 };
     const owner = this.deps.lifecycle.getOwner();
     if (!owner) return empty;
@@ -652,7 +814,18 @@ export class SyncCoordinator {
     const report = { ...empty };
 
     for (const bookId of books) {
+      // Re-read ownership INSIDE the loop: a cross-tab account switch during a
+      // multi-book refresh must stop the run, not project one owner's snapshot
+      // into another owner's records.
+      if (this.ownerChanged(owner)) break;
+
       const snapshot = await this.deps.snapshot(bookId);
+      // Read the REAL local annotation set for this book so the merge can apply
+      // server tombstones to stale live rows and surface cross-device changes.
+      // Callers may still pass an explicit set for read-only contexts.
+      const local = this.deps.readLocalAnnotations
+        ? await this.deps.readLocalAnnotations(owner.subject, bookId)
+        : [];
       const bookPending = operations
         .filter((operation) => operation.bookId === bookId)
         .map((operation) => ({
@@ -664,7 +837,7 @@ export class SyncCoordinator {
 
       const result = mergeSnapshot({
         snapshot,
-        local: localAnnotations,
+        local,
         pending: pendingFromOperations(bookPending),
       });
 

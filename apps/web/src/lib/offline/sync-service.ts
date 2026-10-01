@@ -3,7 +3,7 @@
 import { OfflineDatabase, createIndexedDbLeasePersistence } from './database';
 import { accountLifecycle } from './account-activation';
 import { createSyncLock } from './coordination';
-import { qualifyKey, type TombstoneRecord } from './contracts';
+import { qualifyKey, type BookmarkRecord, type HighlightRecord, type TombstoneRecord } from './contracts';
 import type { StoredConflictCopyRecord } from './conflicts';
 
 export type { StoredConflictCopyRecord } from './conflicts';
@@ -14,12 +14,13 @@ import {
   type BookMergeResult,
   type OperationOutcome,
   type OutboxStore,
+  type PersistedConflictCopy,
   type ReceiptStore,
   type SnapshotApplyStore,
   type SnapshotSource,
 } from './sync-coordinator';
 import type { OutboxOperationRecord } from './outbox';
-import type { AuthoritativeSnapshot } from './snapshot-merge';
+import type { AuthoritativeSnapshot, MergeAnnotation } from './snapshot-merge';
 
 /** A stable per-tab identity for the cross-tab sync lease. */
 function tabId(): string {
@@ -40,14 +41,17 @@ export function toOutcome(
   switch (variant.__typename) {
     case 'ReaderOperationApplied':
       return { kind: 'APPLIED', entityId: variant.entityId, revision: variant.revision, receiptId: variant.receiptId };
-    case 'ReaderOperationConflict':
+    case 'ReaderOperationConflict': {
+      const copy = variant.conflictCopy;
       return {
         kind: 'CONFLICT',
         entityId: variant.entityId,
         serverRevision: variant.serverRevision,
         serverValue: variant.serverValue,
-        conflictCopyId: variant.conflictCopy?.id ?? null,
+        conflictCopyId: copy?.id ?? null,
+        conflictCopy: copy ? toPersistedCopy(copy) : null,
       };
+    }
     case 'ReaderOperationIncompatibleVersion':
       return {
         kind: 'INCOMPATIBLE_VERSION',
@@ -59,6 +63,31 @@ export function toOutcome(
     default:
       throw new Error('Unknown reader operation result');
   }
+}
+
+/** Converts a wire conflict copy (ISO timestamps) into durable epoch-ms form. */
+function toPersistedCopy(
+  copy: NonNullable<
+    Extract<Awaited<ReturnType<typeof dispatchReaderOperation>>['result'], { __typename: 'ReaderOperationConflict' }>['conflictCopy']
+  >,
+): PersistedConflictCopy {
+  return {
+    id: copy.id,
+    operationId: copy.operationId,
+    sourceEntityId: copy.sourceEntityId,
+    bookId: copy.bookId,
+    contentVersion: copy.contentVersion,
+    page: copy.page,
+    text: copy.text,
+    note: copy.note,
+    color: copy.color,
+    // The operation-result selection omits `anchor` (nullable per contract); a
+    // later snapshot refresh supplies the authoritative anchor.
+    anchor: null,
+    revision: copy.revision,
+    reason: copy.reason,
+    createdAt: Date.parse(String(copy.createdAt)),
+  };
 }
 
 /** Builds the real outbox store over Task 4 IndexedDB (account-scoped). */
@@ -115,10 +144,13 @@ export function createReceiptStore(database: OfflineDatabase): ReceiptStore {
 /**
  * Applies a merged snapshot to durable local state: server tombstones become
  * durable deletion history and conflict copies are persisted so conflicts are
- * surfaced (not silently dropped). Server-annotation projection into the
- * individual `readerRecords` rows is intentionally deferred: local reads
- * discriminate by subject-qualified keys, so merging raw server rows requires a
- * separate projection (recorded in the Task 11 report).
+ * surfaced (not silently dropped).
+ *
+ * The merged `annotations` are PROJECTED into the subject-scoped `readerRecords`
+ * rows so cross-device changes become locally visible and a server tombstone can
+ * remove a stale live row. Pending local work is preserved by the merge (which
+ * returns it unchanged), and a record touched by pending work is never clobbered
+ * here because the merge result already carries the pending value.
  */
 export function createSnapshotStore(database: OfflineDatabase): SnapshotApplyStore {
   return {
@@ -134,18 +166,218 @@ export function createSnapshotStore(database: OfflineDatabase): SnapshotApplySto
         };
         await database.putAccountRecord(owner.subject, owner.epoch, 'tombstones', record);
       }
+
+      await projectAnnotations(database, owner, result.bookId, result);
+
       for (const conflict of result.conflictCopies) {
-        // `id` becomes the storage key; the stable server identity is preserved
-        // as `serverId` so a retarget can still reference it.
+        const key = qualifyKey(owner.subject, 'conflict', conflict.id);
+        // Merge by stable server identity, PRESERVING any local resolution and
+        // its timestamp. Without this, a refresh after resolve would overwrite
+        // the resolution marker and the resolver's idempotence guard would fail,
+        // appending a duplicate retargeted operation.
+        const existing = await database.get<StoredConflictCopyRecord>('conflicts', key);
         const record: StoredConflictCopyRecord = {
           ...conflict,
           serverId: conflict.id,
-          id: qualifyKey(owner.subject, 'conflict', conflict.id),
+          id: key,
           subject: owner.subject,
+          ...(existing
+            ? { resolution: existing.resolution ?? null, resolvedAt: existing.resolvedAt ?? null }
+            : {}),
         };
         await database.putAccountRecord(owner.subject, owner.epoch, 'conflicts', record);
       }
     },
+  };
+}
+
+/** The local `readerRecords` namespace ('bookmark' | 'highlight') for a kind. */
+function recordNamespace(kind: 'BOOKMARK' | 'ANNOTATION'): 'bookmark' | 'highlight' {
+  return kind === 'BOOKMARK' ? 'bookmark' : 'highlight';
+}
+
+/** Local record key derived from a merged annotation's stable identity. */
+function annotationRecordKey(
+  subject: string,
+  annotation: MergeAnnotation,
+): string {
+  const id = annotation.clientEntityId ?? annotation.id;
+  return qualifyKey(subject, recordNamespace(annotation.kind), id);
+}
+
+/** Reads `data.page` (a positive integer) or falls back to 1. */
+function readPage(data: Readonly<Record<string, unknown>>): number {
+  const value = data.page;
+  return typeof value === 'number' && Number.isFinite(value) ? value : 1;
+}
+
+/**
+ * Projects the merged annotation set into `readerRecords` for one book:
+ * upserts present/soft-deleted merged rows and soft-deletes live local rows
+ * whose entity is tombstoned and absent from the merge (i.e. no pending work).
+ */
+async function projectAnnotations(
+  database: OfflineDatabase,
+  owner: { subject: string; epoch: number },
+  bookId: string,
+  result: BookMergeResult,
+): Promise<void> {
+  const existing = await database.getAllByIndex<BookmarkRecord | HighlightRecord>(
+    'readerRecords',
+    'subjectBook',
+    [owner.subject, bookId],
+  );
+  const presentKeys = new Set(result.annotations.map((annotation) => annotationRecordKey(owner.subject, annotation)));
+
+  for (const annotation of result.annotations) {
+    const key = annotationRecordKey(owner.subject, annotation);
+    const prior = existing.find((row) => row.id === key);
+    // A merged annotation that carries a distinct server id is
+    // server-authoritative: record its `serverEntityId` so a later refresh keys
+    // by the same stable identity. A local-only pending row has
+    // `id === clientEntityId` and no server id yet.
+    const serverEntityId =
+      annotation.clientEntityId !== null && annotation.id === annotation.clientEntityId
+        ? null
+        : annotation.id;
+    const base = {
+      id: key,
+      subject: owner.subject,
+      clientEntityId: annotation.clientEntityId ?? annotation.id,
+      serverEntityId,
+      bookId,
+      contentVersion: readContentVersion(annotation.data),
+      revision: annotation.revision,
+      deletedAt: annotation.deletedAt,
+      ...(prior ? { syncedAt: prior.syncedAt ?? null } : {}),
+    };
+    if (annotation.kind === 'BOOKMARK') {
+      const record: BookmarkRecord = {
+        ...base,
+        page: readPage(annotation.data),
+        label: readNullableString(annotation.data.label),
+        color: readNullableString(annotation.data.color),
+        anchor: annotation.data.anchor ?? null,
+        createdAt: readNumber(annotation.data.createdAt, prior?.createdAt ?? Date.now()),
+        updatedAt: readNumber(annotation.data.updatedAt, prior?.updatedAt ?? Date.now()),
+      };
+      await database.putAccountRecord(owner.subject, owner.epoch, 'readerRecords', record);
+      continue;
+    }
+    const highlight: HighlightRecord = {
+      ...base,
+      page: readPage(annotation.data),
+      text: readStringValue(annotation.data.text, prior && 'text' in prior ? prior.text : ''),
+      note: readNullableString(annotation.data.note),
+      color: readNullableString(annotation.data.color),
+      anchor: annotation.data.anchor ?? (prior && 'anchor' in prior ? prior.anchor : null),
+      createdAt: readNumber(annotation.data.createdAt, prior?.createdAt ?? Date.now()),
+      updatedAt: readNumber(annotation.data.updatedAt, prior?.updatedAt ?? Date.now()),
+    };
+    await database.putAccountRecord(owner.subject, owner.epoch, 'readerRecords', highlight);
+  }
+
+  // A server tombstone must remove a stale live local row, but the merge already
+  // kept any row touched by pending work (it appears in `presentKeys`). Only rows
+  // absent from the merge AND whose entity is tombstoned are soft-deleted.
+  const tombstoned = new Set(result.tombstones.map((tombstone) => tombstone.entityId));
+  const affected = await database.getAllByIndex<BookmarkRecord | HighlightRecord>(
+    'readerRecords',
+    'subjectBook',
+    [owner.subject, bookId],
+  );
+  for (const row of affected) {
+    if (row.deletedAt !== null || presentKeys.has(row.id)) continue;
+    if (!isTombstonedRow(row, tombstoned)) continue;
+    await database.putAccountRecord(owner.subject, owner.epoch, 'readerRecords', {
+      ...row,
+      deletedAt: Date.now(),
+    });
+  }
+}
+
+/** True when a live local row's server/client identity is in the tombstone set. */
+function isTombstonedRow(
+  row: BookmarkRecord | HighlightRecord,
+  tombstoned: ReadonlySet<string>,
+): boolean {
+  const serverId = row.serverEntityId ?? null;
+  return (
+    (serverId !== null && tombstoned.has(serverId)) ||
+    tombstoned.has(row.clientEntityId)
+  );
+}
+
+function readContentVersion(data: Readonly<Record<string, unknown>>): number {
+  const value = data.contentVersion;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 ? value : 1;
+}
+
+function readNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function readNullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function readStringValue(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+/** Reads the real local annotation set for a book for the snapshot merge. */
+export function createLocalAnnotationReader(database: OfflineDatabase): (
+  subject: string,
+  bookId: string,
+) => Promise<readonly MergeAnnotation[]> {
+  return async (subject, bookId) => {
+    const rows = await database.getAllByIndex<BookmarkRecord | HighlightRecord>(
+      'readerRecords',
+      'subjectBook',
+      [subject, bookId],
+    );
+    return rows.map((row) => toMergeAnnotation(row));
+  };
+}
+
+/** Maps a durable reader record into the transport-agnostic merge view. */
+function toMergeAnnotation(row: BookmarkRecord | HighlightRecord): MergeAnnotation {
+  const serverEntityId = (row as { serverEntityId?: string | null }).serverEntityId ?? null;
+  const isBookmark = 'label' in row;
+  const clientEntityId = serverEntityId !== null && serverEntityId === row.clientEntityId ? null : row.clientEntityId;
+  return {
+    id: serverEntityId ?? row.clientEntityId,
+    kind: isBookmark ? 'BOOKMARK' : 'ANNOTATION',
+    clientEntityId,
+    revision: row.revision,
+    deletedAt: row.deletedAt,
+    data: row as unknown as Readonly<Record<string, unknown>>,
+  };
+}
+
+/** Persists a conflict copy returned directly by a CONFLICT dispatch outcome. */
+export function createConflictCopyPersister(database: OfflineDatabase): (
+  owner: { subject: string; epoch: number },
+  operation: OutboxOperationRecord,
+  outcome: Extract<OperationOutcome, { kind: 'CONFLICT' }>,
+) => Promise<void> {
+  return async (owner, operation, outcome) => {
+    const copy = outcome.conflictCopy;
+    if (!copy) return;
+    const key = qualifyKey(owner.subject, 'conflict', copy.id);
+    const existing = await database.get<StoredConflictCopyRecord>('conflicts', key);
+    const record: StoredConflictCopyRecord = {
+      ...copy,
+      serverId: copy.id,
+      id: key,
+      subject: owner.subject,
+      operationId: copy.operationId || operation.operationId,
+      bookId: copy.bookId || operation.bookId,
+      ...(existing
+        ? { resolution: existing.resolution ?? null, resolvedAt: existing.resolvedAt ?? null }
+        : {}),
+    };
+    await database.putAccountRecord(owner.subject, owner.epoch, 'conflicts', record);
   };
 }
 
@@ -200,9 +432,14 @@ export function syncCoordinator(): SyncCoordinator {
     store: createOutboxStore(database),
     receipts: createReceiptStore(database),
     send: async (input) => toOutcome(await dispatchReaderOperation(input as never)),
-    lifecycle: { getOwner: () => accountLifecycle().getOwner() },
+    lifecycle: {
+      getOwner: () => accountLifecycle().getOwner(),
+      requireReplayIdentity: () => accountLifecycle().requireReplayIdentity(),
+    },
     snapshot: createSnapshotSource(),
     snapshotStore: createSnapshotStore(database),
+    readLocalAnnotations: createLocalAnnotationReader(database),
+    persistConflictCopy: createConflictCopyPersister(database),
     countLocalOnly: (subject) => countLocalOnlyRecords(database, subject),
     // The lease subject is resolved per acquire from the CURRENT owner, so a
     // coordinator built before auth (or surviving an account switch) never

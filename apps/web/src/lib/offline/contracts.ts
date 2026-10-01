@@ -295,6 +295,13 @@ export interface BookmarkRecord {
   id: string;
   subject: string;
   clientEntityId: string;
+  /**
+   * The authoritative server entity id once the server has returned one (e.g.
+   * from a snapshot merge). Null while the record is local-only. Kept so the
+   * snapshot merge can key a server-authoritative row by its stable server id,
+   * including migrated legacy rows whose `clientEntityId` is unknown.
+   */
+  serverEntityId?: string | null;
   bookId: string;
   contentVersion: number;
   page: number;
@@ -317,6 +324,8 @@ export interface HighlightRecord {
   id: string;
   subject: string;
   clientEntityId: string;
+  /** See `BookmarkRecord.serverEntityId`. */
+  serverEntityId?: string | null;
   bookId: string;
   contentVersion: number;
   page: number;
