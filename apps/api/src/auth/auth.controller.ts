@@ -128,30 +128,36 @@ export class AuthController {
   @HttpCode(200)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const raw = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
-    let revocationFailed = false;
-    if (raw) {
-      try {
-        // Revoke the refresh family server-side so a captured token cannot be
-        // rotated after sign-out. Absent/unknown/already-revoked cookies are a
-        // successful no-op inside the service.
-        await this.authService.logout(raw);
-      } catch (error) {
-        // A failed revocation is NOT a successful logout: the old session may
-        // still be live. Signal it so the client persists a durable
-        // deferred-logout barrier instead of assuming the cookie is gone.
-        revocationFailed = true;
-        this.logger.error(
-          `Refresh-family revocation failed during logout; deferring session invalidation. Cookie present: ${raw.length > 0}. Cause: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
+    if (!raw) {
+      // No credential was presented, so the server CANNOT confirm the old
+      // refresh family is invalidated. Return an explicit unconfirmable signal
+      // (not `revoked: true`) so the client keeps its deferred-logout barrier
+      // instead of unblocking a possibly-live session. This is deliberately NOT
+      // a 503: a genuinely cookie-less client should reach a deterministic
+      // "cannot confirm" state, and the client offers an explicit informed
+      // escape (`abandonDeferredLogout`) rather than blocking forever.
+      this.clearRefreshCookie(res);
+      return { revoked: false, reason: 'no-credential' };
     }
-    // Always clear the client cookie; the response status carries the truth.
-    this.clearRefreshCookie(res);
-    if (revocationFailed) {
+
+    try {
+      // Revoke the refresh family server-side so a captured token cannot be
+      // rotated after sign-out. An unknown/already-revoked cookie is a
+      // successful no-op inside the service.
+      await this.authService.logout(raw);
+    } catch (error) {
+      // A failed revocation is NOT a successful logout: the old session may
+      // still be live. Signal it so the client persists a durable
+      // deferred-logout barrier instead of assuming the cookie is gone.
+      this.clearRefreshCookie(res);
+      this.logger.error(
+        `Refresh-family revocation failed during logout; deferring session invalidation. Cookie present: true. Cause: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       throw new ServiceUnavailableException('Session invalidation failed; sign-out deferred');
     }
+    this.clearRefreshCookie(res);
     return { revoked: true };
   }
 

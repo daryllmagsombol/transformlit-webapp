@@ -71,7 +71,9 @@ test.describe('account lifecycle barriers', () => {
 
     const dialog = page.getByTestId('account-exit-dialog');
     await expect(dialog).toBeVisible({ timeout: 10_000 });
-    await expect(dialog).toContainText(/waiting to sync/i);
+    // A bare readerRecords row with no outbox op is LOCAL-ONLY work; the dialog
+    // names it as "saved only on this device" (not "waiting to sync").
+    await expect(dialog).toContainText(/saved only on this device/i);
 
     // Discard requires the informed confirmation checkbox.
     const discard = dialog.getByRole('button', { name: /discard and sign out/i });

@@ -189,14 +189,16 @@ describe('AuthController (REST httpOnly cookie flows)', () => {
       expect(result).toEqual({ revoked: true });
     });
 
-    it('clears the cookie and succeeds even when no refresh cookie is present', async () => {
+    it('returns an explicit unconfirmable signal (not revoked:true) when no cookie is present', async () => {
       const res = createRes();
       const req = { cookies: {} } as unknown as Request;
       const result = await controller.logout(req, res);
 
       expect(authService.logout).not.toHaveBeenCalled();
       expect(res.clearCookie).toHaveBeenCalled();
-      expect(result).toEqual({ revoked: true });
+      // The server cannot confirm invalidation without a credential; the client
+      // must keep its deferred-logout barrier for this signal.
+      expect(result).toEqual({ revoked: false, reason: 'no-credential' });
     });
 
     it('surfaces a non-2xx signal when server-side revocation fails, still clearing the cookie', async () => {

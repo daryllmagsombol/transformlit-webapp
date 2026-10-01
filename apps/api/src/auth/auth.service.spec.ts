@@ -425,10 +425,20 @@ describe('AuthService', () => {
       expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
     });
 
-    it('is safe when the token is unknown or already revoked (retry after absence)', async () => {
+    it('is safe when the token is unknown (retry after absence)', async () => {
       prisma.refreshToken.findUnique.mockResolvedValue(null);
       await expect(service.logout('unknown-token')).resolves.toBeUndefined();
       expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('is safe when the token is already revoked (retry after a prior logout)', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue({ ...live, revokedAt: new Date() });
+      await expect(service.logout('revoked-token')).resolves.toBeUndefined();
+      // Idempotent: the family revoke is re-issued and matches nothing live.
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { familyId: 'family-1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
     });
   });
 
