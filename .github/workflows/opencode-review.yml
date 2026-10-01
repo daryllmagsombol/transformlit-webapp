@@ -239,6 +239,7 @@ jobs:
             .pwa-diagnostics/**
             .pwa-harness/**
           if-no-files-found: ignore
+          include-hidden-files: true
           retention-days: 14
       - name: Upload Playwright results
         if: always()

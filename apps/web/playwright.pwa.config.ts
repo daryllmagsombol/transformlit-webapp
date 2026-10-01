@@ -7,6 +7,12 @@ export default defineConfig({
   // `pwa-upgrade`/`pwa-deployment` suites.
   testMatch: ['**/*.pwa.spec.ts', '**/pwa-*.spec.ts'],
   fullyParallel: false,
+  // The production harness runs the web+API+Postgres containers on the same
+  // runner as the browser. Two Playwright workers multiplied peak memory and
+  // the runner OOM-killed the harness supervisor (and took the DB process with
+  // it) mid-run, surfacing as ERR_CONNECTION_REFUSED on every later test.
+  // Serialize to one worker to keep peak memory bounded.
+  workers: 1,
   forbidOnly: true,
   retries: 0,
   // Upgrade/rollback flows wait on service-worker activation and IndexedDB
