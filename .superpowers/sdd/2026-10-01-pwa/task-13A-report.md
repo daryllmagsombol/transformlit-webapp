@@ -6,7 +6,7 @@ Implemented and committed. Every web auth activation path now routes through a
 single account-lifecycle gate. Real-browser/Playwright verification remains
 **BLOCKED** (no Docker/Chrome).
 
-- Commit: `<pending>` — `feat(auth): fence offline account activation`
+- Commit: `68feb57` — `feat(auth): fence offline account activation`
 - Branch: `feature/pwa-lane-b`
 
 ## Discovery — activation/bootstrap/login/OAuth/refresh/logout call sites
