@@ -50,7 +50,7 @@ export async function readExitWork(): Promise<ExitWorkSummary> {
       inFlightOrUncertain: report.inFlightOrUncertain,
       blockedSuccessors: report.blockedSuccessors,
       conflicts: report.conflicts,
-      localOnly: 0,
+      localOnly: report.localOnly,
       fullyDrained: report.fullyDrained,
     };
   } catch {

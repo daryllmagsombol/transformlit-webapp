@@ -67,7 +67,32 @@ export function createOutboxStore(database: OfflineDatabase): OutboxStore {
     list: (subject) => database.getAllByIndex<OutboxOperationRecord>('outbox', 'subject', subject),
     remove: (id) => database.delete('outbox', id),
     update: (record) => database.putAccountRecord(record.subject, record.epoch, 'outbox', record),
+    markEntitySynced: async (entityKey, subject, epoch) => {
+      const record = await database.get<{ subject: string; syncedAt?: number | null }>(
+        'readerRecords',
+        entityKey,
+      );
+      if (!record || record.subject !== subject) return;
+      await database.putAccountRecord(subject, epoch, 'readerRecords', {
+        ...record,
+        syncedAt: Date.now(),
+      });
+    },
   };
+}
+
+/**
+ * Counts durable local reader records that are NOT acknowledged (local-only):
+ * present, not deleted, and never marked synced. These are work the outbox does
+ * not represent and would be lost on sign-out, so they gate `fullyDrained`.
+ */
+async function countLocalOnlyRecords(database: OfflineDatabase, subject: string): Promise<number> {
+  const rows = await database.getAllByIndex<{ deletedAt?: number | null; syncedAt?: number | null }>(
+    'readerRecords',
+    'subject',
+    subject,
+  );
+  return rows.filter((row) => row.deletedAt === null && (row.syncedAt ?? null) === null).length;
 }
 
 /**
@@ -178,6 +203,7 @@ export function syncCoordinator(): SyncCoordinator {
     lifecycle: { getOwner: () => accountLifecycle().getOwner() },
     snapshot: createSnapshotSource(),
     snapshotStore: createSnapshotStore(database),
+    countLocalOnly: (subject) => countLocalOnlyRecords(database, subject),
     // The lease subject is resolved per acquire from the CURRENT owner, so a
     // coordinator built before auth (or surviving an account switch) never
     // holds the wrong subject's lease.

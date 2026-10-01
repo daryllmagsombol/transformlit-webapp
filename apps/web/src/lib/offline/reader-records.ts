@@ -251,6 +251,7 @@ export class ReaderRecords {
       createdAt: this.now(),
       updatedAt: this.now(),
       deletedAt: null,
+      syncedAt: null,
     };
     return this.commitRecord(owner, input.bookId, contentVersion, entityKey, record, {
       kind: 'BOOKMARK_ADD',
@@ -316,6 +317,7 @@ export class ReaderRecords {
       createdAt: this.now(),
       updatedAt: this.now(),
       deletedAt: null,
+      syncedAt: null,
     };
     return this.commitRecord(owner, input.bookId, contentVersion, entityKey, record, {
       kind: 'ANNOTATION_CREATE',
@@ -356,6 +358,7 @@ export class ReaderRecords {
       anchor: input.anchor,
       revision: existing.revision + 1,
       updatedAt: this.now(),
+      syncedAt: null,
     };
     return this.commitRecord(owner, input.bookId, contentVersion, entityKey, record, {
       kind: 'ANNOTATION_UPDATE',

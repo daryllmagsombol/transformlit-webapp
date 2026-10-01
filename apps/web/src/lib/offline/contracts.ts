@@ -305,6 +305,12 @@ export interface BookmarkRecord {
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
+  /**
+   * When the server acknowledged this record, or null while it is local-only
+   * (no acknowledgement yet). Used by the Task 13B exit gate to refuse a
+   * "fully drained" sign-out while unacked local work remains.
+   */
+  syncedAt?: number | null;
 }
 
 export interface HighlightRecord {
@@ -322,6 +328,8 @@ export interface HighlightRecord {
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
+  /** See `BookmarkRecord.syncedAt`. */
+  syncedAt?: number | null;
 }
 
 export interface TombstoneRecord {

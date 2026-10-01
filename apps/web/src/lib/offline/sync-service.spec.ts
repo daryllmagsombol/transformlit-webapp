@@ -1,4 +1,4 @@
-import { createSnapshotStore, createReceiptStore, toOutcome } from './sync-service';
+import { createSnapshotStore, createReceiptStore, createOutboxStore, toOutcome } from './sync-service';
 import { OfflineDatabase, resetOfflineDatabaseHandle } from './database';
 import { qualifyKey, type AccountOwner, type OutboxReceiptRecord } from './contracts';
 import type { BookMergeResult } from './sync-coordinator';
@@ -142,5 +142,33 @@ describe('sync-service durable stores', () => {
     // The storage key is subject-namespaced; the stable server identity is kept.
     expect(conflicts[0].id).toBe(qualifyKey(OWNER.subject, 'conflict', 'cc-1'));
     expect(conflicts[0].serverId).toBe('cc-1');
+  });
+
+  it('marks a reader record synced after acknowledgement (clears local-only)', async () => {
+    const database = new OfflineDatabase();
+    const store = createOutboxStore(database);
+    const entityKey = qualifyKey(OWNER.subject, 'highlight', 'client-1');
+    await database.putAccountRecord(OWNER.subject, OWNER.epoch, 'readerRecords', {
+      id: entityKey,
+      subject: OWNER.subject,
+      clientEntityId: 'client-1',
+      bookId: BOOK,
+      contentVersion: 1,
+      page: 1,
+      text: 'note',
+      note: null,
+      color: null,
+      anchor: null,
+      revision: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+      syncedAt: null,
+    });
+
+    await store.markEntitySynced?.(entityKey, OWNER.subject, OWNER.epoch);
+
+    const record = await database.get<{ syncedAt?: number | null }>('readerRecords', entityKey);
+    expect(typeof record?.syncedAt).toBe('number');
   });
 });

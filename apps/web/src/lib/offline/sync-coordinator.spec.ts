@@ -564,7 +564,15 @@ describe('SyncCoordinator', () => {
       blockedSuccessors: 0,
       conflicts: 0,
       terminal: 0,
+      localOnly: 0,
     });
+  });
+
+  it('is NOT fully drained when local-only records exist (no outbox operation)', async () => {
+    const harness = makeHarness({ countLocalOnly: async () => 2 });
+    const report = await harness.coordinator.controlledDrain();
+    expect(report.localOnly).toBe(2);
+    expect(report.fullyDrained).toBe(false);
   });
 });
 

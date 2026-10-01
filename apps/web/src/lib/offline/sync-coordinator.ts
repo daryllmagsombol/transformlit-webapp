@@ -63,6 +63,12 @@ export interface OutboxStore {
   list(subject: string): Promise<OutboxOperationRecord[]>;
   remove(id: string): Promise<void>;
   update(record: OutboxOperationRecord): Promise<void>;
+  /**
+   * Marks the local record backing `entityKey` as durably acknowledged. Optional
+   * seam so the coordinator can clear the record's "local-only" provenance after
+   * an ack without importing the reader-records store.
+   */
+  markEntitySynced?(entityKey: string, subject: string, epoch: number): Promise<void>;
 }
 
 /**
@@ -132,6 +138,12 @@ export interface CoordinatorDeps {
   readonly lifecycle: { readonly getOwner: () => AccountOwner | null };
   readonly snapshot: SnapshotSource;
   readonly snapshotStore?: SnapshotApplyStore;
+  /**
+   * Counts durable local reader records that are NOT backed by an outbox
+   * operation (local-only work that would be lost on sign-out). Optional; when
+   * absent, local-only work is treated as zero.
+   */
+  readonly countLocalOnly?: (subject: string) => Promise<number>;
   readonly lock?: CoordinationLock;
   readonly now?: () => number;
   readonly baseBackoffMs?: number;
@@ -169,6 +181,12 @@ export interface ControlledDrainReport {
    * sign-out gating nor silently discarded as one.
    */
   readonly terminal: number;
+  /**
+   * Durable local records that would be lost and are NOT represented by an
+   * outbox operation (e.g. a bare local-only write). Counted so an un-synced
+   * sign-out is never called "fully drained" when only the outbox is empty.
+   */
+  readonly localOnly: number;
   readonly fullyDrained: boolean;
 }
 
@@ -507,6 +525,9 @@ export class SyncCoordinator {
       acknowledgedAt: this.now(),
     };
     await this.deps.receipts.recordAndRemove(operation.id, operation.subject, operation.epoch, receipt);
+    // Clear the local record's "local-only" provenance now that the server has
+    // acknowledged it (best-effort).
+    await this.deps.store.markEntitySynced?.(operation.entityKey, operation.subject, operation.epoch);
 
     // Advance ONLY the successor's base revision; never its payload.
     const siblings = await this.deps.store.list(operation.subject);
@@ -669,7 +690,15 @@ export class SyncCoordinator {
   async controlledDrain(): Promise<ControlledDrainReport> {
     const owner = this.deps.lifecycle.getOwner();
     if (!owner) {
-      return { pending: 0, inFlightOrUncertain: 0, blockedSuccessors: 0, conflicts: 0, terminal: 0, fullyDrained: false };
+      return {
+        pending: 0,
+        inFlightOrUncertain: 0,
+        blockedSuccessors: 0,
+        conflicts: 0,
+        terminal: 0,
+        localOnly: 0,
+        fullyDrained: false,
+      };
     }
     const operations = await this.deps.store.list(owner.subject);
     const present = new Set(operations.map((operation) => operation.id));
@@ -684,7 +713,18 @@ export class SyncCoordinator {
     const pending = operations.filter(
       (operation) => operation.dispatchState === 'PENDING' && !isBlockedSuccessor(operation, present),
     ).length;
-    const fullyDrained = operations.length === 0;
-    return { pending, inFlightOrUncertain: inFlight, blockedSuccessors: blocked, conflicts, terminal, fullyDrained };
+    // Local-only durable records are work the outbox does not represent; they
+    // must block "fully drained" too, or an un-synced sign-out loses them.
+    const localOnly = this.deps.countLocalOnly ? await this.deps.countLocalOnly(owner.subject) : 0;
+    const fullyDrained = operations.length === 0 && localOnly === 0;
+    return {
+      pending,
+      inFlightOrUncertain: inFlight,
+      blockedSuccessors: blocked,
+      conflicts,
+      terminal,
+      localOnly,
+      fullyDrained,
+    };
   }
 }
