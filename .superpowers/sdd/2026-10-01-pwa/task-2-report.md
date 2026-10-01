@@ -41,3 +41,10 @@ Implemented the static `/offline` entry, install metadata, PWA/Apple artwork, wo
   - Connection badge: light `#221a12` (`on-surface`) on `#fbebdd` (`surface-container`) = **14.72:1**; dark `#f5f5f5` (`dark on-surface`) on `#2C2C2C` (`dark surface-container`) = **12.81:1**.
 - TDD: focused tests failed before the styling change on the former `text-secondary` eyebrow and secondary-container badge classes; after the change the focused suite passed.
 - Validation: focused offline-client test, web typecheck, and `git diff --check` passed. Docker and Playwright Chrome remain unavailable; no screenshot/runtime test is claimed. No install-prompt pending/error handling or wording was changed.
+
+## Fix round 2 — Return-link hover contrast
+
+- Replaced only the return link hover surface with `hover:bg-surface-container-high`; added a focused regression assertion for that utility class.
+- WCAG relative-luminance calculations from `globals.css`: light `text-primary` `#845400` on `surface-container-high` `#f5e6d8` is **5.29:1**; dark `text-primary` override `#ffb95c` on dark `surface-container-high` `#3E3E3E` is **6.29:1**. Both exceed 4.5:1.
+- TDD: the focused test failed before the change because the link still used `hover:bg-secondary-container/40`; it passed after replacing that class.
+- Focused test, web typecheck, and `git diff --check` passed. Browser screenshot and Docker testing remain unavailable; no visual runtime testing is claimed. No install prompt behavior or wording was changed.

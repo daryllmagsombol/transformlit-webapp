@@ -95,7 +95,7 @@ export default function OfflineClient() {
                   {installMessage}
                 </p>
               )}
-              <a href="/" className="inline-flex min-h-11 items-center justify-center rounded-full px-5 py-3 font-small text-sm font-semibold text-primary underline decoration-primary/50 underline-offset-4 transition-colors hover:bg-secondary-container/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary motion-reduce:transition-none">
+              <a href="/" className="inline-flex min-h-11 items-center justify-center rounded-full px-5 py-3 font-small text-sm font-semibold text-primary underline decoration-primary/50 underline-offset-4 transition-colors hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary motion-reduce:transition-none">
                 Return to Transform Lit
               </a>
             </div>

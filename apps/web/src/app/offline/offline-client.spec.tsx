@@ -21,7 +21,10 @@ describe('OfflineClient', () => {
     expect(screen.getByText(/save reading for offline use once that capability is available/i)).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(/saved for you|hello,|your bookshelf/i);
     expect(screen.getByText('A quieter place to return to')).toHaveClass('text-on-surface-variant');
-    expect(screen.getByRole('link', { name: 'Return to Transform Lit' })).toHaveClass('text-primary');
+    expect(screen.getByRole('link', { name: 'Return to Transform Lit' })).toHaveClass(
+      'text-primary',
+      'hover:bg-surface-container-high',
+    );
     expect(screen.getByRole('status')).toHaveClass('bg-surface-container', 'text-on-surface');
   });
 
