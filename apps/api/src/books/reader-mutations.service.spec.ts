@@ -396,7 +396,8 @@ describe('ReaderMutationsService', () => {
       expect((outcome.result as { conflictCopy?: { reason?: string } }).conflictCopy?.reason).toBe('STALE_REVISION');
     });
 
-            it('preserves both sides on edit-after-delete', async () => {      const { service, state } = build();
+    it('preserves both sides on edit-after-delete', async () => {
+      const { service, state } = build();
       const created = await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.ANNOTATION_CREATE, clientEntityId: CLIENT_ID, page: 2, text: 'v1', note: null, color: null, anchor: { version: 1, page: 2, startOffset: 0, endOffset: 2 } } as never));
       const entityId = (created.result as { entityId: string }).entityId;
       await service.applyOperation(SUBJECT, { ...baseInput({ kind: OperationKind.ANNOTATION_DELETE, entityId, baseRevision: 1 } as never), operationId: '88888888-8888-4888-8888-888888888888' } as never);
