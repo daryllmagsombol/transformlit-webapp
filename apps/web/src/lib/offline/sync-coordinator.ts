@@ -210,6 +210,20 @@ export interface CoordinatorDeps {
     outcome: Extract<OperationOutcome, { kind: 'CONFLICT' }>,
   ) => Promise<void>;
   /**
+   * Resolves the server-supported content version for an operation at DISPATCH
+   * time. The online reader queues edits with a non-version-pinned sentinel that
+   * `ReaderRecords` resolves to the locally pinned version or a fabricated `1`;
+   * for a book never downloaded locally that `1` is rejected
+   * `INCOMPATIBLE_VERSION`. A positive return value overrides the dispatched
+   * envelope version WITHOUT mutating the durable operation, so pending
+   * provenance is preserved. Optional; a `null`/invalid result keeps the
+   * operation's stored version.
+   */
+  readonly resolveContentVersion?: (
+    owner: AccountOwner,
+    operation: OutboxOperationRecord,
+  ) => Promise<number | null>;
+  /**
    * Counts durable local reader records that are NOT backed by an outbox
    * operation (local-only work that would be lost on sign-out). Optional; when
    * absent, local-only work is treated as zero.
@@ -561,9 +575,11 @@ export class SyncCoordinator {
   ): Promise<{ removed: boolean; paused: boolean; ackRevision: number | null; blocked: boolean }> {
     await this.deps.store.update({ ...operation, dispatchState: 'DISPATCHING' });
 
+    const input = await this.dispatchInput(owner, operation);
+
     let outcome: OperationOutcome;
     try {
-      outcome = await this.deps.send(this.buildInput(operation));
+      outcome = await this.deps.send(input);
     } catch (error) {
       const failure = classifyDispatchError(error);
       if (failure === 'AUTH_REQUIRED') {
@@ -743,6 +759,31 @@ export class SyncCoordinator {
     });
   }
 
+  private async dispatchInput(
+    owner: AccountOwner,
+    operation: OutboxOperationRecord,
+  ): Promise<Readonly<Record<string, unknown>>> {
+    const input = this.buildInput(operation);
+    // Resolve the CURRENT supported version at dispatch so an edit for a
+    // non-downloaded book is not stamped a fabricated `1` and rejected
+    // INCOMPATIBLE_VERSION. The durable operation is never mutated; only the
+    // sent envelope is overridden.
+    const resolver = this.deps.resolveContentVersion;
+    const resolved = resolver ? await resolver(owner, operation) : null;
+    return this.applyContentVersion(input, resolved);
+  }
+
+  /** Overrides the envelope content version only for a valid positive integer. */
+  private applyContentVersion(
+    input: Readonly<Record<string, unknown>>,
+    resolved: number | null | undefined,
+  ): Readonly<Record<string, unknown>> {
+    if (typeof resolved === 'number' && Number.isSafeInteger(resolved) && resolved >= 1) {
+      return { ...input, contentVersion: resolved };
+    }
+    return input;
+  }
+
   private buildInput(operation: OutboxOperationRecord): Readonly<Record<string, unknown>> {
     // The payload is passed through EXACTLY as stored. Scheduling metadata
     // (`attemptCount`/`nextAttemptAt`) lives on the record, not in the payload,
@@ -819,36 +860,44 @@ export class SyncCoordinator {
       // into another owner's records.
       if (this.ownerChanged(owner)) break;
 
-      const snapshot = await this.deps.snapshot(bookId);
-      // Read the REAL local annotation set for this book so the merge can apply
-      // server tombstones to stale live rows and surface cross-device changes.
-      // Callers may still pass an explicit set for read-only contexts.
-      const local = this.deps.readLocalAnnotations
-        ? await this.deps.readLocalAnnotations(owner.subject, bookId)
-        : [];
-      const bookPending = operations
-        .filter((operation) => operation.bookId === bookId)
-        .map((operation) => ({
-          operationId: operation.operationId,
-          kind: operation.kind,
-          baseRevision: operation.baseRevision,
-          payload: operation.payload,
-        }));
+      // Isolate per-book failures: a snapshot fetch/merge fault for one book
+      // must not abort the refresh for other books, but a stale owner still
+      // stops the run (checked above).
+      try {
+        const snapshot = await this.deps.snapshot(bookId);
+        // Read the REAL local annotation set for this book so the merge can
+        // apply server tombstones to stale live rows and surface cross-device
+        // changes. Callers may still pass an explicit set for read-only
+        // contexts.
+        const local = this.deps.readLocalAnnotations
+          ? await this.deps.readLocalAnnotations(owner.subject, bookId)
+          : [];
+        const bookPending = operations
+          .filter((operation) => operation.bookId === bookId)
+          .map((operation) => ({
+            operationId: operation.operationId,
+            kind: operation.kind,
+            baseRevision: operation.baseRevision,
+            payload: operation.payload,
+          }));
 
-      const result = mergeSnapshot({
-        snapshot,
-        local,
-        pending: pendingFromOperations(bookPending),
-      });
+        const result = mergeSnapshot({
+          snapshot,
+          local,
+          pending: pendingFromOperations(bookPending),
+        });
 
-      if (this.deps.snapshotStore) {
-        await this.deps.snapshotStore.applyMerge(owner, { ...result, bookId });
+        if (this.deps.snapshotStore) {
+          await this.deps.snapshotStore.applyMerge(owner, { ...result, bookId });
+        }
+
+        report.books += 1;
+        report.annotations += result.annotations.length;
+        report.tombstones += result.tombstones.length;
+        report.conflicts += result.conflictCopies.length;
+      } catch {
+        // A single book's failure is skipped; the remaining books still refresh.
       }
-
-      report.books += 1;
-      report.annotations += result.annotations.length;
-      report.tombstones += result.tombstones.length;
-      report.conflicts += result.conflictCopies.length;
     }
 
     return report;

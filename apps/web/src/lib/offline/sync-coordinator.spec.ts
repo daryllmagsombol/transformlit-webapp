@@ -194,6 +194,7 @@ describe('SyncCoordinator', () => {
         revision: 1,
         resultKind: 'APPLIED',
       }),
+      [],
     );
     expect(harness.store.rows).toHaveLength(0);
   });
@@ -245,7 +246,10 @@ describe('SyncCoordinator', () => {
 
     expect(harness.send).toHaveBeenCalledTimes(1);
     expect((harness.send.mock.calls[0][0] as { operationId: string }).operationId).toBe('op-inflight');
-    expect((harness.send.mock.calls[0][0] as { payload: unknown }).payload).toEqual({ text: 'original' });
+    // The flattened envelope carries payload fields at the top level and never
+    // a nested `payload` object (absent from ReaderOperationInput).
+    expect((harness.send.mock.calls[0][0] as { text: string }).text).toBe('original');
+    expect((harness.send.mock.calls[0][0] as { payload?: unknown }).payload).toBeUndefined();
   });
 
   it('processes operations in strict per-entity sequence order', async () => {
@@ -408,10 +412,11 @@ describe('SyncCoordinator', () => {
     expect(harness.store.rows[0].nextAttemptAt).toBeGreaterThanOrEqual(harness.clock.value);
     expect((harness.send.mock.calls[0][0] as { retryDelayMs?: unknown }).retryDelayMs).toBeUndefined();
 
-    // A later successful retry must still send the pristine payload.
+    // A later successful retry must still send the pristine payload fields.
     harness.send.mockResolvedValueOnce({ kind: 'APPLIED', entityId: 'server-1', revision: 2, receiptId: 'r1' });
     await harness.coordinator.drain();
-    expect((harness.send.mock.calls[1][0] as { payload: unknown }).payload).toEqual(originalPayload);
+    expect((harness.send.mock.calls[1][0] as { text: unknown }).text).toEqual('local');
+    expect((harness.send.mock.calls[1][0] as { payload?: unknown }).payload).toBeUndefined();
     expect((harness.send.mock.calls[1][0] as { retryDelayMs?: unknown }).retryDelayMs).toBeUndefined();
   });
 
