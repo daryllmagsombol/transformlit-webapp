@@ -105,3 +105,60 @@ The container/browser trust and startup path remains unverified in this environm
 - `apps/api/test/scripts/pwa-harness.spec.ts`: RED/GREEN readiness, refresh, ordering, cleanup, asset-payload and owner assertions.
 - `apps/web/e2e/pwa-fixtures.ts`: secure-context validation in the fixture and browser-origin refresh verification.
 - This report: appended round-1 follow-up evidence. This follow-up did not change the Task 1A guard, GraphQL/schema/package, or application route files.
+
+## Fix round 2 evidence — supervisor protocol, text payloads, assets, CLI
+
+### RED/GREEN
+
+- RED: added round-2 tests for actual delayed supervisor publish/shutdown exchanges, peer-close handling, CLI argument positions, API text JSON shape, separate public asset-root path/modes, Docker/git ignore entries, and the no-`void` rule. The first run failed **5 tests** as expected for absent IPC/parser/text helpers and the missing asset-root ignore entry.
+- GREEN: `pnpm exec tsx --test test/scripts/pwa-harness.spec.ts` — **19 passed, 0 failed**. The actual Unix socket IPC tests prove delayed publish and shutdown callbacks complete before newline-framed replies; shutdown returns a complete response and then the server closes. A peer-close test confirms async work completes and the server can still process a later request.
+
+### Changes
+
+- `apps/api/test/scripts/pwa-process.ts` and `pwa-harness.ts`: use an explicit `allowHalfOpen` framed supervisor protocol, authenticated per-owner nonce, delayed response after dispatch completion, bounded requests/responses, peer/server error handling, and orderly server close after shutdown. The publish-v2 parser passes the book ID; supervise preserves owner ID/nonce positions. Removed the remaining `void chmod` expression in favor of awaited error handling.
+- `apps/api/test/helpers/pwa-fixtures.ts`: v1 and v2 text-layer files are JSON `{items:[{t,x,y,w,h}]}` matching `BooksController.getText`; versions retain distinct text and frame bytes.
+- `.gitignore` / `.dockerignore`: exclude the new `.pwa-harness-assets` root. Public fixture bytes now live under that separate root, with an invocation-only public marker and explicit 0755 directory/0644 file permissions; the API's existing `LocalStorageAdapter` points at and mounts that root read-only at `/pwa-book-storage`. JWT/env files, credentials, metadata, nonce and TLS remain in the private owner area. The IPC socket is separate, mode 0600, and is not mounted.
+- `apps/api/test/scripts/pwa-harness.spec.ts`: adds real local IPC round trips, operation-specific parser tests, JSON text schema checks, asset root/mode/separation checks, and no-`void` static check.
+
+### Verification
+
+- `pnpm exec tsx --test test/scripts/pwa-harness.spec.ts` — **19 passed, 0 failed**.
+- Focused API harness/helper TypeScript check — **passed**.
+- API build/typecheck and web typecheck/build — **passed** in this round's validation.
+- `git diff --check` — **passed**.
+- Docker/API container/DB fixture/volume permission/Chromium acceptance — **BLOCKED and not run**, as required. Consequently cross-UID container readability and mounted filesystem propagation are verified by mode/path contract tests only, not Docker runtime. Chromium's pinned SPKI behavior likewise remains unexercised locally.
+
+### Remaining concerns
+
+- No schema snapshots or old-version retention assertions were added. The owner-guarded v2 hook updates current-version frame/text keys and contentVersion; Task 5 owns retained-history behavior.
+- Public fixture mount permissions are intentionally limited to generated fixture bytes and a non-secret owner ID marker. Private metadata, JWT runtime env, passwords, TLS key and IPC nonce are not placed under this mount.
+
+## Fix round 2 follow-up — IPC close semantics and container-readable text assets
+
+### RED/GREEN
+
+- RED: round-specific argument/IPC/text/asset tests were added before the implementation update. The initial focused run had **5 failures** for missing operation parser and IPC helpers, missing text payload generation, and the asset root's absent Docker exclusion.
+- GREEN: `pnpm exec tsx --test test/scripts/pwa-harness.spec.ts` — **19 passed, 0 failed**. Coverage includes delayed publish-v2 and shutdown over the actual newline-framed half-open socket, complete replies followed by server close, peer-close continuation, operation argument slots, valid API text JSON, distinct v1/v2 payloads, and asset-root owner/mode contracts.
+
+### Final verification
+
+- `pnpm exec tsx --test test/scripts/pwa-harness.spec.ts` — **19 passed**.
+- Focused API helper/harness TypeScript check — **passed**.
+- `pnpm --filter @transformlit/api run build` — **passed**, 115 files; API typecheck — **passed**.
+- `pnpm --filter @transformlit/web run typecheck` — **passed**.
+- `pnpm --filter @transformlit/web run build` — **passed**, including `/login`.
+- `git diff --check` — **passed**.
+- No Docker or database command was run in this round. Docker-backed supervisor, API container, bind-mount permissions/visibility, and Chromium acceptance remain **BLOCKED/unverified**. Assets are contract-tested as 0755 directories/0644 files and mounted read-only, but only Docker can prove the configured runtime user sees the host mount as expected.
+
+### Round-2 files
+
+- `apps/api/test/scripts/pwa-process.ts`: operation-aware CLI argument parsing, async half-open IPC server/client, bounded framed messages, timeout/error/peer-close handling, public asset ownership-path validation and container-readable mode helper.
+- `apps/api/test/scripts/pwa-harness.ts`: uses the shared IPC protocol for publish-v2/shutdown and keeps shutdown reply until metadata/resource cleanup completes; mounts only the separate public asset root, uses explicit public read/traverse modes, and awaits socket chmod.
+- `apps/api/test/helpers/pwa-fixtures.ts`: v1/v2 text layers now serialize the exact `{items:[{t,x,y,w,h}]}` API contract.
+- `apps/api/test/scripts/pwa-harness.spec.ts`: actual delayed IPC exchanges, socket close/peer-close behavior, CLI parser, text schema and asset permission/path tests.
+- `.gitignore` / `.dockerignore`: exclude `.pwa-harness-assets/`, separate from private `.pwa-harness/`.
+
+### Remaining acceptance limits
+
+- The image's configured LocalStorageAdapter path is bind-mounted read-only from the isolated public asset tree. Runtime UID access and Docker Desktop/Linux host mount propagation remain blocked until a Docker-backed run.
+- No Task 5 immutable snapshot persistence or retention assertion was added. `publish-v2` remains an owner/Task1A-guarded current-version transition.

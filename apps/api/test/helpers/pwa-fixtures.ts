@@ -63,6 +63,12 @@ export function createPwaFramePayload(version: 1 | 2): Buffer {
   return Buffer.concat([fixturePng.subarray(0, fixturePng.length - 12), chunk, fixturePng.subarray(fixturePng.length - 12)]);
 }
 
+export function createPwaTextPayload(version: 1 | 2, pageIndex: number, text: string): Buffer {
+  return Buffer.from(JSON.stringify({
+    items: [{ t: `${text} (v${version})`, x: 0, y: (pageIndex - 1) * 100, w: 100, h: 100 }],
+  }));
+}
+
 /** Database and asset writes require Task 1A's live container and this invocation's storage root. */
 export async function seedPwaFixtures(
   databaseUrl: string | undefined,
@@ -78,7 +84,7 @@ export async function seedPwaFixtures(
   const frameV1 = createPwaFramePayload(1);
   await Promise.all(plan.books.readable.pages.map(async (page) => {
     await storage.put(`books/${plan.books.readable.id}/v1/page-${page.index}.png`, frameV1, 'image/png');
-    await storage.put(`books/${plan.books.readable.id}/v1/page-${page.index}.txt`, Buffer.from(page.text), 'text/plain');
+    await storage.put(`books/${plan.books.readable.id}/v1/page-${page.index}.txt`, createPwaTextPayload(1, page.index, page.text), 'text/plain');
   }));
   const [{ PrismaClient }, { PrismaPg }] = await Promise.all([import('@prisma/client'), import('@prisma/adapter-pg')]);
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
@@ -146,7 +152,7 @@ export async function publishPwaVersion2(
     const storage = new LocalStorageAdapter(storageDir);
     const frameV2 = createPwaFramePayload(2);
     for (const page of book.pages) {
-      const nextText = Buffer.from(`Version 2 publication content for page ${page.index}`);
+      const nextText = createPwaTextPayload(2, page.index, `Version 2 publication content for page ${page.index}`);
       const assetKey = `books/${bookId}/v2/page-${page.index}.png`;
       const textKey = `books/${bookId}/v2/page-${page.index}.txt`;
       await storage.put(assetKey, frameV2, 'image/png');

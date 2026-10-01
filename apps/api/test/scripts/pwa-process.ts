@@ -1,4 +1,4 @@
-import { createServer } from 'node:net';
+import { createConnection, createServer, type Server } from 'node:net';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 
@@ -128,6 +128,113 @@ export function assertSupervisorNonce(actual: string, expected: string): void {
   const supplied = Buffer.from(actual);
   const ownerSecret = Buffer.from(expected);
   if (supplied.length !== ownerSecret.length || !timingSafeEqual(supplied, ownerSecret)) throw new Error('Supervisor ownership nonce mismatch');
+}
+
+export function isContainerReadableAssetMode(mode: number, kind: 'directory' | 'file'): boolean {
+  const needed = kind === 'directory' ? 0o555 : 0o444;
+  return (mode & needed) === needed;
+}
+
+export function assertOwnedPublicAssetRoot(assetsRoot: string, ownerId: string, assetPath: string): string {
+  const expected = resolve(assetsRoot, ownerId);
+  const actual = resolve(assetPath);
+  if (!isAbsolute(assetsRoot) || actual !== expected) throw new Error('Public asset root must equal this invocation directory');
+  return actual;
+}
+
+export type PwaHarnessArgs =
+  | { operation: 'up' | 'test' | 'down' }
+  | { operation: 'publish-v2'; bookId: string }
+  | { operation: 'supervise'; ownerId: string; nonce: string };
+
+export function parsePwaHarnessArgs(args: readonly string[]): PwaHarnessArgs {
+  const [operation, first, second, ...rest] = args;
+  if ((operation === 'up' || operation === 'test' || operation === 'down') && first === undefined && rest.length === 0) return { operation };
+  if (operation === 'publish-v2' && first && second === undefined && rest.length === 0) return { operation, bookId: first };
+  if (operation === 'supervise' && first && second && rest.length === 0) return { operation, ownerId: first, nonce: second };
+  throw new Error('Usage: pwa-harness.ts <up|test|down|publish-v2 <bookId>>');
+}
+
+export function listenPwaSupervisorControl(
+  socketPath: string,
+  ownerNonce: string,
+  dispatch: (request: PwaSupervisorRequest, server: Server) => Promise<unknown>,
+): Promise<Server> {
+  const server = createServer({ allowHalfOpen: true }, (socket) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let peerClosed = false;
+    let overLimit = false;
+    socket.setTimeout(20 * 60 * 1000, () => socket.destroy(new Error('Supervisor IPC request timed out')));
+    socket.on('error', () => { peerClosed = true; });
+    socket.on('close', () => { peerClosed = true; });
+    socket.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 8192) { overLimit = true; return; }
+      chunks.push(chunk);
+    });
+    socket.on('end', () => {
+      const respond = (payload: unknown) => {
+        if (!peerClosed && !socket.destroyed && !socket.writableEnded) socket.end(`${JSON.stringify(payload)}\n`);
+      };
+      const handleRequest = async () => {
+        if (overLimit) { respond({ ok: false }); return; }
+        try {
+          const request = JSON.parse(Buffer.concat(chunks).toString().split('\n', 1)[0]) as PwaSupervisorRequest;
+          assertSupervisorNonce(request.nonce, ownerNonce);
+          respond(await dispatch(request, server));
+        } catch {
+          respond({ ok: false });
+        }
+      };
+      handleRequest().catch(() => respond({ ok: false }));
+    });
+  });
+  return new Promise<Server>((resolveServer, rejectServer) => {
+    const onError = (error: Error) => rejectServer(error);
+    server.once('error', onError);
+    server.listen(socketPath, () => {
+      server.off('error', onError);
+      resolveServer(server);
+    });
+  });
+}
+
+export function requestPwaSupervisorControl(socketPath: string, nonce: string, command: string, bookId?: string): Promise<unknown> {
+  return new Promise((resolveResponse, rejectResponse) => {
+    const socket = createConnection(socketPath);
+    let response = '';
+    let responseEnded = false;
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      rejectResponse(error);
+    };
+    socket.setTimeout(20 * 60 * 1000, () => socket.destroy(new Error('Supervisor IPC response timed out')));
+    socket.on('error', fail);
+    socket.on('connect', () => socket.end(`${JSON.stringify({ nonce, command, bookId })}\n`));
+    socket.on('data', (chunk: Buffer) => {
+      response += chunk.toString();
+      if (response.length > 8192) { socket.destroy(); fail(new Error('Supervisor response exceeded limit')); }
+    });
+    socket.on('end', () => {
+      responseEnded = true;
+      try {
+        const reply = JSON.parse(response.split('\n', 1)[0]) as unknown;
+        if (!settled) { settled = true; resolveResponse(reply); }
+      } catch (error) { fail(error instanceof Error ? error : new Error('Invalid supervisor response')); }
+    });
+    socket.on('close', () => {
+      if (!responseEnded) fail(new Error('Supervisor socket closed before a complete response'));
+    });
+  });
+}
+
+export interface PwaSupervisorRequest {
+  nonce: string;
+  command: string;
+  bookId?: string;
 }
 
 export function assertSupervisorSocketIdentity(actual: { dev: number; ino: number; uid: number; isSocket: boolean }, expected: { dev: number; ino: number; uid: number }): void {

@@ -1,12 +1,12 @@
 import { createHash, randomBytes, randomUUID, X509Certificate } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdir, readFile, rename, rm, access, writeFile, chmod, lstat, unlink } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, access, writeFile, chmod, lstat, unlink, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { createServer } from 'node:net';
+import type { Server } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { once } from 'node:events';
-import { assertOwnedMetadata, assertOwnedArtifactPath, assertPortAvailable, assertSupervisorNonce, assertSupervisorSocketIdentity, cleanupAfterStartupFailure, cleanupOwnedResources, waitForHarnessReady, waitForSupervisorExit, type PwaOwnership } from './pwa-process.js';
+import { assertOwnedMetadata, assertOwnedArtifactPath, assertOwnedPublicAssetRoot, assertPortAvailable, assertSupervisorSocketIdentity, cleanupAfterStartupFailure, cleanupOwnedResources, listenPwaSupervisorControl, requestPwaSupervisorControl, waitForHarnessReady, waitForSupervisorExit, parsePwaHarnessArgs, isContainerReadableAssetMode, type PwaOwnership } from './pwa-process.js';
 import { provisionOwnedDatabase, assertTask1AOwnedDatabaseUrl } from './pwa-db.js';
 import { seedPwaFixtures, publishPwaVersion2 } from '../helpers/pwa-fixtures.js';
 import { createPwaProxy } from './pwa-proxy.js';
@@ -17,6 +17,7 @@ interface PwaMetadata extends PwaOwnership {
   nonce: string;
   socketPath: string;
   socketIdentity?: { dev: number; ino: number; uid: number };
+  assetRoot?: string;
   endpoints: { browser: 'https://localhost:3443'; web: 'http://127.0.0.1:3000'; api: 'http://127.0.0.1:3005' };
   fixtureIds?: { readerId: string; outsiderId: string; readableBookId: string; restrictedBookId: string };
   fixtureCredentials?: readonly { email: string; password: string }[];
@@ -26,6 +27,7 @@ interface PwaMetadata extends PwaOwnership {
 
 const root = resolve(process.cwd(), '../..');
 const stateDir = join(root, '.pwa-harness');
+const publicAssetRoot = join(root, '.pwa-harness-assets');
 const metadataPath = join(stateDir, 'environment.json');
 const fixedPorts = [3443, 3000, 3005];
 const apiHostPort = 3005;
@@ -77,6 +79,73 @@ async function verifyOwnerDirectory(owner: PwaMetadata): Promise<void> {
   if ((await readFile(marker, 'utf8')) !== `${owner.id}\n${owner.nonce}\n`) throw new Error('PWA owner directory marker mismatch');
 }
 
+async function ensurePublicDirectory(path: string): Promise<void> {
+  let info: Awaited<ReturnType<typeof lstat>>;
+  try { info = await lstat(path); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    await mkdir(path, { mode: 0o755 });
+    await chmod(path, 0o755);
+    info = await lstat(path);
+  }
+  const currentUid = process.getuid?.();
+  if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o022) !== 0 || (currentUid !== undefined && info.uid !== currentUid) || !isContainerReadableAssetMode(info.mode, 'directory')) {
+    throw new Error(`Refusing container-inaccessible or unsafe fixture asset directory: ${path}`);
+  }
+}
+
+async function initializePublicAssetRoot(owner: PwaMetadata): Promise<void> {
+  if (!owner.assetRoot) throw new Error('PWA public asset root is missing from owner metadata');
+  const assetRoot = assertOwnedPublicAssetRoot(publicAssetRoot, owner.id, owner.assetRoot);
+  await ensurePublicDirectory(publicAssetRoot);
+  await ensurePublicDirectory(assetRoot);
+  await writeFile(join(assetRoot, '.pwa-owner'), `${owner.id}\n`, { flag: 'wx', mode: 0o644 });
+}
+
+async function normalizePublicAssetPermissions(assetRoot: string): Promise<void> {
+  const rootInfo = await lstat(assetRoot);
+  const currentUid = process.getuid?.();
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || (currentUid !== undefined && rootInfo.uid !== currentUid)) throw new Error('Unsafe fixture asset directory');
+  await chmod(assetRoot, 0o755);
+  const entries = await readdir(assetRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    const path = join(assetRoot, entry.name);
+    const info = await lstat(path);
+    if (info.isSymbolicLink() || (currentUid !== undefined && info.uid !== currentUid)) throw new Error('Fixture asset tree contains an unowned or symbolic entry');
+    if (info.isDirectory()) {
+      await chmod(path, 0o755);
+      await normalizePublicAssetPermissions(path);
+    } else if (info.isFile()) {
+      await chmod(path, 0o644);
+      const fileInfo = await lstat(path);
+      if (!isContainerReadableAssetMode(fileInfo.mode, 'file')) throw new Error('Fixture asset is not readable by the API container user');
+    } else {
+      throw new Error('Fixture asset tree contains an unsupported filesystem entry');
+    }
+  }
+}
+
+async function verifyPublicAssetRoot(owner: PwaMetadata): Promise<void> {
+  if (!owner.assetRoot) return;
+  const assetRoot = assertOwnedPublicAssetRoot(publicAssetRoot, owner.id, owner.assetRoot);
+  await ensurePublicDirectory(publicAssetRoot);
+  await ensurePublicDirectory(assetRoot);
+  const markerPath = join(assetRoot, '.pwa-owner');
+  const marker = await lstat(markerPath);
+  const currentUid = process.getuid?.();
+  if (!marker.isFile() || marker.isSymbolicLink() || !isContainerReadableAssetMode(marker.mode, 'file') || (currentUid !== undefined && marker.uid !== currentUid) || (await readFile(markerPath, 'utf8')) !== `${owner.id}\n`) {
+    throw new Error('Public fixture asset ownership marker mismatch');
+  }
+}
+
+async function removePublicAssetRoot(owner: PwaMetadata): Promise<void> {
+  if (!owner.assetRoot) return;
+  try { await lstat(owner.assetRoot); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+  await verifyPublicAssetRoot(owner);
+  await rm(assertOwnedPublicAssetRoot(publicAssetRoot, owner.id, owner.assetRoot), { recursive: true, force: true });
+}
+
 async function readMetadata(): Promise<PwaMetadata> {
   const fileInfo = await lstat(metadataPath);
   const currentUid = process.getuid?.();
@@ -93,6 +162,7 @@ async function readMetadata(): Promise<PwaMetadata> {
   if (metadata.socketPath !== join('/tmp', `pwa-${metadata.id}.sock`) || metadata.artifacts.some((artifact) => assertOwnedArtifactPath(stateDir, metadata.id, artifact) !== artifact)) {
     throw new Error('Invalid owner artifact or supervisor socket path');
   }
+  if (metadata.assetRoot !== undefined) assertOwnedPublicAssetRoot(publicAssetRoot, metadata.id, metadata.assetRoot);
   await verifyOwnerDirectory(metadata);
   return metadata;
 }
@@ -180,7 +250,8 @@ async function supervise(id: string, nonce: string): Promise<void> {
   const ownedDir = join(stateDir, id);
   let db: Awaited<ReturnType<typeof provisionOwnedDatabase>> | undefined;
   let proxy: ReturnType<typeof createPwaProxy> | undefined;
-  let control: ReturnType<typeof createServer> | undefined;
+  let control: Server | undefined;
+  let storageDir = '';
   try {
     await verifyOwnerDirectory(owner);
     await writeMetadata(owner);
@@ -190,9 +261,7 @@ async function supervise(id: string, nonce: string): Promise<void> {
     owner.containers = [db.containerId];
     await writeMetadata(owner);
 
-    const storageDir = join(ownedDir, 'storage');
-    await ensurePrivateDirectory(storageDir);
-    owner.artifacts.push(storageDir);
+    owner.assetRoot = join(publicAssetRoot, id);
     await writeMetadata(owner);
     const apiImage = `transformlit-api:pwa-${id}`;
     const webImage = `transformlit-web:pwa-${id}`;
@@ -202,7 +271,10 @@ async function supervise(id: string, nonce: string): Promise<void> {
     run('docker', ['build', '-f', 'apps/web/Dockerfile', '-t', webImage,
       '--build-arg', 'NEXT_PUBLIC_API_URL=https://localhost:3443/api/graphql',
       '--build-arg', 'NEXT_PUBLIC_WS_URL=wss://localhost:3443/api/graphql', '.']);
+    await initializePublicAssetRoot(owner);
+    storageDir = assertOwnedPublicAssetRoot(publicAssetRoot, id, owner.assetRoot ?? '');
     const fixture = await seedPwaFixtures(db.databaseUrl, db.container, storageDir, id);
+    await normalizePublicAssetPermissions(storageDir);
     owner.fixtureIds = {
       readerId: fixture.accounts[0].id,
       outsiderId: fixture.accounts[1].id,
@@ -219,7 +291,7 @@ async function supervise(id: string, nonce: string): Promise<void> {
     owner.artifacts.push(runtimeEnvPath);
     await writeMetadata(owner);
 
-    owner.containers.push(run('docker', ['run', '-d', '--name', `transformlit-pwa-api-${id}`, '--label', `transformlit.owner=${id}`, '-p', '127.0.0.1:3005:3005', '--add-host', 'host.docker.internal:host-gateway', '--env-file', runtimeEnvPath, '-v', `${storageDir}:/pwa-book-storage`, apiImage]));
+    owner.containers.push(run('docker', ['run', '-d', '--name', `transformlit-pwa-api-${id}`, '--label', `transformlit.owner=${id}`, '-p', '127.0.0.1:3005:3005', '--add-host', 'host.docker.internal:host-gateway', '--env-file', runtimeEnvPath, '-v', `${storageDir}:/pwa-book-storage:ro`, apiImage]));
     await writeMetadata(owner);
     owner.containers.push(run('docker', ['run', '-d', '--name', `transformlit-pwa-web-${id}`, '--label', `transformlit.owner=${id}`, '-p', '127.0.0.1:3000:3000', webImage]));
     await writeMetadata(owner);
@@ -236,58 +308,53 @@ async function supervise(id: string, nonce: string): Promise<void> {
     proxy.listen(3443, '::1');
     await once(proxy, 'listening');
     await waitForEndpoints(cert);
-    let resolveShutdown!: () => void;
-    let rejectShutdown!: (error: unknown) => void;
-    const shutdown = new Promise<void>((resolve, reject) => { resolveShutdown = resolve; rejectShutdown = reject; });
-    const controlServer = createServer((socket) => {
-        let data = '';
-        socket.on('data', (chunk) => { data += chunk.toString(); });
-        socket.on('end', async () => {
-          try {
-            const message = JSON.parse(data) as { nonce: string; command: string; bookId?: string };
-            assertSupervisorNonce(message.nonce, nonce);
-            if (message.command === 'publish-v2' && message.bookId && db) {
-              await publishPwaVersion2(db.databaseUrl, db.container, storageDir, id, message.bookId);
-              socket.end(JSON.stringify({ ok: true }));
-              return;
-            }
-            if (message.command === 'ping') { socket.end(JSON.stringify({ ok: true, state: 'ready' })); return; }
-            if (message.command !== 'shutdown') throw new Error('Unsupported supervisor command');
-            owner.state = 'stopping';
-            await writeMetadata(owner);
-            socket.end(JSON.stringify({ ok: true }));
-            controlServer.close(async () => {
-              try {
-                await new Promise<void>((resolveClose) => proxy?.close(() => resolveClose()));
-                await cleanupOwnedResources(containerCleanupOrder(owner), id, dockerRuntime());
+    let shutdownStarted = false;
+    const controlServer = await listenPwaSupervisorControl(owner.socketPath, nonce, async (message, server) => {
+      if (message.command === 'publish-v2' && message.bookId && db) {
+        await publishPwaVersion2(db.databaseUrl, db.container, storageDir, id, message.bookId);
+        await normalizePublicAssetPermissions(storageDir);
+        return { ok: true, state: 'ready' };
+      }
+      if (message.command === 'ping') return { ok: true, state: owner.state };
+      if (message.command !== 'shutdown' || shutdownStarted) return { ok: false, state: owner.state };
+      shutdownStarted = true;
+      owner.state = 'stopping';
+      try {
+        await writeMetadata(owner);
+        server.close();
+        await new Promise<void>((resolveClose) => proxy?.close(() => resolveClose()));
+        await cleanupOwnedResources(containerCleanupOrder(owner), id, dockerRuntime());
         for (const artifact of owner.artifacts) assertOwnedArtifactPath(stateDir, id, artifact);
         await verifyOwnerDirectory(owner);
+        await removePublicAssetRoot(owner);
         await rm(ownedDir, { recursive: true, force: true });
-                await rm(metadataPath, { force: true });
-                resolveShutdown();
-              } catch (error) { rejectShutdown(error); }
-            });
-          } catch (error) {
-            socket.end(JSON.stringify({ ok: false }));
-            rejectShutdown(error);
-          }
-      });
+        await rm(metadataPath, { force: true });
+        return { ok: true, state: 'stopped' };
+      } catch (error) {
+        owner.state = 'failed';
+        owner.failure = `Shutdown cleanup failed: ${error instanceof Error ? error.message : 'unknown error'}`;
+        await writeMetadata(owner);
+        server.close();
+        return { ok: false, state: 'failed' };
+      }
     });
     control = controlServer;
-    controlServer.once('error', rejectShutdown);
-    await new Promise<void>((resolveListening, rejectListening) => {
-      controlServer.listen(owner.socketPath, () => {
-        void chmod(owner.socketPath, 0o600).then(async () => {
-          const info = await lstat(owner.socketPath);
-          owner.socketIdentity = { dev: info.dev, ino: info.ino, uid: info.uid };
-          await writeMetadata(owner);
-          resolveListening();
-        }).catch(rejectListening);
+    const serverState = new Promise<void | Error>((resolveState) => {
+      controlServer.once('close', () => resolveState());
+      controlServer.once('error', (error) => {
+        owner.state = 'failed';
+        owner.failure = `Supervisor IPC error: ${error.message}`;
+        resolveState(error);
       });
     });
+    await chmod(owner.socketPath, 0o600);
+    const info = await lstat(owner.socketPath);
+    owner.socketIdentity = { dev: info.dev, ino: info.ino, uid: info.uid };
+    await writeMetadata(owner);
     owner.state = 'ready';
     await writeMetadata(owner);
-    await shutdown;
+    const serverResult = await serverState;
+    if (serverResult instanceof Error) throw serverResult;
   } catch (error) {
     owner.state = 'failed';
     owner.failure = error instanceof Error ? error.message : 'Unknown startup failure';
@@ -298,6 +365,7 @@ async function supervise(id: string, nonce: string): Promise<void> {
       owner.containers = [...new Set([...owner.containers, ...discoverLabeledContainers(id)])];
       await writeMetadata(owner);
       await cleanupOwnedResources(containerCleanupOrder(owner), id, dockerRuntime());
+      await removePublicAssetRoot(owner);
       await verifyOwnerDirectory(owner);
       await rm(ownedDir, { recursive: true, force: true });
       await rm(metadataPath, { force: true });
@@ -309,19 +377,8 @@ async function supervise(id: string, nonce: string): Promise<void> {
   }
 }
 
-async function sendSupervisor(metadata: PwaMetadata, command: string, bookId?: string): Promise<unknown> {
-  const net = await import('node:net');
-  return new Promise((resolveResponse, reject) => {
-    const socket = net.createConnection(metadata.socketPath);
-    let response = '';
-    socket.on('connect', () => socket.end(JSON.stringify({ nonce: metadata.nonce, command, bookId })));
-    socket.on('data', (chunk) => { response += chunk.toString(); });
-    socket.on('end', () => {
-      try { const parsed: unknown = JSON.parse(response); resolveResponse(parsed); }
-      catch (error) { reject(error); }
-    });
-    socket.on('error', reject);
-  });
+function sendSupervisor(metadata: PwaMetadata, command: string, bookId?: string): Promise<unknown> {
+  return requestPwaSupervisorControl(metadata.socketPath, metadata.nonce, command, bookId);
 }
 
 async function up(): Promise<void> {
@@ -400,6 +457,7 @@ async function down(): Promise<void> {
     owner.containers = [...new Set([...owner.containers, ...discoverLabeledContainers(owner.id)])];
     await writeMetadata(owner);
     await cleanupOwnedResources(containerCleanupOrder(owner), owner.id, dockerRuntime());
+    await removePublicAssetRoot(owner);
     for (const artifact of owner.artifacts) assertOwnedArtifactPath(stateDir, owner.id, artifact);
     await verifyOwnerDirectory(owner);
     await unlinkOwnedStaleSocket(owner);
@@ -416,19 +474,18 @@ async function down(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const [operation, id, nonce, bookId] = process.argv.slice(2);
-  if (operation === 'up') return up();
-  if (operation === 'test') return test();
-  if (operation === 'down') return down();
-  if (operation === 'supervise' && id && nonce) return supervise(id, nonce);
-  if (operation === 'publish-v2') {
+  const args = parsePwaHarnessArgs(process.argv.slice(2));
+  if (args.operation === 'up') return up();
+  if (args.operation === 'test') return test();
+  if (args.operation === 'down') return down();
+  if (args.operation === 'supervise') return supervise(args.ownerId, args.nonce);
+  if (args.operation === 'publish-v2') {
     const metadata = await readMetadata();
-    if (metadata.state !== 'ready' || !bookId || metadata.fixtureIds?.readableBookId !== bookId) throw new Error('publish-v2 requires this invocation\'s ready owner and readable fixture ID');
-    const response = await sendSupervisor(metadata, 'publish-v2', bookId) as { ok?: boolean };
+    if (metadata.state !== 'ready' || metadata.fixtureIds?.readableBookId !== args.bookId) throw new Error('publish-v2 requires this invocation\'s ready owner and readable fixture ID');
+    const response = await sendSupervisor(metadata, 'publish-v2', args.bookId) as { ok?: boolean };
     if (!response.ok) throw new Error('Supervisor refused publish-v2 fixture transition');
     return;
   }
-  throw new Error('Usage: pwa-harness.ts <up|test|down|publish-v2 <bookId>>');
 }
 
 main().catch((error: unknown) => {

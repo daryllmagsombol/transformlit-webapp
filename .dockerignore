@@ -1,5 +1,6 @@
 .git
 /.pwa-harness/
+/.pwa-harness-assets/
 /.worktrees/
 **/pwa-profile/
 **/pwa-artifacts/

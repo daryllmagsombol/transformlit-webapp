@@ -49,6 +49,7 @@ coverage/
 playwright-report/
 test-results/
 /.pwa-harness/
+/.pwa-harness-assets/
 
 # Docker
 *.log

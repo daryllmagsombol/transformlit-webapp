@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -7,12 +8,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request as httpsRequest } from 'node:https';
 import { createServer } from 'node:http';
+import { createConnection } from 'node:net';
 import { once } from 'node:events';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createPwaProxy, stripApiPrefix } from './pwa-proxy.js';
-import { assertOwnedMetadata, assertPortAvailable, assertSupervisorNonce, assertSupervisorSocketIdentity, cleanupOwnedResources, cleanupAfterStartupFailure, assertOwnedArtifactPath, waitForHarnessReady, waitForSupervisorExit } from './pwa-process.js';
+import { assertOwnedMetadata, assertPortAvailable, assertSupervisorNonce, assertSupervisorSocketIdentity, cleanupOwnedResources, cleanupAfterStartupFailure, assertOwnedArtifactPath, assertOwnedPublicAssetRoot, isContainerReadableAssetMode, parsePwaHarnessArgs, waitForHarnessReady, waitForSupervisorExit, listenPwaSupervisorControl, requestPwaSupervisorControl } from './pwa-process.js';
 import { assertTask1AOwnedDatabaseUrl } from './pwa-db.js';
-import { createPwaFixturePlan, createPwaFramePayload } from '../helpers/pwa-fixtures.js';
+import { createPwaFixturePlan, createPwaFramePayload, createPwaTextPayload } from '../helpers/pwa-fixtures.js';
 
 describe('PWA harness safety contract', () => {
   it('strips /api while preserving path and query', () => {
@@ -39,6 +41,84 @@ describe('PWA harness safety contract', () => {
   it('authenticates supervisor control requests with the invocation nonce', () => {
     assert.doesNotThrow(() => assertSupervisorNonce('a'.repeat(64), 'a'.repeat(64)));
     assert.throws(() => assertSupervisorNonce('b'.repeat(64), 'a'.repeat(64)), /nonce mismatch/i);
+  });
+
+  it('parses publish-v2 book ID separately from supervise owner ID and nonce', () => {
+    assert.deepEqual(parsePwaHarnessArgs(['publish-v2', 'book-123']), { operation: 'publish-v2', bookId: 'book-123' });
+    assert.deepEqual(parsePwaHarnessArgs(['supervise', 'owner-123', 'nonce-456']), { operation: 'supervise', ownerId: 'owner-123', nonce: 'nonce-456' });
+  });
+
+  it('uses half-open IPC and responds after delayed publish-v2 work completes', async () => {
+    const nonce = randomUUID();
+    const socketPath = `/tmp/pwa-ipc-${randomUUID()}.sock`;
+    let updated = false;
+    const server = await listenPwaSupervisorControl(socketPath, nonce, async (message) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      updated = message.command === 'publish-v2' && message.bookId === 'book-1';
+      return { ok: updated, state: 'updated' };
+    });
+    const closed = once(server, 'close');
+    try {
+      const response = await requestPwaSupervisorControl(socketPath, nonce, 'publish-v2', 'book-1');
+      assert.deepEqual(response, { ok: true, state: 'updated' });
+      assert.equal(updated, true);
+    } finally {
+      server.close();
+      await closed;
+    }
+  });
+
+  it('returns shutdown only after async metadata work and lets the supervisor socket close', async () => {
+    const nonce = randomUUID();
+    const socketPath = `/tmp/pwa-ipc-${randomUUID()}.sock`;
+    let metadataSaved = false;
+    let server: import('node:net').Server;
+    server = await listenPwaSupervisorControl(socketPath, nonce, async (message) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      metadataSaved = message.command === 'shutdown';
+      server.close();
+      return { ok: metadataSaved, state: 'stopped' };
+    });
+    const closed = once(server, 'close');
+    const response = await requestPwaSupervisorControl(socketPath, nonce, 'shutdown');
+    assert.deepEqual(response, { ok: true, state: 'stopped' });
+    assert.equal(metadataSaved, true);
+    await closed;
+  });
+
+  it('completes supervisor work when a peer closes early and continues serving requests', async () => {
+    const nonce = randomUUID();
+    const socketPath = `/tmp/pwa-ipc-${randomUUID()}.sock`;
+    let startWork!: () => void;
+    let finishWork!: () => void;
+    const workStarted = new Promise<void>((resolve) => { startWork = resolve; });
+    const workGate = new Promise<void>((resolve) => { finishWork = resolve; });
+    let workCompleted = false;
+    const server = await listenPwaSupervisorControl(socketPath, nonce, async (message) => {
+      if (message.command === 'slow') {
+        startWork();
+        await workGate;
+        workCompleted = true;
+        return { ok: true };
+      }
+      return { ok: true, state: 'ready' };
+    });
+    const closed = once(server, 'close');
+    const peer = createConnection(socketPath);
+    try {
+      await once(peer, 'connect');
+      peer.end(`${JSON.stringify({ nonce, command: 'slow' })}\n`);
+      await workStarted;
+      peer.destroy();
+      finishWork();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(workCompleted, true);
+      assert.deepEqual(await requestPwaSupervisorControl(socketPath, nonce, 'ping'), { ok: true, state: 'ready' });
+    } finally {
+      peer.destroy();
+      server.close();
+      await closed;
+    }
   });
 
   it('refuses to unlink a supervisor socket when the recorded process identity was reused', () => {
@@ -85,6 +165,17 @@ describe('PWA harness safety contract', () => {
     await assert.rejects(waitForHarnessReady({ api: async () => true, web: async () => false, proxy: async () => true }, 1), /web.*not ready/i);
   });
 
+  it('keeps container-readable assets in their exact ignored root, separate from owner secrets', () => {
+    const assets = assertOwnedPublicAssetRoot('/repo/.pwa-harness-assets', 'owner-1', '/repo/.pwa-harness-assets/owner-1');
+    assert.equal(assets, '/repo/.pwa-harness-assets/owner-1');
+    assert.throws(() => assertOwnedPublicAssetRoot('/repo/.pwa-harness-assets', 'owner-1', '/repo/.pwa-harness-assets/owner-10'), /equal this invocation/i);
+    assert.notEqual(assets, '/repo/.pwa-harness/owner-1');
+    assert.equal(isContainerReadableAssetMode(0o755, 'directory'), true);
+    assert.equal(isContainerReadableAssetMode(0o644, 'file'), true);
+    assert.equal(isContainerReadableAssetMode(0o700, 'directory'), false);
+    assert.equal(isContainerReadableAssetMode(0o600, 'file'), false);
+  });
+
   it('retries transient readiness connection failures until services are ready', async () => {
     let apiAttempts = 0;
     await waitForHarnessReady({
@@ -129,6 +220,14 @@ describe('PWA harness safety contract', () => {
     assert.deepEqual(plan.books.readable.contentVersions, [1, 2]);
     assert.equal(plan.books.publicationChangeDuringDownload.hook, 'pwa-harness.ts publish-v2');
     assert.notDeepEqual(createPwaFramePayload(1), createPwaFramePayload(2));
+    const v1Text = JSON.parse(createPwaTextPayload(1, 1, 'v1 page').toString()) as { items: Array<Record<string, unknown>> };
+    const v2Text = JSON.parse(createPwaTextPayload(2, 1, 'v2 page').toString()) as { items: Array<Record<string, unknown>> };
+    assert.deepEqual(Object.keys(v1Text.items[0]).sort(), ['h', 't', 'w', 'x', 'y']);
+    assert.equal(v1Text.items[0].t, 'v1 page (v1)');
+    assert.equal(v2Text.items[0].t, 'v2 page (v2)');
+    for (const item of [...v1Text.items, ...v2Text.items]) {
+      for (const coordinate of ['x', 'y', 'w', 'h']) assert.equal(typeof item[coordinate], 'number');
+    }
   });
 
   it('keeps private harness state out of Docker contexts and uses pinned TLS profile configuration', () => {
@@ -137,6 +236,8 @@ describe('PWA harness safety contract', () => {
     const playwrightFixture = readFileSync('../../apps/web/e2e/pwa-fixtures.ts', 'utf8');
     const smoke = readFileSync('../../apps/web/e2e/pwa-smoke.pwa.spec.ts', 'utf8');
     assert.match(dockerignore, /^\/\.pwa-harness\/$/m);
+    assert.match(dockerignore, /^\/\.pwa-harness-assets\/$/m);
+    assert.match(readFileSync('../../.gitignore', 'utf8'), /^\/\.pwa-harness-assets\/$/m);
     assert.match(playwrightFixture, /launchPersistentContext/);
     assert.match(playwrightFixture, /ignore-certificate-errors-spki-list/);
     assert.doesNotMatch(playwrightFixture, /--ignore-certificate-errors(?!-spki-list)/);
@@ -154,6 +255,7 @@ describe('PWA harness safety contract', () => {
     assert.match(harness, /mode: 0o600/);
     assert.match(fixtureSeeder, /argon2\.hash/);
     assert.match(fixtureSeeder, /new LocalStorageAdapter\(storageDir\)/);
+    assert.match(fixtureSeeder, /createPwaTextPayload/);
     assert.match(fixtureSeeder, /conversionStatus: 'READY'/);
     assert.match(fixtureSeeder, /publishPwaVersion2/);
     assert.match(webFixtures, /PWA_FIXTURE_CREDENTIALS/);
@@ -162,6 +264,18 @@ describe('PWA harness safety contract', () => {
     assert.match(harness, /127\.0\.0\.1:3000\/login/);
     assert.doesNotMatch(harness, /127\.0\.0\.1:3000\/offline/);
     assert.ok(harness.indexOf("['build', '-f', 'apps/api/Dockerfile'") < harness.indexOf('randomBytes(48)'));
+    assert.match(harness, /\.pwa-harness-assets/);
+    assert.match(harness, /owner\.assetRoot = join\(publicAssetRoot, id\)/);
+    assert.match(harness, /BOOK_STORAGE_DIR=\/pwa-book-storage/);
+    assert.match(harness, /\$\{storageDir\}:\/pwa-book-storage:ro/);
+    assert.match(harness, /runtimeEnvPath = join\(ownedDir,/);
+    assert.match(harness, /chmod\(path, 0o755\)/);
+    assert.match(harness, /chmod\(path, 0o644\)/);
+    assert.doesNotMatch(harness, /\bvoid\s+[A-Za-z_$({]/);
+    assert.equal(isContainerReadableAssetMode(0o755, 'directory'), true);
+    assert.equal(isContainerReadableAssetMode(0o644, 'file'), true);
+    assert.equal(isContainerReadableAssetMode(0o700, 'directory'), false);
+    assert.equal(isContainerReadableAssetMode(0o600, 'file'), false);
     assert.match(harness, /child\.once\('exit'/);
     assert.match(harness, /Supervisor exited during startup/);
   });
