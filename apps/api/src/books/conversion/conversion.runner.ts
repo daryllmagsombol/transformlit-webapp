@@ -43,6 +43,9 @@ export class ConversionRunner {
     const nextVersion = previousVersion + 1;
     const converted = await this.pdfConverter.convert({ bookId, contentVersion: nextVersion, buffer });
 
+    // The immutable version and the current-version projection commit together:
+    // a crash can never leave the pointer advanced without its pinned metadata,
+    // nor publish metadata that does not match the current pages.
     await this.prisma.$transaction(async (tx) => {
       await tx.bookPage.deleteMany({ where: { bookId } });
       await tx.bookTocEntry.deleteMany({ where: { bookId } });
@@ -55,10 +58,48 @@ export class ConversionRunner {
           mimeType: page.mimeType,
           width: page.width,
           height: page.height,
+          charCount: page.charCount,
         })),
       });
       await tx.bookTocEntry.createMany({
         data: converted.toc.map((entry) => ({ bookId, title: entry.title, page: entry.page, depth: entry.depth, order: entry.order })),
+      });
+      await tx.bookContentVersion.create({
+        data: {
+          bookId,
+          contentVersion: nextVersion,
+          title: book.title,
+          author: book.author,
+          description: book.description,
+          format: 'PDF',
+          pageCount: converted.pageCount,
+          eligible: true,
+          verifiedAt: new Date(),
+          pages: {
+            create: converted.pages.map((page) => ({
+              index: page.index,
+              assetKey: page.assetKey,
+              textKey: page.textKey,
+              hasTextLayer: page.hasTextLayer,
+              mimeType: page.mimeType,
+              width: page.width,
+              height: page.height,
+              charCount: page.charCount,
+              frameByteLength: page.frameByteLength,
+              frameSha256: page.frameSha256,
+              textByteLength: page.textByteLength,
+              textSha256: page.textSha256,
+            })),
+          },
+          tocEntries: {
+            create: converted.toc.map((entry) => ({
+              title: entry.title,
+              page: entry.page,
+              depth: entry.depth,
+              order: entry.order,
+            })),
+          },
+        },
       });
       await tx.book.update({
         where: { id: bookId },
@@ -72,6 +113,8 @@ export class ConversionRunner {
       });
     });
 
-    await this.storage.deletePrefix(`books/${bookId}/v${previousVersion}`);
+    // Intentionally do NOT delete the previous version's asset prefix: retained
+    // versions must stay downloadable while pinned annotations/downloads refer
+    // to them. Assets are cleaned up only by an explicit retention policy.
   }
 }

@@ -204,6 +204,29 @@ export class BooksService {
     return this.prisma.bookPage.findUnique({ where: { bookId_index: { bookId, index } } });
   }
 
+  /** A retained, verified content version pinned for offline download. */
+  async findEligibleContentVersion(bookId: string, contentVersion: number) {
+    return this.prisma.bookContentVersion.findFirst({
+      where: { bookId, contentVersion, eligible: true },
+      include: {
+        pages: { orderBy: { index: 'asc' } },
+        tocEntries: { orderBy: { order: 'asc' } },
+      },
+    });
+  }
+
+  /** The newest retained, verified version — used when no version is requested. */
+  async findLatestEligibleContentVersion(bookId: string) {
+    return this.prisma.bookContentVersion.findFirst({
+      where: { bookId, eligible: true },
+      orderBy: { contentVersion: 'desc' },
+      include: {
+        pages: { orderBy: { index: 'asc' } },
+        tocEntries: { orderBy: { order: 'asc' } },
+      },
+    });
+  }
+
   // Read progress
   async getProgress(userId: string, bookId: string) {
     return this.prisma.bookProgress.findUnique({

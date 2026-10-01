@@ -14,6 +14,13 @@ export interface ConvertedPage {
   width: number;
   height: number;
   itemCount: number;
+  frameByteLength: number;
+  frameSha256: string;
+  textByteLength: number;
+  textSha256: string;
+  charCount: number;
+  /** True when the page has a text layer (possibly legitimately empty). */
+  hasTextLayer: boolean;
 }
 
 export interface ConvertedTocEntry {

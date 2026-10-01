@@ -346,10 +346,80 @@ model Book {
   conversionJobs   BookConversionJob[]
   readingSessions  ReadingSession[]
   pageViews        PageView[]
+  contentVersions  BookContentVersion[]
 
   @@index([status])
   @@index([title])
   @@map("books")
+}
+
+/**
+ * Immutable published snapshot of a book at a specific `contentVersion`.
+ * The `BookPage`/`BookTocEntry` tables remain the current-version projection;
+ * these rows are append-only so a download can stay pinned to a version even
+ * after a newer publication. `eligible` is only true once every page's frame
+ * and text-layer bytes have been checksummed from actual stored assets — a
+ * legacy row migrated without verifiable assets stays ineligible rather than
+ * serving fabricated checksums or text.
+ */
+model BookContentVersion {
+  id             String     @id @default(uuid())
+  bookId         String
+  book           Book       @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  contentVersion Int
+  title          String
+  author         String?
+  description    String?
+  format         BookFormat?
+  pageCount      Int
+  eligible       Boolean    @default(false)
+  verifiedAt     DateTime?
+  publishedAt    DateTime   @default(now())
+  createdAt      DateTime   @default(now())
+
+  pages      BookContentVersionPage[]
+  tocEntries BookContentVersionTocEntry[]
+
+  @@unique([bookId, contentVersion])
+  @@index([bookId, eligible, contentVersion(sort: Desc)])
+  @@map("book_content_versions")
+}
+
+model BookContentVersionPage {
+  id               String             @id @default(uuid())
+  contentVersionId String
+  contentVersion   BookContentVersion @relation(fields: [contentVersionId], references: [id], onDelete: Cascade)
+  index            Int
+  /** Server-private storage keys: never exposed through the download contract. */
+  assetKey         String
+  textKey          String?
+  hasTextLayer     Boolean            @default(false)
+  mimeType         String?
+  width            Int?
+  height           Int?
+  charCount        Int?
+  frameByteLength  Int?
+  frameSha256      String?
+  textByteLength   Int?
+  textSha256       String?
+  createdAt        DateTime           @default(now())
+
+  @@unique([contentVersionId, index])
+  @@map("book_content_version_pages")
+}
+
+model BookContentVersionTocEntry {
+  id               String             @id @default(uuid())
+  contentVersionId String
+  contentVersion   BookContentVersion @relation(fields: [contentVersionId], references: [id], onDelete: Cascade)
+  title            String
+  page             Int
+  depth            Int                @default(0)
+  order            Int
+  createdAt        DateTime           @default(now())
+
+  @@index([contentVersionId, order])
+  @@map("book_content_version_toc_entries")
 }
 
 model BookAccess {
