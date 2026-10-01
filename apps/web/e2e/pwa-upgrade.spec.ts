@@ -1,4 +1,5 @@
-import type { Page, TestInfo } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import type { Page } from '@playwright/test';
 import { test, expect } from './pwa-fixtures.js';
 
 /**
@@ -21,6 +22,17 @@ const harnessConfigured = Boolean(process.env.PWA_BROWSER_PROFILE && process.env
 
 const OFFLINE_DB = 'transformlit-offline';
 
+/**
+ * The harness uses one persistent profile shared across tests. The synthetic
+ * version-number tests below open arbitrary schema versions, so they must use a
+ * throwaway database — opening the real {@link OFFLINE_DB} at a version other
+ * than the production schema would both collide with the real store layout and
+ * leave the profile's actual offline database at an unsupported version.
+ */
+function syntheticDbName(): string {
+  return `transformlit-offline-e2e-${randomUUID()}`;
+}
+
 /** Reads the real IndexedDB schema version of the offline database. */
 async function offlineDbVersion(page: Page): Promise<number> {
   return page.evaluate(async (name) => {
@@ -39,6 +51,7 @@ test.describe('populated IndexedDB upgrade and rollback', () => {
   test('upgrades a populated v1 database without losing downloads/outbox/conflicts', async ({ context, origin }) => {
     const page = await context.newPage();
     await page.goto(`${origin}/offline`);
+    const dbName = syntheticDbName();
 
     const result = await page.evaluate(async (name) => {
       // Fresh isolated DB mirroring the real stores Task 4 uses.
@@ -93,22 +106,22 @@ test.describe('populated IndexedDB upgrade and rollback', () => {
       });
       upgraded.close();
       return { blocked, counts, version: (await indexedDB.databases()).find((d) => d.name === name)?.version };
-    }, OFFLINE_DB);
+    }, dbName);
 
     expect(result.blocked).toBe(false);
     expect(result.counts).toEqual({ readerRecords: 1, outbox: 1, conflicts: 1, downloadManifests: 1 });
     expect(result.version).toBe(2);
   });
 
-  test('notifies a second tab that still holds the old connection during an upgrade', async ({ context, origin }) => {
-    const pageA = await context.newPage();
-    await pageA.goto(`${origin}/offline`);
-    const pageB = await context.newPage();
-    await pageB.goto(`${origin}/offline`);
+  test('notifies a second connection that still holds the old version during an upgrade', async ({ context, origin }) => {
+    const page = await context.newPage();
+    await page.goto(`${origin}/offline`);
+    const dbName = syntheticDbName();
 
-    // Tab A upgrades to v2 while tab B still holds a v1 connection: B receives
-    // `versionchange` (the production client closes so it is not left stale).
-    const result = await pageA.evaluate(async (name) => {
+    // One connection holds v1 while a later one opens v2: the older connection
+    // receives `versionchange` (the production client closes so it is not left
+    // stale).
+    const result = await page.evaluate(async (name) => {
       const first = indexedDB.open(name, 1);
       first.onupgradeneeded = () => first.result.createObjectStore('records', { keyPath: 'id' });
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -122,7 +135,7 @@ test.describe('populated IndexedDB upgrade and rollback', () => {
         };
         setTimeout(() => resolve(false), 2000);
       });
-      // A second connection to the same origin triggers the version change.
+      // A second connection to the same database triggers the version change.
       const upgrade = indexedDB.open(name, 2);
       upgrade.onupgradeneeded = () => upgrade.result.createObjectStore('more', { keyPath: 'id' });
       await new Promise<void>((resolve) => {
@@ -134,7 +147,7 @@ test.describe('populated IndexedDB upgrade and rollback', () => {
         upgrade.onerror = () => resolve();
       });
       return notified;
-    }, OFFLINE_DB);
+    }, dbName);
 
     expect(result).toBe(true);
   });
@@ -142,6 +155,7 @@ test.describe('populated IndexedDB upgrade and rollback', () => {
   test('ROLLBACK: unsupported (higher) version fails safely without deleting data', async ({ context, origin }) => {
     const page = await context.newPage();
     await page.goto(`${origin}/offline`);
+    const dbName = syntheticDbName();
 
     const result = await page.evaluate(async (name) => {
       // Seed v3 as if a future release opened it.
@@ -184,7 +198,7 @@ test.describe('populated IndexedDB upgrade and rollback', () => {
       });
       v3.close();
       return { outcome, kept };
-    }, OFFLINE_DB);
+    }, dbName);
 
     expect(result.outcome).toBe('FAILED_SAFELY');
     expect(result.kept).toMatchObject({ id: 'kept' });
