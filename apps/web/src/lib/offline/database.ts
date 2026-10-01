@@ -302,6 +302,19 @@ export interface CommitEditInput<TRecord> {
   operation: unknown;
 }
 
+/**
+ * One atomic conflict-resolution commit: new/replacement outbox operations are
+ * upserted before `removeIds` are removed, and the conflict copy is marked
+ * resolved, all in a single fenced transaction.
+ */
+export interface ConflictResolutionCommit {
+  subject: string;
+  epoch: number;
+  upserts: readonly unknown[];
+  removeIds: readonly string[];
+  conflict: unknown | null;
+}
+
 /** Reads the authoritative lifecycle record and aborts if the write is fenced. */
 function guardWrite(
   tx: IDBTransaction,
@@ -644,6 +657,31 @@ export class OfflineDatabase {
       IDBKeyRange.bound([subject, bookId], [subject, bookId, Number.MAX_SAFE_INTEGER]),
     );
     return versions.find((version) => version.active && version.status === 'READY') ?? null;
+  }
+
+  /**
+   * Atomically commits an explicit conflict resolution: upserts the newly
+   * planned operations FIRST, then removes the replaced predecessors, then
+   * marks the conflict copy resolved — all in ONE transaction. A fault at ANY
+   * point aborts the whole transaction, so a crash can never remove the
+   * conflicted operation without first persisting its replacement (which would
+   * silently lose the retargeted edit and its rebased descendants). Re-running
+   * the resolution is therefore always safe.
+   */
+  async commitConflictResolution(input: ConflictResolutionCommit): Promise<void> {
+    const db = await this.db();
+    await runTransaction<void>(db, ['lifecycle', 'outbox', 'conflicts'], 'readwrite', (tx, done, fail) => {
+      guardWrite(tx, input.subject, input.epoch, fail, () => {
+        const outbox = tx.objectStore('outbox');
+        // Upserts FIRST (new operations / rebased successors), then removals.
+        for (const operation of input.upserts) outbox.put(operation as unknown as IDBValidKey);
+        for (const id of input.removeIds) outbox.delete(id);
+        if (input.conflict !== null) {
+          tx.objectStore('conflicts').put(input.conflict as unknown as IDBValidKey);
+        }
+        done(undefined);
+      });
+    });
   }
 
   /**

@@ -5,7 +5,7 @@ import {
   type ConflictReason,
   type OutboxReceiptRecord,
 } from './contracts';
-import { OfflineDatabase } from './database';
+import { OfflineDatabase, type ConflictResolutionCommit } from './database';
 import { accountLifecycle } from './account-activation';
 import {
   nextLocalSequence,
@@ -103,8 +103,17 @@ export interface ConflictResolutionResult {
   readonly error: string | null;
 }
 
+/**
+ * The durable store the resolver needs. Narrow so tests can inject a faulting
+ * wrapper; `OfflineDatabase` satisfies it structurally.
+ */
+export interface ConflictResolutionStore {
+  getAllByIndex<T>(store: string, index: string, query: IDBValidKey | IDBKeyRange): Promise<T[]>;
+  commitConflictResolution(input: ConflictResolutionCommit): Promise<void>;
+}
+
 export interface ConflictResolverDeps {
-  readonly database: OfflineDatabase;
+  readonly database: ConflictResolutionStore;
   readonly getOwner: () => AccountOwner | null;
   readonly now?: () => number;
   readonly newId?: () => string;
@@ -112,6 +121,7 @@ export interface ConflictResolverDeps {
 
 export interface ConflictPlanContext {
   readonly subject: string;
+  readonly epoch: number;
   readonly now: number;
   readonly newId: () => string;
 }
@@ -355,7 +365,7 @@ export function planProgressChoice(
   const operation: OutboxOperationRecord = {
     id: namespacedId(context, operationId),
     subject: context.subject,
-    epoch: epochOf(conflict, operations),
+    epoch: context.epoch,
     operationId,
     entityKey: conflict.entityKey,
     bookId: conflict.bookId,
@@ -370,10 +380,6 @@ export function planProgressChoice(
     createdAt: context.now,
   };
   return { removeIds: [conflict.outboxId], upserts: [operation], enqueuedOperationIds: [operationId] };
-}
-
-function epochOf(conflict: ConflictView, operations: readonly OutboxOperationRecord[]): number {
-  return operations.find((operation) => operation.operationId === conflict.operationId)?.epoch ?? 0;
 }
 
 // ── Content-version provenance ──────────────────────────────────────────────
@@ -417,7 +423,7 @@ export function referencedContentVersions(
  * marks the conflict copy resolved.
  */
 export class ConflictResolver {
-  private readonly database: OfflineDatabase;
+  private readonly database: ConflictResolutionStore;
   private readonly getOwner: () => AccountOwner | null;
   private readonly now: () => number;
   private readonly newId: () => string;
@@ -476,20 +482,39 @@ export class ConflictResolver {
     try {
       const owner = this.getOwner();
       if (!owner) return this.failure('No established account owns this device');
-      const operations = await this.readOperations(owner.subject);
+      const [operations, copies] = await Promise.all([
+        this.readOperations(owner.subject),
+        this.readCopies(owner.subject),
+      ]);
       const current = operations.find((operation) => operation.operationId === conflict.operationId);
-      if (!current) return this.failure('This conflict is already resolved on this device');
+      const copy = copies.find((candidate) => candidate.operationId === conflict.operationId);
 
-      const plan = this.plan(owner.subject, conflict, operations, choice, successorOperationIds);
+      if (!current && !copy) return this.failure('This conflict no longer exists on this device');
+      if (!current && copy?.resolution != null) {
+        // A PRIOR attempt already committed. Report the durable outcome instead
+        // of re-planning (which would append duplicates).
+        return { status: 'RESOLVED', choice, enqueuedOperationIds: [], error: null };
+      }
+      if (current && (current.dispatchState !== 'FAILED' || current.bookId !== conflict.bookId)) {
+        return this.failure('This conflict is no longer unresolved on this device');
+      }
+
+      // Re-plan from durable state. Successors are located by the (stable)
+      // conflicted outbox id, so a retry works even if a legacy partial state
+      // already removed the conflicted operation.
+      const plan = this.plan(owner.subject, owner.epoch, conflict, operations, choice, successorOperationIds);
       if (!plan) return this.failure('This conflict can no longer be resolved as requested');
 
-      for (const id of plan.removeIds) {
-        await this.database.delete('outbox', id);
-      }
-      for (const operation of plan.upserts) {
-        await this.database.putAccountRecord(owner.subject, owner.epoch, 'outbox', operation);
-      }
-      await this.markCopyResolved(owner, conflict, choice);
+      const commit: ConflictResolutionCommit = {
+        subject: owner.subject,
+        epoch: owner.epoch,
+        upserts: plan.upserts,
+        removeIds: plan.removeIds,
+        conflict: this.resolvedCopy(copy, choice),
+      };
+      // Upserts are written BEFORE removals inside one atomic transaction, so a
+      // fault cannot lose the replacement operations.
+      await this.database.commitConflictResolution(commit);
       return {
         status: 'RESOLVED',
         choice,
@@ -502,14 +527,26 @@ export class ConflictResolver {
     }
   }
 
+  /** The conflict copy with the chosen resolution stamped, or null when none. */
+  private resolvedCopy(
+    copy: StoredConflictCopyRecord | undefined,
+    choice: ConflictChoice,
+  ): StoredConflictCopyRecord | null {
+    if (!copy) return null;
+    const resolution: ConflictResolutionKind =
+      choice === 'LOCAL' || choice === 'OFFLINE_COPY' ? 'OFFLINE_COPY' : choice;
+    return { ...copy, resolution, resolvedAt: this.now() };
+  }
+
   private plan(
     subject: string,
+    epoch: number,
     conflict: ConflictView,
     operations: readonly OutboxOperationRecord[],
     choice: ConflictChoice,
     successorOperationIds: readonly string[],
   ): ResolutionPlan | null {
-    const context: ConflictPlanContext = { subject, now: this.now(), newId: this.newId };
+    const context: ConflictPlanContext = { subject, epoch, now: this.now(), newId: this.newId };
     if (conflict.conflictKind === 'PROGRESS') {
       if (choice !== 'LOCAL' && choice !== 'SERVER') return null;
       return planProgressChoice(conflict, operations, choice, conflict.serverRevision, context);
@@ -525,24 +562,6 @@ export class ConflictResolver {
       return planRetarget(conflict, operations, conflict.conflictCopy, successorOperationIds, context);
     }
     return null;
-  }
-
-  private async markCopyResolved(
-    owner: AccountOwner,
-    conflict: ConflictView,
-    choice: ConflictChoice,
-  ): Promise<void> {
-    if (!conflict.conflictCopy) return;
-    const copies = await this.readCopies(owner.subject);
-    const copy = copies.find((candidate) => candidate.operationId === conflict.operationId);
-    if (!copy) return;
-    const resolution =
-      choice === 'LOCAL' || choice === 'OFFLINE_COPY' ? 'OFFLINE_COPY' : (choice as ConflictResolutionKind);
-    await this.database.putAccountRecord(owner.subject, owner.epoch, 'conflicts', {
-      ...copy,
-      resolution,
-      resolvedAt: this.now(),
-    });
   }
 
   private readOperations(subject: string): Promise<OutboxOperationRecord[]> {

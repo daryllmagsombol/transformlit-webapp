@@ -83,7 +83,7 @@ function copy(overrides: Partial<StoredConflictCopyRecord> = {}): StoredConflict
 }
 
 function context(newId: () => string, now = 1000): ConflictPlanContext {
-  return { subject: OWNER.subject, now, newId };
+  return { subject: OWNER.subject, epoch: OWNER.epoch, now, newId };
 }
 
 describe('conflict views', () => {
@@ -343,6 +343,49 @@ describe('ConflictResolver over durable state', () => {
     const rows = await listOutbox();
     expect(rows.some((row) => row.id === sibling.id)).toBe(true);
     expect(rows).toHaveLength(2); // retargeted op + untouched sibling
+  });
+
+  it('commits the resolution atomically: a mid-transaction fault cannot lose the retargeted successor, and it is retryable', async () => {
+    const base = conflicted('a');
+    const successor = op({ id: 'b', seq: 2, dependsOn: base.id, baseRevision: 2 });
+    await seed([base, successor], [copy()]);
+    const conflict = (await resolver().listConflicts(BOOK))[0];
+
+    // Fault while writing the retargeted CONFLICT_COPY operation (upserts are
+    // written before removals, so the removal must not have happened).
+    memory.failPutWhen(
+      (store, value) =>
+        store === 'outbox' &&
+        (value as { payload?: { targetKind?: string } }).payload?.targetKind === 'CONFLICT_COPY',
+    );
+
+    const failed = await resolver().keepOfflineCopy(conflict);
+    expect(failed.status).toBe('FAILED');
+
+    // Content survived: the conflicted op AND its successor are still present,
+    // and the conflict copy is still unresolved.
+    const afterFault = await listOutbox();
+    expect(afterFault.map((row) => row.operationId).sort()).toEqual(['op-a', 'op-b']);
+    const copiesAfterFault = await database.getAllByIndex<StoredConflictCopyRecord>(
+      'conflicts',
+      'subject',
+      OWNER.subject,
+    );
+    expect(copiesAfterFault[0].resolution ?? null).toBeNull();
+
+    // Retry succeeds and replaces the successor with the retargeted operation.
+    memory.clearFailures();
+    const retried = await resolver().keepOfflineCopy(conflict);
+    expect(retried.status).toBe('RESOLVED');
+    expect(retried.enqueuedOperationIds).toEqual(['new-1']);
+    const rows = await listOutbox();
+    expect(rows.map((row) => row.operationId).sort()).toEqual(['new-1']);
+    const resolvedCopies = await database.getAllByIndex<StoredConflictCopyRecord>(
+      'conflicts',
+      'subject',
+      OWNER.subject,
+    );
+    expect(resolvedCopies[0].resolution).toBe('OFFLINE_COPY');
   });
 
   it('resolves progress locally with a lower local page but never with an implicit maximum', async () => {
