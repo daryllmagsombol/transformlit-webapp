@@ -1,5 +1,6 @@
 import {
   classifyStorageError,
+  keyBelongsToSubject,
   type LifecycleStateRecord,
   type LeaseRecord,
   OFFLINE_DB_NAME,
@@ -7,6 +8,7 @@ import {
   OfflineStorageError,
   SchemaVersionError,
   StorageUnavailableError,
+  SubjectMismatchError,
   TransactionAbortedError,
 } from './contracts';
 import type { LeasePersistence } from './coordination';
@@ -145,47 +147,63 @@ function createSchema(db: IDBDatabase): void {
  * older client meeting a newer schema — fails closed with `SchemaVersionError`
  * and never deletes data. `onblocked` is treated as a failure to upgrade now;
  * it never clears the existing database.
+ *
+ * The cache only holds a promise that is still pending or already resolved. A
+ * failed open clears the cache exactly when it rejects, so a later caller
+ * retries with a fresh open instead of inheriting the rejected promise, and
+ * concurrent callers during a pending open share the same attempt.
  */
 export function openOfflineDatabase(): Promise<IDBDatabase> {
   if (cachedDatabase) return cachedDatabase;
 
-  cachedDatabase = new Promise<IDBDatabase>((resolve, reject) => {
+  const attempt = openDatabaseAttempt();
+  cachedDatabase = attempt;
+  attempt.catch(() => {
+    if (cachedDatabase === attempt) cachedDatabase = null;
+  });
+
+  return attempt;
+}
+
+function openDatabaseAttempt(): Promise<IDBDatabase> {
+  return new Promise<IDBDatabase>((resolve, reject) => {
     if (typeof globalThis.indexedDB === 'undefined') {
-      cachedDatabase = null;
       reject(new StorageUnavailableError());
       return;
     }
 
     const request = globalThis.indexedDB.open(OFFLINE_DB_NAME, OFFLINE_DB_VERSION);
-    let blocked = false;
+    let settled = false;
 
     request.onupgradeneeded = () => createSchema(request.result);
     request.onblocked = () => {
-      blocked = true;
+      // Another connection holds an older version. Fail closed now rather than
+      // hanging; if the request later succeeds it is closed without being used.
+      if (settled) return;
+      settled = true;
+      reject(new OfflineStorageError('Offline database upgrade blocked by another open connection'));
     };
     request.onsuccess = () => {
       const db = request.result;
-      if (blocked) {
+      if (settled) {
         db.close();
-        cachedDatabase = null;
-        reject(new OfflineStorageError('Offline database upgrade blocked by another open connection'));
         return;
       }
+      settled = true;
       db.onversionchange = () => {
         db.close();
-        cachedDatabase = null;
+        if (cachedDatabase) cachedDatabase = null;
       };
       resolve(db);
     };
     request.onerror = () => {
+      if (settled) return;
+      settled = true;
       const error = request.error;
-      cachedDatabase = null;
       if (error?.name === 'VersionError') reject(new SchemaVersionError(error.message));
       else reject(classifyStorageError(error));
     };
   });
-
-  return cachedDatabase;
 }
 
 export function resetOfflineDatabaseHandle(): void {
@@ -199,6 +217,11 @@ export function resetOfflineDatabaseHandle(): void {
  * await network I/O. Awaiting inside a live transaction lets it auto-commit and
  * lose atomicity, so the signature deliberately offers no async escape hatch:
  * results are delivered through `done` and failures through `fail`.
+ *
+ * `done` is mandatory. If the transaction completes without the caller invoking
+ * it — a handler that threw or forgot to deliver a result — the promise rejects
+ * rather than resolving `undefined`/`null`. Request-level errors are surfaced
+ * as rejections even when they do not abort the transaction.
  */
 export function runTransaction<T>(
   db: IDBDatabase,
@@ -216,15 +239,26 @@ export function runTransaction<T>(
     }
 
     let output: T | undefined;
+    let doneCalled = false;
     let settled = false;
     const fail = (error: unknown) => {
       if (settled) return;
       settled = true;
       reject(classifyStorageError(error));
     };
+    const done = (value: T) => {
+      if (settled || doneCalled) return;
+      doneCalled = true;
+      output = value;
+    };
 
     tx.oncomplete = () => {
       if (settled) return;
+      if (!doneCalled) {
+        settled = true;
+        reject(new OfflineStorageError('Transaction completed without a result'));
+        return;
+      }
       settled = true;
       resolve(output as T);
     };
@@ -232,9 +266,7 @@ export function runTransaction<T>(
     tx.onerror = () => fail(tx.error ?? new OfflineStorageError('IndexedDB transaction failed'));
 
     try {
-      operation(tx, (value) => {
-        output = value;
-      }, fail);
+      operation(tx, done, fail);
     } catch (error) {
       try {
         tx.abort();
@@ -280,6 +312,27 @@ function guardWrite(
     fail(request.error ?? new OfflineStorageError('Could not read lifecycle state'));
     tx.abort();
   };
+}
+
+/**
+ * Verifies that a record's declared `subject` (and, when present, an embedded
+ * key) match the lifecycle subject before the write is enqueued. This catches
+ * caller bugs that would otherwise store account A's record under account B's
+ * lifecycle context.
+ */
+function assertRecordSubject(subject: string, record: unknown): void {
+  if (typeof record !== 'object' || record === null) {
+    throw new SubjectMismatchError('Private record must be an object carrying a subject');
+  }
+  const candidate = record as { subject?: unknown; id?: unknown };
+  if (candidate.subject !== subject) {
+    throw new SubjectMismatchError(
+      `Record subject ${String(candidate.subject)} does not match lifecycle subject ${subject}`,
+    );
+  }
+  if (typeof candidate.id === 'string' && !keyBelongsToSubject(subject, candidate.id)) {
+    throw new SubjectMismatchError('Record key is not namespaced by its subject');
+  }
 }
 
 /**
@@ -344,10 +397,11 @@ export class OfflineDatabase {
    * whole transaction instead of leaking a write across ownership changes.
    */
   async putAccountRecord<T>(subject: string, epoch: number, store: string, value: T): Promise<void> {
+    assertRecordSubject(subject, value);
     const db = await this.db();
     await runTransaction<void>(db, ['lifecycle', store], 'readwrite', (tx, done, fail) => {
       guardWrite(tx, subject, epoch, fail, () => {
-        tx.objectStore(store).put(value);
+        tx.objectStore(store).put(value as unknown as IDBValidKey);
         done(undefined);
       });
     });
@@ -358,11 +412,13 @@ export class OfflineDatabase {
    * An abort leaves neither half an edit nor half an outbox record.
    */
   async commitEditWithOutbox(input: CommitEditInput<unknown>): Promise<void> {
+    assertRecordSubject(input.subject, input.record);
+    assertRecordSubject(input.subject, input.operation);
     const db = await this.db();
     await runTransaction<void>(db, ['lifecycle', 'readerRecords', 'outbox'], 'readwrite', (tx, done, fail) => {
       guardWrite(tx, input.subject, input.epoch, fail, () => {
-        tx.objectStore('readerRecords').put(input.record as IDBValidKey);
-        tx.objectStore('outbox').put(input.operation as IDBValidKey);
+        tx.objectStore('readerRecords').put(input.record as unknown as IDBValidKey);
+        tx.objectStore('outbox').put(input.operation as unknown as IDBValidKey);
         done(undefined);
       });
     });
@@ -370,10 +426,11 @@ export class OfflineDatabase {
 
   /** Appends an outbox operation alone, still fenced by owner + epoch. */
   async commitOutbox(subject: string, epoch: number, operation: unknown): Promise<void> {
+    assertRecordSubject(subject, operation);
     const db = await this.db();
     await runTransaction<void>(db, ['lifecycle', 'outbox'], 'readwrite', (tx, done, fail) => {
       guardWrite(tx, subject, epoch, fail, () => {
-        tx.objectStore('outbox').put(operation as IDBValidKey);
+        tx.objectStore('outbox').put(operation as unknown as IDBValidKey);
         done(undefined);
       });
     });
@@ -384,10 +441,11 @@ export class OfflineDatabase {
    * transaction. A crash before `oncomplete` leaves the operation replayable.
    */
   async acknowledgeOperation(subject: string, epoch: number, outboxId: string, receipt: unknown): Promise<void> {
+    assertRecordSubject(subject, receipt);
     const db = await this.db();
     await runTransaction<void>(db, ['lifecycle', 'outbox', 'receipts'], 'readwrite', (tx, done, fail) => {
       guardWrite(tx, subject, epoch, fail, () => {
-        tx.objectStore('receipts').put(receipt as IDBValidKey);
+        tx.objectStore('receipts').put(receipt as unknown as IDBValidKey);
         tx.objectStore('outbox').delete(outboxId);
         done(undefined);
       });

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { test, expect } from './pwa-fixtures.js';
 
 /**
@@ -15,17 +16,23 @@ import { test, expect } from './pwa-fixtures.js';
  * The portable module logic itself is covered by the Jest suites in
  * `src/lib/offline/*.spec.ts`; the module is not exposed on `window`, so the
  * browser cannot import it directly here.
+ *
+ * The harness uses a persistent profile shared across tests, so each test gets
+ * a unique database name to avoid cross-test state leakage.
  */
 
-const DB_NAME = 'transformlit-offline-e2e';
+function uniqueDbName(): string {
+  return `transformlit-offline-e2e-${randomUUID()}`;
+}
 
 test.describe('offline storage browser semantics', () => {
   test('aborts a transaction that errored after a successful request', async ({ context, origin }) => {
     const page = await context.newPage();
     await page.goto(`${origin}/offline`);
+    const dbName = uniqueDbName();
 
-    const result = await page.evaluate(async (dbName) => {
-      const request = indexedDB.open(dbName, 1);
+    const result = await page.evaluate(async (name) => {
+      const request = indexedDB.open(name, 1);
       request.onupgradeneeded = () => {
         request.result.createObjectStore('records', { keyPath: 'id' });
         request.result.createObjectStore('outbox', { keyPath: 'id' });
@@ -55,36 +62,40 @@ test.describe('offline storage browser semantics', () => {
       });
       db.close();
       return { completed, record };
-    }, DB_NAME);
+    }, dbName);
 
     expect(result.completed).toBe(false);
     expect(result.record).toBeNull();
   });
 
-  test('rolls back every store in a multi-store transaction', async ({ context, origin }) => {
+  test('rolls back every store when a later request fails', async ({ context, origin }) => {
     const page = await context.newPage();
     await page.goto(`${origin}/offline`);
+    const dbName = uniqueDbName();
 
-    const result = await page.evaluate(async (dbName) => {
-      const open = indexedDB.open(dbName, 1);
+    const result = await page.evaluate(async (name) => {
+      const open = indexedDB.open(name, 1);
       open.onupgradeneeded = () => {
         open.result.createObjectStore('records', { keyPath: 'id' });
-        open.result.createObjectStore('outbox', { keyPath: 'id' });
+        // A unique index lets a valid-key write fail at request time so the
+        // transaction aborts after earlier successful writes.
+        const outbox = open.result.createObjectStore('outbox', { keyPath: 'id' });
+        outbox.createIndex('opKey', 'opKey', { unique: true });
       };
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         open.onsuccess = () => resolve(open.result);
         open.onerror = () => reject(open.error);
       });
 
-      await new Promise<void>((resolve) => {
+      const aborted = await new Promise<boolean>((resolve) => {
         const tx = db.transaction(['records', 'outbox'], 'readwrite');
         tx.objectStore('records').put({ id: 'a' });
-        tx.objectStore('outbox').put({ id: 'b' });
-        // Enqueue a failing write after two successful ones.
-        const failing = tx.objectStore('outbox').put({ id: 'b' }, 'b');
-        failing.onerror = () => tx.abort();
-        tx.oncomplete = () => resolve();
-        tx.onabort = () => resolve();
+        tx.objectStore('outbox').put({ id: 'b', opKey: 'dup' });
+        // Duplicate the unique index key: the request errors and, with no
+        // preventDefault, aborts the whole transaction.
+        tx.objectStore('outbox').put({ id: 'c', opKey: 'dup' });
+        tx.oncomplete = () => resolve(false);
+        tx.onabort = () => resolve(true);
       });
 
       const tx = db.transaction(['records', 'outbox'], 'readonly');
@@ -97,9 +108,10 @@ test.describe('offline storage browser semantics', () => {
         get.onsuccess = () => resolve(get.result);
       });
       db.close();
-      return { recordCount, outboxCount };
-    }, DB_NAME);
+      return { aborted, recordCount, outboxCount };
+    }, dbName);
 
+    expect(result.aborted).toBe(true);
     expect(result.recordCount).toBe(0);
     expect(result.outboxCount).toBe(0);
   });
@@ -107,9 +119,10 @@ test.describe('offline storage browser semantics', () => {
   test('blocks an upgrade while another connection holds the database', async ({ context, origin }) => {
     const page = await context.newPage();
     await page.goto(`${origin}/offline`);
+    const dbName = uniqueDbName();
 
-    const result = await page.evaluate(async (dbName) => {
-      const first = indexedDB.open(dbName, 1);
+    const result = await page.evaluate(async (name) => {
+      const first = indexedDB.open(name, 1);
       first.onupgradeneeded = () => first.result.createObjectStore('records', { keyPath: 'id' });
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         first.onsuccess = () => resolve(first.result);
@@ -117,7 +130,7 @@ test.describe('offline storage browser semantics', () => {
       });
 
       const blocked = await new Promise<boolean>((resolve) => {
-        const upgrade = indexedDB.open(dbName, 2);
+        const upgrade = indexedDB.open(name, 2);
         upgrade.onupgradeneeded = () => upgrade.result.createObjectStore('more', { keyPath: 'id' });
         upgrade.onsuccess = () => {
           upgrade.result.close();
@@ -135,7 +148,7 @@ test.describe('offline storage browser semantics', () => {
       });
       db.close();
       return { blocked, count };
-    }, DB_NAME);
+    }, dbName);
 
     expect(result.blocked).toBe(true);
     expect(result.count).toBe(0);
@@ -144,6 +157,7 @@ test.describe('offline storage browser semantics', () => {
   test('maintains a single lease owner across competing same-origin tabs', async ({ context, origin }) => {
     const [tabA, tabB] = await Promise.all([context.newPage(), context.newPage()]);
     await Promise.all([tabA.goto(`${origin}/offline`), tabB.goto(`${origin}/offline`)]);
+    const dbName = uniqueDbName();
 
     const acquire = (page: (typeof tabA), ownerId: string) =>
       page.evaluate(
@@ -172,7 +186,7 @@ test.describe('offline storage browser semantics', () => {
           db.close();
           return result;
         },
-        { dbName: DB_NAME, owner: ownerId },
+        { dbName, owner: ownerId },
       );
 
     const [a, b] = await Promise.all([acquire(tabA, 'tab-a'), acquire(tabB, 'tab-b')]);

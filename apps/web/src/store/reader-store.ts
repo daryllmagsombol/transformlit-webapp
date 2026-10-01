@@ -29,6 +29,20 @@ function selectPersisted(state: ReaderStore): PersistedReaderState {
   return { theme: state.theme, mode: state.mode, zoom: state.zoom };
 }
 
+/**
+ * Version 1 persisted `lastPage` alongside presentation prefs. Returning users
+ * must keep `{theme,mode,zoom}` while the ambiguous unscoped progress is
+ * dropped — it is never assigned to an account.
+ */
+function migratePersistedState(persisted: unknown): PersistedReaderState {
+  const legacy = (persisted ?? {}) as Partial<ReaderStore>;
+  return {
+    theme: legacy.theme ?? 'paper',
+    mode: legacy.mode ?? 'paged',
+    zoom: legacy.zoom ?? 1,
+  };
+}
+
 export const useReaderStore = create<ReaderStore>()(
   persist(
     (set) => ({
@@ -45,6 +59,7 @@ export const useReaderStore = create<ReaderStore>()(
       version: READER_PERSIST_VERSION,
       storage: createJSONStorage(() => localStorage),
       partialize: selectPersisted,
+      migrate: migratePersistedState,
       // Rebuild state explicitly so legacy/unknown keys (including `lastPage`)
       // cannot leak back into the store from previously persisted JSON.
       merge: (persisted, current) => ({

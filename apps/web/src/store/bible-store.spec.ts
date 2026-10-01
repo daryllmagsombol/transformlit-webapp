@@ -44,6 +44,26 @@ describe('useBibleStore', () => {
     expect(useBibleStore.getState().subject).toBe('user-b');
   });
 
+  it('drives an account switch through the public seam without leaking position', () => {
+    // Simulates the Task 13A activation transition calling the public seam:
+    // authorize account A, record a position, then activate account B.
+    const activate = (subject: string) => useBibleStore.getState().setAccountSubject(subject);
+
+    activate('subject-a');
+    useBibleStore.getState().setLastPosition('BSB', { book: 'JHN', chapter: 3 });
+
+    activate('subject-b');
+    expect(useBibleStore.getState().lastPosition).toEqual({});
+    expect(useBibleStore.getState().subject).toBe('subject-b');
+    expect(useBibleStore.getState().translation).toBe('BSB');
+
+    // The persistence projection must carry the new subject, not account A's data.
+    const partialize = useBibleStore.persist.getOptions().partialize;
+    const persisted = (partialize ? partialize(useBibleStore.getState()) : {}) as Record<string, unknown>;
+    expect(persisted.subject).toBe('subject-b');
+    expect(persisted.lastPosition).toEqual({});
+  });
+
   it('keeps the same subject position when re-selecting the same account', () => {
     const store = useBibleStore.getState();
     store.setAccountSubject('user-a');

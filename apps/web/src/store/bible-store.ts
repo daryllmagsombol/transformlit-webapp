@@ -16,6 +16,13 @@ interface BibleStore {
    * Binds navigation preferences to an account. Switching subjects resets the
    * per-account position and search-index markers so one account's progress
    * never appears under another. Re-selecting the same subject is a no-op.
+   *
+   * FORWARD REFERENCE (Task 13A, same lane): this seam is currently UNWIRED —
+   * no production code calls it yet, so a stale position could still surface
+   * across accounts until the auth/lifecycle transition invokes it. Task 13A
+   * MUST call `setAccountSubject(verifiedSubject)` on every activation path
+   * (bootstrap, login, registration, OAuth, refresh) after the immutable
+   * subject is verified and before private content is shown.
    */
   setAccountSubject: (subject: string | null) => void;
   setLastPosition: (translation: string, pos: { book: string; chapter: number }) => void;

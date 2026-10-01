@@ -325,9 +325,17 @@ export class TransactionAbortedError extends OfflineStorageError {
 
 const KEY_SEPARATOR = '\u0000';
 
+/** Key separator used by `qualifyKey`; exported so guards can verify prefixes. */
+export const KEY_NAMESPACE_SEPARATOR = KEY_SEPARATOR;
+
 /** Builds an account-namespaced key. Every private key includes its subject. */
 export function qualifyKey(subject: string, ...parts: Array<string | number>): string {
   return [subject, ...parts].join(KEY_SEPARATOR);
+}
+
+/** True when `key` was built for `subject` by `qualifyKey`/`qualifyKey` helpers. */
+export function keyBelongsToSubject(subject: string, key: string): boolean {
+  return key.startsWith(`${subject}${KEY_SEPARATOR}`);
 }
 
 export function bookKey(subject: string, bookId: string): string {

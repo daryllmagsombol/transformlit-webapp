@@ -29,4 +29,26 @@ describe('reader store', () => {
     // Zustand's actual JSON storage must not carry progress either.
     expect(globalThis.localStorage.getItem('reader-storage') ?? '').not.toContain('lastPage');
   });
+
+  it('migrates v1 state by keeping presentation prefs and dropping lastPage', () => {
+    const migrate = useReaderStore.persist.getOptions().migrate;
+    expect(migrate).toBeDefined();
+
+    const legacyV1 = {
+      theme: 'sepia',
+      mode: 'scroll',
+      zoom: 1.5,
+      lastPage: { 'book-1': 12, 'book-2': 3 },
+    };
+    const migrated = (migrate ? migrate(legacyV1, 1) : {}) as Record<string, unknown>;
+
+    expect(migrated).toEqual({ theme: 'sepia', mode: 'scroll', zoom: 1.5 });
+    expect('lastPage' in migrated).toBe(false);
+  });
+
+  it('migrate tolerates an empty legacy payload', () => {
+    const migrate = useReaderStore.persist.getOptions().migrate;
+    const migrated = (migrate ? migrate(undefined, 0) : {}) as Record<string, unknown>;
+    expect(migrated).toEqual({ theme: 'paper', mode: 'paged', zoom: 1 });
+  });
 });

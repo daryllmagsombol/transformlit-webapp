@@ -91,8 +91,10 @@ pnpm --filter @transformlit/web test:e2e --config playwright.pwa.config.ts e2e/p
   `playwright.pwa.config.ts` sets `testMatch: '**/*.pwa.spec.ts'`, so the
   brief-named `e2e/pwa-storage.spec.ts` is not matched even once Docker exists.
   This must be reconciled when the harness runs; flagged, not edited.
-- Storage-unavailable/quota browser paths are covered by unit tests
-  (`classifyStorageError`, `getStorageStatus`) but not the blocked browser run.
+- Storage-unavailable/quota browser paths were originally claimed as
+  unit-covered; that was inaccurate for `openOfflineDatabase`. Round 1 adds
+  mocked unit coverage of open/unavailable/VersionError/blocked paths (see
+  below). Real-browser IDB runtime behavior remains BLOCKED.
 
 ## Scope notes
 
@@ -101,3 +103,81 @@ pnpm --filter @transformlit/web test:e2e --config playwright.pwa.config.ts e2e/p
 - Task 3's `PwaProvider.registerUpdateBarrier` seam is not consumed yet; the
   brief does not require registration in Task 4.
 - Commits are scoped to Task 4 so Task 13A can build on `account-context.ts`.
+
+## Round 1 fix — review findings (C1–C3, I1–I4)
+
+### Status
+
+All four Critical/Important review items addressed. No new dependencies. Real
+browser IndexedDB verification remains **BLOCKED** (Docker unavailable).
+
+### RED / GREEN evidence
+
+RED captured by reverting the fixed `database.ts`/`reader-store.ts` to `HEAD`
+and running the new specs: **7 failed / 16 passed**. Failures were exactly the
+new behaviors:
+
+- C1: `runTransaction` resolved `undefined` when a handler enqueued a request
+  without calling `done()`.
+- I1: a blocked upgrade hung instead of rejecting.
+- I2: subject-integrity guards absent (3 failures).
+- I4: `reader-store` had no `migrate`, so v1 presentation prefs were dropped.
+
+GREEN after restoring the fixes: the same focused specs pass (23/23), then the
+full suite passes (105 suites / 794 tests).
+
+### Changes
+
+- **C1 — self-enforcing commit.** `runTransaction` now rejects with
+  `OfflineStorageError('Transaction completed without a result')` when
+  `oncomplete` fires without `done()` having been called; `done` is idempotent
+  and required. A throwing handler still rejects (and aborts) even if a later
+  request succeeds. New tests cover never-`done`, value-on-complete, and throw.
+- **C2 — invalid E2E rollback test.** Reworked the multi-store rollback test in
+  `pwa-storage.spec.ts`: it now creates a unique index and enqueues a
+  duplicate-index-key write that genuinely fails at request time (aborting the
+  transaction), then asserts `aborted === true` and both stores count `0`.
+  Still authored/E2E and still BLOCKED here.
+- **C3 — account-subject reset unwired.** `setAccountSubject` carries an
+  explicit forward-reference comment stating it is currently UNWIRED and that
+  Task 13A MUST invoke it on every activation path. Added a store-level
+  integration test exercising the public seam across an A→B switch. The report
+  no longer claims the reset is end-to-end complete. No auth components edited.
+- **I1 — open cache poisoning.** `openOfflineDatabase` now caches only a
+  pending/resolved attempt and clears the cache from the attempt's own
+  rejection handler (guarded against races), so post-failure callers retry
+  fresh and concurrent callers share one open. Blocked upgrades reject
+  immediately and close any late-success database. Mocked unit tests cover
+  absent IndexedDB, failure-then-retry, concurrent sharing, `VersionError`, and
+  blocked.
+- **I2 — subject integrity.** `assertRecordSubject` verifies `record.subject`
+  matches the lifecycle subject and that a string `id` is namespaced by
+  `keyBelongsToSubject`; `putAccountRecord`, `commitEditWithOutbox`,
+  `commitOutbox`, and `acknowledgeOperation` call it before enqueuing. Unit
+  tests cover mismatch, unscoped key, outbox mismatch, and the pass-through.
+- **I3 — coverage honesty.** Report wording corrected (see above); added the
+  feasible mocked `openOfflineDatabase` unit coverage without a new dependency
+  via `apps/web/test/helpers/fake-indexeddb.ts` (a tiny, purpose-built fake,
+  not a general IDB implementation).
+- **I4 — presentation prefs preserved.** `reader-store` gained
+  `migratePersistedState` that keeps `{theme,mode,zoom}` and drops `lastPage`,
+  with tests for a legacy v1 payload and an empty payload.
+
+### Deferred minors (recorded, not fixed)
+
+- Unused speculative exports in `contracts.ts` (`isStaleEpoch`,
+  `classifyHttpFailure`, `assertSubject`).
+- Failure-label cosmetics.
+- E2E lease test fidelity (single-winner test is a simplified CAS model).
+- Resource hygiene and the missing trailing newline in
+  `test/helpers/fake-indexeddb.ts`.
+
+### Round 1 verification
+
+- RED: reverted code → 7 failures as above.
+- `pnpm --filter @transformlit/web test --runInBand` — **105 suites / 794 tests passed**.
+- `pnpm --filter @transformlit/web typecheck` — passed.
+- `pnpm --filter @transformlit/web build` — passed (Next.js 16.3.6).
+- `git diff --check` — passed.
+- Real-browser `pwa-storage.spec.ts` — **BLOCKED** (Docker/harness unavailable);
+  no browser result is claimed.
