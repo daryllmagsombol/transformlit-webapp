@@ -47,9 +47,14 @@ function fetchInPage(
   }, { path, init });
 }
 
-async function requireWorker(page: Page, testInfo: TestInfo): Promise<void> {
+/**
+ * Fetches `/sw.js` once and returns it. When it is not served (e.g. the plain
+ * dev server), the test is skipped and the returned response is the absent one.
+ */
+async function requireWorker(page: Page, testInfo: TestInfo): Promise<BrowserResponse> {
   const worker = await fetchInPage(page, '/sw.js');
   if (worker.status !== 200) testInfo.skip(true, 'Generated /sw.js is not served by this server');
+  return worker;
 }
 
 test.describe('standalone container static serving', () => {
@@ -60,8 +65,7 @@ test.describe('standalone container static serving', () => {
   });
 
   test('serves the root-scoped worker with the required MIME + no-store cache headers', async ({ page, origin }, testInfo) => {
-    await requireWorker(page, testInfo);
-    const worker = await fetchInPage(page, '/sw.js');
+    const worker = await requireWorker(page, testInfo);
     expect(worker.status).toBe(200);
     expect(worker.contentType).toContain('application/javascript');
     expect(worker.cacheControl).toContain('no-store');
@@ -70,8 +74,7 @@ test.describe('standalone container static serving', () => {
   });
 
   test('serves a non-cacheable asset inventory that matches the worker release', async ({ page, origin }, testInfo) => {
-    await requireWorker(page, testInfo);
-    const worker = await fetchInPage(page, '/sw.js');
+    const worker = await requireWorker(page, testInfo);
     const inventory = await fetchInPage(page, '/pwa-assets.json');
     expect(inventory.status).toBe(200);
     expect(inventory.contentType).toContain('application/json');
@@ -159,5 +162,58 @@ test.describe('standalone container static serving', () => {
     expect(worker.cacheControl).not.toContain('max-age=');
     expect(worker.cacheControl).toContain('no-store');
     expect(worker.workerAllowed).toBe('/');
+  });
+});
+
+/**
+ * Accessibility of the served offline hub (brief line 47). These are DOM-level
+ * assertions available in a real browser: semantic landmarks, an announced
+ * connection status, a 44px touch-target floor at a mobile viewport, and
+ * keyboard focusability.
+ *
+ * Ownership (recorded in the report): this covers the static `/offline` hub
+ * surface 14A serves. The interactive update/download/conflict/sync surfaces are
+ * covered by their originating tasks' unit specs (3/6/11/12/13B); colour/theming,
+ * reduced-motion, and assistive-technology behaviour on a real device remain
+ * 14C-owned live/device evidence.
+ */
+test.describe('offline hub accessibility', () => {
+  test.beforeEach(({}, testInfo) => {
+    if (!harnessConfigured) {
+      testInfo.skip(true, 'Accessibility suite requires the owned production HTTPS harness');
+    }
+  });
+
+  test('exposes landmarks, an announced status, 44px touch targets, and keyboard focus', async ({ page, origin }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${origin}/offline`);
+
+    const structure = await page.evaluate(() => ({
+      main: document.querySelectorAll('main').length,
+      header: document.querySelectorAll('header').length,
+      footer: document.querySelectorAll('footer').length,
+      statusText: document.querySelector('[role="status"][aria-live]')?.textContent?.trim() ?? '',
+    }));
+    expect(structure.main).toBeGreaterThanOrEqual(1);
+    expect(structure.header).toBeGreaterThanOrEqual(1);
+    expect(structure.footer).toBeGreaterThanOrEqual(1);
+    expect(structure.statusText.length).toBeGreaterThan(0);
+
+    // WCAG 2.5.5 target size: the hub's links/buttons declare `min-h-11` (44px).
+    const undersized = await page.evaluate(() => {
+      const failures: Array<{ tag: string; height: number }> = [];
+      document.querySelectorAll<HTMLElement>('a[href], button:not([disabled])').forEach((element) => {
+        const rect = element.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) return;
+        if (rect.height < 44) failures.push({ tag: element.tagName.toLowerCase(), height: Math.round(rect.height) });
+      });
+      return failures;
+    });
+    expect(undersized).toEqual([]);
+
+    // Keyboard: Tab reaches a real interactive control.
+    await page.keyboard.press('Tab');
+    const focusedTag = await page.evaluate(() => document.activeElement?.tagName.toLowerCase() ?? '');
+    expect(['a', 'button']).toContain(focusedTag);
   });
 });
