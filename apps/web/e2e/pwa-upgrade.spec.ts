@@ -14,9 +14,11 @@ import { test, expect } from './pwa-fixtures.js';
  *
  * The owned HTTPS harness serves a single release, so A→B scenarios drive the
  * release swap through the served inventory/worker where possible and are
- * otherwise authored against the two-release harness capability. Docker +
- * Playwright Chromium are unavailable in the implementation environment, so
- * this suite is authored and discovery-verified only; execution is BLOCKED.
+ * otherwise authored against the two-release harness capability. Docker and
+ * Playwright Chromium are present, but the detached harness supervisor was
+ * reaped before the suite could run against a stable origin, so this suite is
+ * authored and discovery-verified only; execution is reported BLOCKED, never
+ * claimed passing.
  */
 const harnessConfigured = Boolean(process.env.PWA_BROWSER_PROFILE && process.env.PWA_TLS_SPKI);
 
