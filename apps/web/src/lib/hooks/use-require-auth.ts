@@ -14,6 +14,12 @@ type RequireAuthResult = {
  * - the auth store hasn't hydrated yet (prevents redirect flash on refresh), or
  * - the store has no signed-in user
  *
+ * The `user` here is a DISPLAY profile and is insufficient on its own to
+ * authorize private offline work. Ownership is established/verified through
+ * the account-lifecycle gate (`lib/offline/account-activation`); download and
+ * replay code must consult `writePermit()` / `requireReplayIdentity()` instead
+ * of `user`.
+ *
  * When hydration completes and no user is present, redirects to
  * `/login?redirect=<current path>` so the user can return to the page they
  * originally tried to visit after signing in. The `/login` route itself is

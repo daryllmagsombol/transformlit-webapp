@@ -66,6 +66,56 @@ export interface AuthDisplayState {
   displayName: string | null;
 }
 
+// ── Auth activation / fencing ────────────────────────────────────────────
+
+/**
+ * Result of classifying an auth-dependent failure. `AUTH_REQUIRED` is a
+ * genuine credential rejection that pauses replay and requires same-subject
+ * reauthentication; `TRANSIENT` is a network/5xx outage that pauses work but
+ * must NOT clear local account data.
+ */
+export type AuthFailureClassification = 'TRANSIENT' | 'AUTH_REQUIRED';
+
+/** A verified immutable subject bound to the lifecycle epoch it was issued in. */
+export interface IdentityVerification {
+  subject: string;
+  epoch: number;
+}
+
+/** Outcome of attempting to establish or refresh local account ownership. */
+export type InstallOutcome =
+  | { status: 'INSTALLED'; owner: AccountOwner }
+  | { status: 'STALE_EPOCH'; current: AccountOwner }
+  | { status: 'SUBJECT_MISMATCH'; expected: string | null; received: string }
+  | { status: 'BLOCKED'; reason: ExitBlockReason };
+
+/** Whether private writes/replay are currently authorized. */
+export type WritePermit =
+  | { permitted: true; owner: AccountOwner }
+  | { permitted: false; reason: 'NO_OWNER' | 'AUTH_REQUIRED' | 'BLOCKED' };
+
+/** Whether replay may proceed under the current local ownership. */
+export type ReplayIdentity =
+  | { status: 'READY'; owner: AccountOwner }
+  | { status: 'PAUSED'; reason: 'NO_OWNER' | 'AUTH_REQUIRED' | 'TRANSIENT' | 'BLOCKED' };
+
+export type ExitBlockReason =
+  | 'EXIT_NOT_IMPLEMENTED'
+  | 'PENDING_WORK'
+  | 'DEFERRED_LOGOUT'
+  | 'REMOTE_INVALIDATION_REQUIRED';
+
+/**
+ * Fail-closed outcome for sign-out / account-switch. Task 13A only scaffolds
+ * this: an unimplemented controlled exit must return `BLOCKED` rather than
+ * clearing data or activating another subject.
+ */
+export type ExitDecision =
+  | { status: 'PROCEED' }
+  | { status: 'SYNC_REQUIRED'; reason: 'PENDING_WORK' }
+  | { status: 'BLOCKED'; reason: ExitBlockReason };
+
+
 /** Portable, fencing-token lease. Web Locks may enhance; this is authority. */
 export interface LeaseRecord {
   id: string;

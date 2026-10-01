@@ -1,0 +1,100 @@
+jest.mock('graphql-ws', () => ({ createClient: jest.fn(() => ({})) }));
+
+import { useAuthStore } from '../store';
+import { removeAccessToken } from './auth';
+import { bootstrapAuth, refreshTokens } from './apollo-client';
+import { requireReplayIdentity, resetAccountLifecycleForTests } from './offline/account-activation';
+
+function buildJwt(sub: string): string {
+  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const body = btoa(JSON.stringify({ sub, exp: 9999999999, iat: 1000000000 }));
+  return `${header}.${body}.sig`;
+}
+
+function okResponse(user: { id: string }, token: string) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ accessToken: token, user }),
+  };
+}
+
+describe('auth refresh classification and activation fencing', () => {
+  const fetchMock = jest.fn();
+
+  beforeEach(() => {
+    resetAccountLifecycleForTests();
+    useAuthStore.setState({ user: null, isHydrated: true });
+    removeAccessToken();
+    global.fetch = fetchMock as unknown as typeof fetch;
+    fetchMock.mockReset();
+  });
+
+  it('installs a verified subject on a successful refresh', async () => {
+    fetchMock.mockResolvedValue(okResponse({ id: 'user-a' }, buildJwt('user-a')));
+
+    await expect(bootstrapAuth()).resolves.toBe(true);
+    expect(useAuthStore.getState().user).toEqual({ id: 'user-a' });
+    expect(requireReplayIdentity()).toEqual({ status: 'READY', owner: { subject: 'user-a', epoch: 1 } });
+  });
+
+  it('treats a 5xx refresh failure as transient and preserves the local owner', async () => {
+    // Establish an owner first.
+    fetchMock.mockResolvedValueOnce(okResponse({ id: 'user-a' }, buildJwt('user-a')));
+    await bootstrapAuth();
+    // Force the next bootstrap to actually refresh, without clearing ownership.
+    removeAccessToken();
+    useAuthStore.setState({ user: null });
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) });
+    await expect(bootstrapAuth()).resolves.toBe(false);
+
+    // A transient outage must not clear established ownership or pause replay
+    // into an auth-required state.
+    expect(requireReplayIdentity().status).toBe('READY');
+  });
+
+  it('treats a genuine 401 as auth-required without clearing ownership', async () => {
+    fetchMock.mockResolvedValueOnce(okResponse({ id: 'user-a' }, buildJwt('user-a')));
+    await bootstrapAuth();
+    removeAccessToken();
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
+    await refreshTokens();
+
+    const identity = requireReplayIdentity();
+    expect(identity).toEqual({ status: 'PAUSED', reason: 'AUTH_REQUIRED' });
+  });
+
+  it('rejects a refresh whose token has no verifiable subject', async () => {
+    fetchMock.mockResolvedValue(okResponse({ id: 'user-a' }, 'not-a-jwt'));
+
+    await expect(bootstrapAuth()).resolves.toBe(false);
+    expect(useAuthStore.getState().user).toBeNull();
+  });
+
+  it('serializes concurrent in-tab refreshes into a single network call', async () => {
+    fetchMock.mockResolvedValue(okResponse({ id: 'user-a' }, buildJwt('user-a')));
+
+    const [a, b] = await Promise.all([refreshTokens(), refreshTokens()]);
+    expect(a).toBe(true);
+    expect(b).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes cookie-rotating refreshes across tabs when Web Locks exist', async () => {
+    const request = jest.fn((_name: string, _options: unknown, run: () => Promise<unknown>) => run());
+    Object.defineProperty(globalThis.navigator, 'locks', {
+      configurable: true,
+      value: { request },
+    });
+
+    try {
+      fetchMock.mockResolvedValue(okResponse({ id: 'user-a' }, buildJwt('user-a')));
+      await refreshTokens();
+      expect(request).toHaveBeenCalledWith('transformlit-auth-refresh', expect.anything(), expect.any(Function));
+    } finally {
+      Reflect.deleteProperty(globalThis.navigator as Navigator, 'locks');
+    }
+  });
+});

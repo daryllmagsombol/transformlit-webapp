@@ -60,6 +60,17 @@ export class AccountContext {
     return this.display;
   }
 
+  /** True once a verified subject owns this browser profile. */
+  hasEstablishedOwner(): boolean {
+    return this.owner !== null;
+  }
+
+  /** Current lifecycle epoch, or 0 before any owner was ever established. */
+  async currentEpoch(): Promise<number> {
+    const record = await this.persistence.readState();
+    return record?.epoch ?? 0;
+  }
+
   /** Display identity only. Does not establish ownership or authorize writes. */
   setDisplay(display: AuthDisplayState | null): void {
     this.display = display;

@@ -67,6 +67,12 @@ jest.mock('../../lib/constants', () => ({
   API_BASE: 'http://localhost:3005',
 }));
 
+const mockCompleteLocalAuth = jest.fn();
+
+jest.mock('../../lib/offline/account-activation', () => ({
+  completeLocalAuth: (user: unknown, token: string) => mockCompleteLocalAuth(user, token),
+}));
+
 const mockFetch = jest.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
 
@@ -101,6 +107,8 @@ describe('RegisterForm', () => {
     mockPush.mockClear();
     mockReplace.mockClear();
     mockSetAuth.mockClear();
+    mockCompleteLocalAuth.mockReset();
+    mockCompleteLocalAuth.mockResolvedValue(true);
     mockAddToast.mockClear();
     mockFetch.mockReset();
     mockAuthState = {
@@ -264,7 +272,7 @@ describe('RegisterForm', () => {
       });
     });
 
-    it('calls setAuth with user and access token on success', async () => {
+    it('routes installation through the account-lifecycle gate', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({ accessToken: 'access-tok', user: registerUser }),
@@ -275,8 +283,9 @@ describe('RegisterForm', () => {
       submit();
 
       await waitFor(() => {
-        expect(mockSetAuth).toHaveBeenCalledWith(registerUser, 'access-tok');
+        expect(mockCompleteLocalAuth).toHaveBeenCalledWith(registerUser, 'access-tok');
       });
+      expect(mockSetAuth).not.toHaveBeenCalled();
     });
 
     it('shows success toast on registration', async () => {

@@ -1,6 +1,7 @@
 import {
   classifyStorageError,
   keyBelongsToSubject,
+  type LifecycleBarrierRecord,
   type LifecycleStateRecord,
   type LeaseRecord,
   OFFLINE_DB_NAME,
@@ -12,6 +13,7 @@ import {
   TransactionAbortedError,
 } from './contracts';
 import type { LeasePersistence } from './coordination';
+import type { LifecyclePersistence } from './account-lifecycle';
 
 export { OFFLINE_DB_NAME, OFFLINE_DB_VERSION, bookKey, bibleChapterKey, qualifyKey } from './contracts';
 
@@ -391,6 +393,19 @@ export class OfflineDatabase {
     await this.put('lifecycle', record);
   }
 
+  /** Durable sign-out/switch barrier; read on restart by the lifecycle service. */
+  async readBarrier(): Promise<LifecycleBarrierRecord | null> {
+    return this.get<LifecycleBarrierRecord>('lifecycle', 'lifecycle-barrier');
+  }
+
+  async writeBarrier(record: LifecycleBarrierRecord): Promise<void> {
+    await this.put('lifecycle', record);
+  }
+
+  async clearBarrier(): Promise<void> {
+    await this.delete('lifecycle', 'lifecycle-barrier');
+  }
+
   /**
    * Writes one private record only when the caller's subject + lifecycle epoch
    * still match the authoritative owner. A stale account or epoch aborts the
@@ -502,5 +517,43 @@ export function createIndexedDbLeasePersistence(database?: OfflineDatabase): Lea
   return {
     read: (name) => db.get<LeaseRecord>('leases', name),
     compareAndSet: (name, expected, next) => db.compareAndSetLease(name, expected, next),
+  };
+}
+
+/**
+ * Lifecycle persistence backed by the IndexedDB `lifecycle` store. Used when a
+ * real IndexedDB is available so ownership epoch and the sign-out barrier
+ * survive a restart.
+ */
+export function createIndexedDbLifecyclePersistence(database?: OfflineDatabase): LifecyclePersistence {
+  const db = database ?? new OfflineDatabase();
+  return {
+    readState: () => db.readLifecycle(),
+    writeState: (record) => db.writeLifecycle(record),
+    readBarrier: () => db.readBarrier(),
+    writeBarrier: (record) => db.writeBarrier(record),
+    clearBarrier: () => db.clearBarrier(),
+  };
+}
+
+/** In-memory lifecycle persistence for SSR/jsdom where IndexedDB is absent. */
+export function createMemoryLifecyclePersistence(): LifecyclePersistence {
+  let state: LifecycleStateRecord | null = null;
+  let barrier: LifecycleBarrierRecord | null = null;
+  return {
+    readState: () => Promise.resolve(state),
+    writeState: (record) => {
+      state = record;
+      return Promise.resolve();
+    },
+    readBarrier: () => Promise.resolve(barrier),
+    writeBarrier: (record) => {
+      barrier = record;
+      return Promise.resolve();
+    },
+    clearBarrier: () => {
+      barrier = null;
+      return Promise.resolve();
+    },
   };
 }

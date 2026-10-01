@@ -14,11 +14,19 @@ import { createClient } from 'graphql-ws';
 import type { GraphQLUser } from '@transformlit/shared';
 import { useAuthStore } from '../store';
 import {
+  AuthHttpError,
   clearAuth,
+  decodeJwt,
   getAccessToken,
   isTokenExpiringSoon,
-  setAccessToken,
 } from './auth';
+import {
+  captureOriginEpoch,
+  installEpochTaggedAuth,
+  markAuthRequired,
+  markTransient,
+} from './offline/account-activation';
+import { classifyAuthError } from './offline/account-lifecycle';
 import { API_BASE } from './constants';
 
 const httpUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005/graphql';
@@ -60,10 +68,39 @@ async function callRestRefresh(): Promise<RestRefreshPayload> {
   });
 
   if (!response.ok) {
-    throw new Error(`Refresh failed: ${response.status}`);
+    // Carry the HTTP status so callers can distinguish a genuine 401 from a
+    // transient 5xx without destructive local cleanup.
+    throw new AuthHttpError(response.status, `Refresh failed: ${response.status}`);
   }
 
   return (await response.json()) as RestRefreshPayload;
+}
+
+/**
+ * Verifies the immutable subject from the access token and installs the
+ * session through the lifecycle gate. Returns false (installing nothing) when
+ * the token has no verifiable subject or the gate rejects it.
+ */
+async function installVerifiedSession(payload: RestRefreshPayload, originEpoch: number): Promise<boolean> {
+  const subject = decodeJwt(payload.accessToken)?.sub;
+  if (!subject) return false;
+
+  const outcome = await installEpochTaggedAuth(
+    { epoch: originEpoch, subject, value: payload },
+    (ticket) => useAuthStore.getState().installAuth(payload.user, payload.accessToken, ticket),
+  );
+  return outcome.status === 'INSTALLED';
+}
+
+/**
+ * Classifies a failed refresh and applies the correct non-destructive policy:
+ * a genuine 401 pauses replay and asks for same-subject reauthentication;
+ * a transient network/5xx failure pauses work without clearing local account
+ * ownership. Never clears local data.
+ */
+function handleRefreshFailure(error: unknown): void {
+  if (classifyAuthError(error) === 'AUTH_REQUIRED') markAuthRequired();
+  else markTransient();
 }
 
 async function doRefreshTokens(): Promise<boolean> {
@@ -74,20 +111,40 @@ async function doRefreshTokens(): Promise<boolean> {
   }
 
   lastRefreshAttempt = Date.now();
+  const originEpoch = await captureOriginEpoch();
   try {
     const payload = await callRestRefresh();
-    setAccessToken(payload.accessToken);
-    useAuthStore.getState().setAuth(payload.user, payload.accessToken);
-    return true;
-  } catch {
+    return await installVerifiedSession(payload, originEpoch);
+  } catch (error) {
+    handleRefreshFailure(error);
     redirectToLogin();
     return false;
   }
 }
 
+interface AuthLockManager {
+  request<T>(name: string, options: { mode?: 'exclusive' | 'shared' }, callback: () => Promise<T>): Promise<T>;
+}
+
+function authLockManager(): AuthLockManager | null {
+  const nav = globalThis.navigator as (Navigator & { locks?: AuthLockManager }) | undefined;
+  return nav?.locks ?? null;
+}
+
+/**
+ * Serializes cookie-rotating refreshes across tabs via the Web Locks API.
+ * The lock only coordinates concurrent refresh calls; tokens never leave the
+ * response body and are never carried by any notification.
+ */
+async function withCookieRefreshLock(run: () => Promise<boolean>): Promise<boolean> {
+  const locks = authLockManager();
+  if (!locks) return run();
+  return locks.request('transformlit-auth-refresh', { mode: 'exclusive' }, run);
+}
+
 export function refreshTokens(): Promise<boolean> {
   if (refreshPromise) return refreshPromise;
-  refreshPromise = doRefreshTokens().finally(() => {
+  refreshPromise = withCookieRefreshLock(doRefreshTokens).finally(() => {
     refreshPromise = null;
   });
   return refreshPromise;
@@ -99,15 +156,13 @@ export function refreshTokens(): Promise<boolean> {
  * refresh endpoint using the httpOnly cookie. On failure the user is treated
  * as signed out (no hard redirect — callers decide).
  */
-export async function bootstrapAuth(): Promise<boolean> {
-  const hadTokenAtStart = getAccessToken() !== null;
-  if (hadTokenAtStart) return true;
+async function bootstrapAttempt(): Promise<boolean> {
+  const originEpoch = await captureOriginEpoch();
   try {
     const payload = await callRestRefresh();
-    setAccessToken(payload.accessToken);
-    useAuthStore.getState().setAuth(payload.user, payload.accessToken);
-    return true;
-  } catch {
+    return await installVerifiedSession(payload, originEpoch);
+  } catch (error) {
+    handleRefreshFailure(error);
     // A concurrent manual login (or another refresh) may have established a
     // session while this bootstrap call was in flight. Never clear a session
     // that did not exist when we began — otherwise a slow failing refresh can
@@ -118,6 +173,14 @@ export async function bootstrapAuth(): Promise<boolean> {
     }
     return false;
   }
+}
+
+export async function bootstrapAuth(): Promise<boolean> {
+  const hadTokenAtStart = getAccessToken() !== null;
+  if (hadTokenAtStart) return true;
+  // Share the cookie-rotation lock so a bootstrap cannot race a refresh in
+  // another tab and double-rotate the refresh cookie.
+  return withCookieRefreshLock(bootstrapAttempt);
 }
 
 /**
