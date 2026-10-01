@@ -59,6 +59,39 @@ describe('SyncStatus', () => {
     expect(onReauthenticate).toHaveBeenCalledTimes(1);
   });
 
+  it('surfaces terminal work as needing recovery and never offers discard for it', () => {
+    render(
+      <SyncStatus
+        pending={0}
+        conflicts={0}
+        terminal={2}
+        state="ERROR"
+        onRetry={jest.fn()}
+        onReauthenticate={jest.fn()}
+        onDiscard={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(/2/);
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    // Terminal outcomes were never conflicts: no "discard" affordance.
+    expect(screen.queryByRole('button', { name: /discard/i })).not.toBeInTheDocument();
+  });
+
+  it('offers discard only for true conflicts, not for terminal work', () => {
+    render(
+      <SyncStatus
+        pending={0}
+        conflicts={1}
+        terminal={3}
+        state="ERROR"
+        onRetry={jest.fn()}
+        onReauthenticate={jest.fn()}
+        onDiscard={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /discard conflicting changes/i })).toBeInTheDocument();
+  });
+
   it('surfaces a storage failure honestly and distinctly from a network retry', () => {
     render(
       <SyncStatus

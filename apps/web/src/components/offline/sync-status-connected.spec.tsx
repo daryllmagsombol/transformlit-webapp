@@ -38,7 +38,7 @@ function status(overrides: Partial<CoordinatorStatus> = {}): CoordinatorStatus {
     state: 'IDLE',
     pending: 0,
     conflicts: 0,
-    failed: 0,
+    terminal: 0,
     authRequired: false,
     storageFailure: false,
     lastError: null,
@@ -84,5 +84,13 @@ describe('SyncStatusConnected', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /discard/i }));
     await waitFor(() => expect(mockCoordinator.discardConflicts).toHaveBeenCalledTimes(1));
+  });
+
+  it('surfaces terminal work for recovery without offering discard', () => {
+    render(<SyncStatusConnected />);
+    emit(status({ state: 'ERROR', terminal: 2 }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/2/);
+    expect(screen.queryByRole('button', { name: /discard/i })).not.toBeInTheDocument();
   });
 });

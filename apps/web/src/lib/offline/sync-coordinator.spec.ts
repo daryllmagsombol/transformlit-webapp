@@ -149,8 +149,8 @@ describe('classifyDispatchError', () => {
   it('classifies storage failures distinctly and never as transient', () => {
     expect(classifyDispatchError(new OfflineStorageError('quota'))).toBe('STORAGE_FAILURE');
     expect(classifyDispatchError(new DOMException('quota', 'QuotaExceededError'))).toBe('STORAGE_FAILURE');
-    expect(classifyDispatchError(new DOMException('aborted', 'AbortError'))).toBe('STORAGE_FAILURE');
   });
+
 });
 
 describe('SyncCoordinator', () => {
@@ -457,17 +457,55 @@ describe('SyncCoordinator', () => {
     expect(harness.store.rows).toHaveLength(1);
   });
 
-  it('discards terminal conflict operations on request (actionable recovery)', async () => {
+  it('discards ONLY true conflicts on request (actionable recovery)', async () => {
     const harness = makeHarness();
     harness.store.rows.push(
       operation({ id: 'conflict', seq: 1, entityKey: 'e1', dispatchState: 'FAILED' }),
-      operation({ id: 'pending', seq: 2, entityKey: 'e2' }),
+      operation({ id: 'denied', seq: 2, entityKey: 'e2', dispatchState: 'TERMINAL' }),
+      operation({ id: 'incompatible', seq: 3, entityKey: 'e3', dispatchState: 'TERMINAL' }),
+      operation({ id: 'pending', seq: 4, entityKey: 'e4' }),
     );
 
     const discarded = await harness.coordinator.discardConflicts();
 
+    // Access-denied / incompatible-version ops were never conflicts and must
+    // never be silently discarded under the "conflicts" control.
     expect(discarded).toBe(1);
-    expect(harness.store.rows.map((row) => row.id)).toEqual(['pending']);
+    expect(harness.store.rows.map((row) => row.id).sort()).toEqual(['denied', 'incompatible', 'pending']);
+  });
+
+  it('marks an access-denied outcome TERMINAL (not a conflict) and retains it', async () => {
+    const harness = makeHarness();
+    harness.store.rows.push(operation({ id: 'denied', seq: 1 }));
+    harness.send.mockResolvedValue({ kind: 'ACCESS_DENIED', resourceId: 'book-1', reason: 'no access' });
+
+    const result = await harness.coordinator.drain();
+
+    expect(result.summary.accessDenied).toBe(1);
+    expect(harness.store.rows).toHaveLength(1);
+    expect(harness.store.rows[0].dispatchState).toBe('TERMINAL');
+    const status = harness.coordinator.getStatus();
+    expect(status?.terminal).toBe(1);
+    expect(status?.conflicts).toBe(0);
+  });
+
+  it('marks an incompatible-version outcome TERMINAL (not a conflict) and retains it', async () => {
+    const harness = makeHarness();
+    harness.store.rows.push(operation({ id: 'incompatible', seq: 1 }));
+    harness.send.mockResolvedValue({
+      kind: 'INCOMPATIBLE_VERSION',
+      requestedContentVersion: 1,
+      supportedContentVersions: [2],
+    });
+
+    const result = await harness.coordinator.drain();
+
+    expect(result.summary.incompatibleVersion).toBe(1);
+    expect(harness.store.rows).toHaveLength(1);
+    expect(harness.store.rows[0].dispatchState).toBe('TERMINAL');
+    const status = harness.coordinator.getStatus();
+    expect(status?.terminal).toBe(1);
+    expect(status?.conflicts).toBe(0);
   });
 
   it('subscribes to status transitions and replays the latest status', async () => {
@@ -482,13 +520,15 @@ describe('SyncCoordinator', () => {
     unsubscribe();
   });
 
-  it('reports a controlled drain that accounts for pending, in-flight, blocked, and conflict work', async () => {
+  it('reports a controlled drain that accounts for pending, in-flight, blocked, conflict and terminal work distinctly', async () => {
     const harness = makeHarness();
     harness.store.rows.push(
       operation({ id: 'pending', seq: 1, entityKey: 'e1' }),
       operation({ id: 'inflight', seq: 2, entityKey: 'e2', dispatchState: 'DISPATCHING' }),
       operation({ id: 'blocked', seq: 3, entityKey: 'e3', dependsOn: 'pending' }),
       operation({ id: 'conflict', seq: 4, entityKey: 'e4', dispatchState: 'FAILED' }),
+      operation({ id: 'denied', seq: 5, entityKey: 'e5', dispatchState: 'TERMINAL' }),
+      operation({ id: 'incompatible', seq: 6, entityKey: 'e6', dispatchState: 'TERMINAL' }),
     );
 
     const report = await harness.coordinator.controlledDrain();
@@ -497,13 +537,23 @@ describe('SyncCoordinator', () => {
     expect(report.pending).toBeGreaterThanOrEqual(1);
     expect(report.inFlightOrUncertain).toBeGreaterThanOrEqual(1);
     expect(report.blockedSuccessors).toBeGreaterThanOrEqual(1);
-    expect(report.conflicts).toBeGreaterThanOrEqual(1);
+    // Terminal outcomes are NOT conflicts and must not inflate the conflict
+    // figure used for sign-out gating.
+    expect(report.conflicts).toBe(1);
+    expect(report.terminal).toBe(2);
   });
 
   it('reports fully drained when there is no work', async () => {
     const harness = makeHarness();
     const report = await harness.coordinator.controlledDrain();
-    expect(report).toMatchObject({ fullyDrained: true, pending: 0, inFlightOrUncertain: 0, blockedSuccessors: 0, conflicts: 0 });
+    expect(report).toMatchObject({
+      fullyDrained: true,
+      pending: 0,
+      inFlightOrUncertain: 0,
+      blockedSuccessors: 0,
+      conflicts: 0,
+      terminal: 0,
+    });
   });
 });
 

@@ -155,17 +155,24 @@ export interface ControlledDrainReport {
   readonly pending: number;
   readonly inFlightOrUncertain: number;
   readonly blockedSuccessors: number;
+  /** TRUE conflicts only (user-resolvable edits paused by a server conflict). */
   readonly conflicts: number;
+  /**
+   * Non-conflict terminal outcomes (access denied / incompatible version).
+   * Distinct from conflicts so they are never counted as conflicts for
+   * sign-out gating nor silently discarded as one.
+   */
+  readonly terminal: number;
   readonly fullyDrained: boolean;
 }
 
 export interface CoordinatorStatus {
   readonly state: 'IDLE' | 'SYNCING' | 'BLOCKED' | 'ERROR';
   readonly pending: number;
-  /** Conflicts observed in the run that produced this status. */
+  /** Durable TRUE conflicts (dispatchState `FAILED`). */
   readonly conflicts: number;
-  /** Terminal-but-retryable operations retained after a failed dispatch. */
-  readonly failed: number;
+  /** Durable non-conflict terminal outcomes (dispatchState `TERMINAL`). */
+  readonly terminal: number;
   readonly authRequired: boolean;
   readonly storageFailure: boolean;
   readonly lastError: string | null;
@@ -210,7 +217,14 @@ export function classifyDispatchError(error: unknown): DispatchFailure {
   return 'TRANSIENT';
 }
 
-/** True for IndexedDB/quota DOMExceptions, which are storage faults. */
+/**
+ * True for genuine storage DOMExceptions (quota / IndexedDB state faults).
+ * `AbortError` is deliberately EXCLUDED: a fetch/abort-induced AbortError is a
+ * cancelled network request and must fall through to TRANSIENT so it is retried,
+ * not surfaced as a bogus storage fault. A real IndexedDB transaction abort is
+ * wrapped as `OfflineStorageError`/`TransactionAbortedError` and is caught by
+ * the first check in `classifyDispatchError`.
+ */
 function isStorageDomException(error: unknown): boolean {
   if (typeof DOMException === 'undefined' || !(error instanceof DOMException)) return false;
   return (
@@ -279,9 +293,11 @@ export class SyncCoordinator {
   }
 
   /**
-   * Discards terminal conflict operations for the current owner (the user
-   * choosing to abandon a conflicting local edit). Returns how many were
-   * removed. This is the actionable "discard" recovery path.
+   * Discards TRUE conflict operations for the current owner (the user choosing
+   * to abandon a conflicting local edit). Only `dispatchState: 'FAILED'` is
+   * removed; terminal non-conflict outcomes (`TERMINAL`) are retained because
+   * they were never conflicts and must not be silently discarded. Returns how
+   * many were removed.
    */
   async discardConflicts(): Promise<number> {
     const owner = this.deps.lifecycle.getOwner();
@@ -291,7 +307,8 @@ export class SyncCoordinator {
     for (const operation of conflicted) {
       await this.deps.store.remove(operation.id);
     }
-    this.emitStatus('IDLE', [], emptySummary(), null);
+    const remaining = operations.filter((operation) => operation.dispatchState !== 'FAILED');
+    this.emitStatus('IDLE', remaining, emptySummary(), null);
     return conflicted.length;
   }
 
@@ -325,8 +342,12 @@ export class SyncCoordinator {
     try {
       if (lifecycle.getOwner()?.subject !== initialOwner.subject) return this.blocked('NO_OWNER', summary);
       const operations = await this.deps.store.list(initialOwner.subject);
-      const remaining = await this.processOperations(initialOwner, orderForDispatch(operations), summary, lease);
-      this.emitStatus('IDLE', remaining, summary, null);
+      await this.processOperations(initialOwner, orderForDispatch(operations), summary, lease);
+      // Re-read the DURABLE queue for the final status: dispatch updated each
+      // operation's dispatchState (PENDING/FAILED/TERMINAL), so the in-memory
+      // working copy is stale for conflict/terminal counts.
+      const settled = await this.deps.store.list(initialOwner.subject);
+      this.emitStatus('IDLE', settled, summary, null);
       return { summary, blockedReason: null };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Sync failed';
@@ -342,7 +363,7 @@ export class SyncCoordinator {
     ordered: readonly OutboxOperationRecord[],
     summary: DrainSummary,
     lease: LeaseRecord | null,
-  ): Promise<OutboxOperationRecord[]> {
+  ): Promise<void> {
     // Mutable working copy so a successor's advanced base revision is visible
     // when its turn comes, without mutating the persisted payload.
     const working = new Map(ordered.map((operation) => [operation.id, operation]));
@@ -366,7 +387,6 @@ export class SyncCoordinator {
         }
       }
     }
-    return [...working.values()];
   }
 
   /** Returns the reconciliation effect on the current run. */
@@ -488,10 +508,12 @@ export class SyncCoordinator {
    * INCOMPATIBLE_VERSION). The contracts deliberately record NO receipt for
    * these outcomes: they are terminal only until user/account/content state
    * changes, so a later replay must be re-evaluated rather than frozen. The
-   * operation stays queued immutably and is marked terminal.
+   * operation stays queued immutably and is marked `TERMINAL` — a state distinct
+   * from conflict `FAILED`, so it is never offered as "discard conflicting
+   * changes" nor counted as a conflict.
    */
   private async retainTerminal(operation: OutboxOperationRecord): Promise<void> {
-    await this.deps.store.update({ ...operation, dispatchState: 'FAILED', attemptCount: operation.attemptCount + 1 });
+    await this.deps.store.update({ ...operation, dispatchState: 'TERMINAL', attemptCount: operation.attemptCount + 1 });
   }
 
   /**
@@ -551,8 +573,11 @@ export class SyncCoordinator {
     const status: CoordinatorStatus = {
       state,
       pending: operations.filter((operation) => operation.dispatchState === 'PENDING').length,
-      conflicts: summary.conflict,
-      failed: operations.filter((operation) => operation.dispatchState === 'FAILED').length,
+      // Conflicts and terminal outcomes are counted from the DURABLE queue and
+      // kept disjoint: a terminal access-denied/incompatible op is never counted
+      // as a conflict.
+      conflicts: operations.filter((operation) => operation.dispatchState === 'FAILED').length,
+      terminal: operations.filter((operation) => operation.dispatchState === 'TERMINAL').length,
       authRequired: summary.authRequired > 0,
       storageFailure: summary.storageFailure > 0,
       lastError,
@@ -618,18 +643,23 @@ export class SyncCoordinator {
    */
   async controlledDrain(): Promise<ControlledDrainReport> {
     const owner = this.deps.lifecycle.getOwner();
-    if (!owner) return { pending: 0, inFlightOrUncertain: 0, blockedSuccessors: 0, conflicts: 0, fullyDrained: false };
+    if (!owner) {
+      return { pending: 0, inFlightOrUncertain: 0, blockedSuccessors: 0, conflicts: 0, terminal: 0, fullyDrained: false };
+    }
     const operations = await this.deps.store.list(owner.subject);
     const present = new Set(operations.map((operation) => operation.id));
     const blocked = operations.filter((operation) => isBlockedSuccessor(operation, present)).length;
     const inFlight = operations.filter((operation) => operation.dispatchState === 'DISPATCHING').length;
+    // Conflicts and terminal outcomes are DISJOINT states, so an access-denied /
+    // incompatible-version op never inflates the conflict figure.
     const conflicts = operations.filter((operation) => operation.dispatchState === 'FAILED').length;
+    const terminal = operations.filter((operation) => operation.dispatchState === 'TERMINAL').length;
     // Pending excludes blocked successors (counted separately) so the categories
     // are disjoint and a blocked successor is never double-counted as pending.
     const pending = operations.filter(
       (operation) => operation.dispatchState === 'PENDING' && !isBlockedSuccessor(operation, present),
     ).length;
     const fullyDrained = operations.length === 0;
-    return { pending, inFlightOrUncertain: inFlight, blockedSuccessors: blocked, conflicts, fullyDrained };
+    return { pending, inFlightOrUncertain: inFlight, blockedSuccessors: blocked, conflicts, terminal, fullyDrained };
   }
 }

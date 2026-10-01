@@ -12,6 +12,10 @@ import type { AccountOwner } from './contracts';
  * - `DISPATCHING`/`DISPATCHED` — handed to the network; its id and payload are
  *   immutable across retries and it is never coalesced.
  * - `FAILED` — a dispatch attempt failed; retained immutably for retry.
+ * - `TERMINAL` — a non-conflict terminal outcome (access denied / incompatible
+ *   version). Retained immutably and re-evaluated only when user/account/content
+ *   state changes. Kept DISTINCT from conflicts so it is never offered as
+ *   "discard conflicting changes" nor counted as a conflict for sign-out gating.
  *
  * No server acknowledgement / receipts are applied here — that is Task 11.
  */
@@ -51,7 +55,7 @@ export type OutboxOperationKind =
   | 'ANNOTATION_UPDATE'
   | 'ANNOTATION_DELETE';
 
-export type OutboxDispatchState = 'PENDING' | 'DISPATCHING' | 'DISPATCHED' | 'FAILED';
+export type OutboxDispatchState = 'PENDING' | 'DISPATCHING' | 'DISPATCHED' | 'FAILED' | 'TERMINAL';
 
 export class OutboxError extends Error {
   constructor(message: string) {
