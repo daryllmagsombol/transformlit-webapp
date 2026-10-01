@@ -5,6 +5,7 @@ import {
   type BookPageRecord,
   type BookVersionRecord,
   type DownloadManifestRecord,
+  type DeferredLogoutRecord,
   type LifecycleBarrierRecord,
   type LifecycleStateRecord,
   type LeaseRecord,
@@ -435,6 +436,23 @@ export class OfflineDatabase {
   }
 
   /**
+   * Durable deferred-logout marker: written when the remote session could not be
+   * invalidated (offline/failed/timed-out). It blocks every activation path
+   * until the old session is confirmed invalidated, surviving restart.
+   */
+  async readDeferredLogout(): Promise<DeferredLogoutRecord | null> {
+    return this.get<DeferredLogoutRecord>('lifecycle', 'deferred-logout');
+  }
+
+  async writeDeferredLogout(record: DeferredLogoutRecord): Promise<void> {
+    await this.put('lifecycle', record);
+  }
+
+  async clearDeferredLogout(): Promise<void> {
+    await this.delete('lifecycle', 'deferred-logout');
+  }
+
+  /**
    * Writes one private record only when the caller's subject + lifecycle epoch
    * still match the authoritative owner. A stale account or epoch aborts the
    * whole transaction instead of leaking a write across ownership changes.
@@ -853,6 +871,9 @@ export function createIndexedDbLifecyclePersistence(database?: OfflineDatabase):
     readBarrier: () => db.readBarrier(),
     writeBarrier: (record) => db.writeBarrier(record),
     clearBarrier: () => db.clearBarrier(),
+    readDeferredLogout: () => db.readDeferredLogout(),
+    writeDeferredLogout: (record) => db.writeDeferredLogout(record),
+    clearDeferredLogout: () => db.clearDeferredLogout(),
   };
 }
 
@@ -860,6 +881,7 @@ export function createIndexedDbLifecyclePersistence(database?: OfflineDatabase):
 export function createMemoryLifecyclePersistence(): LifecyclePersistence {
   let state: LifecycleStateRecord | null = null;
   let barrier: LifecycleBarrierRecord | null = null;
+  let deferred: DeferredLogoutRecord | null = null;
   return {
     readState: () => Promise.resolve(state),
     writeState: (record) => {
@@ -873,6 +895,15 @@ export function createMemoryLifecyclePersistence(): LifecyclePersistence {
     },
     clearBarrier: () => {
       barrier = null;
+      return Promise.resolve();
+    },
+    readDeferredLogout: () => Promise.resolve(deferred),
+    writeDeferredLogout: (record) => {
+      deferred = record;
+      return Promise.resolve();
+    },
+    clearDeferredLogout: () => {
+      deferred = null;
       return Promise.resolve();
     },
   };

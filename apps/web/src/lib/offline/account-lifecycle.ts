@@ -3,6 +3,8 @@ import type {
   AccountOwner,
   AuthDisplayState,
   AuthFailureClassification,
+  BarrierReason,
+  DeferredLogoutRecord,
   ExitDecision,
   IdentityVerification,
   InstallOutcome,
@@ -23,8 +25,9 @@ export type {
 
 /**
  * Durable lifecycle persistence the lifecycle service needs: the owner/epoch
- * state plus a sign-out/switch barrier that must survive restart. The IndexedDB
- * adapter implements this against the `lifecycle` store; tests use memory.
+ * state plus a sign-out/switch barrier and a deferred-logout marker, all of
+ * which must survive restart. The IndexedDB adapter implements this against the
+ * `lifecycle` store; tests use memory.
  */
 export interface LifecyclePersistence {
   readState(): Promise<LifecycleStateRecord | null>;
@@ -32,6 +35,48 @@ export interface LifecyclePersistence {
   readBarrier(): Promise<LifecycleBarrierRecord | null>;
   writeBarrier(record: LifecycleBarrierRecord): Promise<void>;
   clearBarrier(): Promise<void>;
+  readDeferredLogout(): Promise<DeferredLogoutRecord | null>;
+  writeDeferredLogout(record: DeferredLogoutRecord): Promise<void>;
+  clearDeferredLogout(): Promise<void>;
+}
+
+/**
+ * The disjoint controlled-drain report the exit gate consumes. Mirrors
+ * `ControlledDrainReport` structurally so the lifecycle does not import the
+ * sync coordinator (no cycle). `fullyDrained` is the ONLY success signal — a
+ * raw pending count is never used, because it includes blocked successors.
+ */
+export interface ExitDrainReport {
+  readonly fullyDrained: boolean;
+  readonly pending: number;
+  readonly inFlightOrUncertain: number;
+  readonly blockedSuccessors: number;
+  readonly conflicts: number;
+  readonly terminal: number;
+  readonly localOnly: number;
+}
+
+/** The seams the exit/drain/logout flow needs (wired by Task 13B). */
+export interface LifecycleExitDeps {
+  /** The controlled drain contract; `fullyDrained` gates un-synced sign-out. */
+  readonly controlledDrain: () => Promise<ExitDrainReport>;
+  /**
+   * Remote session invalidation. Returns true only when the old session is
+   * settled (cookie expired/invalidated); false when offline, failed, or
+   * timed out. A timeout alone is NOT proof — callers must settle/abort the
+   * outstanding request and report the true settled state here.
+   */
+  readonly invalidateSession: () => Promise<boolean>;
+  /** Destructive local cleanup, run only AFTER the barrier is durable. */
+  readonly clearLocalData: (subject: string) => Promise<void>;
+  /** Best-effort cross-tab notification of the ownership change. */
+  readonly notifyOtherTabs?: () => void;
+}
+
+export interface CompleteExitOptions {
+  /** Explicit informed discard after the user confirms; skips the drain gate. */
+  readonly discard?: boolean;
+  readonly reason?: BarrierReason;
 }
 
 /**
@@ -81,10 +126,27 @@ export interface AuthLifecycle {
   subscribe(listener: () => void): () => void;
   /** Monotonic snapshot counter for `useSyncExternalStore` getSnapshot. */
   stateVersion(): number;
-  /** Task 13B seam: fail-closed, never clears data in Task 13A. */
-  beginExit(): ExitDecision;
-  /** Task 13B seam: not implemented here; always fails closed. */
-  completeExit(): Promise<ExitDecision>;
+  /**
+   * Task 13B wiring: supplies the controlled drain, remote invalidation, and
+   * destructive cleanup seams the exit flow needs.
+   */
+  configureExitDeps(deps: LifecycleExitDeps): void;
+  /**
+   * Begins a sign-out / account switch: freezes new writes + replay and reports
+   * whether a controlled drain is required before the exit can proceed.
+   */
+  beginExit(reason?: BarrierReason): ExitDecision;
+  /**
+   * Completes the exit: gates on the controlled drain (unless `discard`),
+   * persists the barrier, invalidates the remote session, and clears old-account
+   * data. Returns `SYNC_REQUIRED` when undrained work blocks exit and
+   * `BLOCKED/DEFERRED_LOGOUT` when the remote session could not be invalidated.
+   */
+  completeExit(options?: CompleteExitOptions): Promise<ExitDecision>;
+  /** Retries a deferred remote invalidation; unblocks activation on success. */
+  resolveDeferredLogout(): Promise<ExitDecision>;
+  /** True when no barrier/deferred-logout blocks a new activation. */
+  activationEligible(): Promise<boolean>;
 }
 
 /**
@@ -115,12 +177,34 @@ export class AccountLifecycle implements AuthLifecycle {
   private readonly context: AccountContext;
   private readonly persistence: LifecyclePersistence;
   private authRequired = false;
+  private freezing = false;
   private version = 0;
   private readonly listeners = new Set<() => void>();
+  private exitDeps: LifecycleExitDeps;
 
   constructor(context: AccountContext, persistence: LifecyclePersistence) {
     this.context = context;
     this.persistence = persistence;
+    // Fail-closed defaults: with no wired drain/session invalidation an exit
+    // cannot be proven complete, so it never silently proceeds.
+    this.exitDeps = {
+      controlledDrain: async () => ({
+        fullyDrained: false,
+        pending: 0,
+        inFlightOrUncertain: 0,
+        blockedSuccessors: 0,
+        conflicts: 0,
+        terminal: 0,
+        localOnly: 0,
+      }),
+      invalidateSession: async () => false,
+      clearLocalData: async () => undefined,
+    };
+  }
+
+  /** Wires the exit/drain/logout seams (Task 13B). */
+  configureExitDeps(deps: LifecycleExitDeps): void {
+    this.exitDeps = deps;
   }
 
   subscribe(listener: () => void): () => void {
@@ -158,6 +242,11 @@ export class AccountLifecycle implements AuthLifecycle {
    * restarts (a new tab sees the previously established owner).
    */
   async hydrate(): Promise<AccountOwner | null> {
+    // A durable barrier or deferred logout means the previous session must not
+    // be silently restored: the old account is mid-exit and activation is
+    // blocked until remote invalidation completes. Fail closed across restart.
+    if (await this.persistence.readBarrier()) return this.context.getOwner();
+    if (await this.persistence.readDeferredLogout()) return this.context.getOwner();
     if (this.context.hasEstablishedOwner()) return this.context.getOwner();
     const restored = await this.context.restore();
     if (restored) this.notify();
@@ -188,9 +277,14 @@ export class AccountLifecycle implements AuthLifecycle {
    * A blocked barrier (deferred logout / pending switch) fails closed.
    */
   async establishIdentity(verification: IdentityVerification): Promise<InstallOutcome> {
-    const barrier = await this.persistence.readBarrier();
-    if (barrier) {
+    // Every activation path (local login/registration, OAuth return, bootstrap,
+    // refresh) must pass this gate. A deferred logout blocks activation until
+    // the old session is invalidated; a mid-exit barrier blocks until cleanup.
+    if (await this.persistence.readDeferredLogout()) {
       return { status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' };
+    }
+    if (await this.persistence.readBarrier()) {
+      return { status: 'BLOCKED', reason: 'REMOTE_INVALIDATION_REQUIRED' };
     }
 
     const current = this.context.getOwner();
@@ -212,12 +306,20 @@ export class AccountLifecycle implements AuthLifecycle {
    * delayed response can never fence past a newer lifecycle state.
    */
   async installIdentity<T>(result: EpochTaggedResult<T>): Promise<InstallOutcome> {
+    // A pending exit (barrier/deferred logout) blocks EVERY activation path,
+    // including a delayed epoch-tagged refresh/login result.
+    if (await this.persistence.readDeferredLogout()) {
+      return { status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' };
+    }
+    if (await this.persistence.readBarrier()) {
+      return { status: 'BLOCKED', reason: 'REMOTE_INVALIDATION_REQUIRED' };
+    }
     const owner = this.context.getOwner();
     const epoch = await this.context.currentEpoch();
     if (result.epoch !== epoch) {
       return owner
         ? { status: 'STALE_EPOCH', current: owner }
-        : { status: 'BLOCKED', reason: 'EXIT_NOT_IMPLEMENTED' };
+        : { status: 'BLOCKED', reason: 'REMOTE_INVALIDATION_REQUIRED' };
     }
     if (owner && owner.subject !== result.subject) {
       return { status: 'SUBJECT_MISMATCH', expected: owner.subject, received: result.subject };
@@ -226,6 +328,9 @@ export class AccountLifecycle implements AuthLifecycle {
   }
 
   writePermit(): WritePermit {
+    // Freeze new writes while exiting (draining) so no edit lands during the
+    // commit window between the drain decision and the durable barrier.
+    if (this.freezing) return { permitted: false, reason: 'BLOCKED' };
     const owner = this.context.getOwner();
     if (this.authRequired) return { permitted: false, reason: 'AUTH_REQUIRED' };
     if (!owner) return { permitted: false, reason: 'NO_OWNER' };
@@ -233,6 +338,7 @@ export class AccountLifecycle implements AuthLifecycle {
   }
 
   requireReplayIdentity(): ReplayIdentity {
+    if (this.freezing) return { status: 'PAUSED', reason: 'BLOCKED' };
     const owner = this.context.getOwner();
     if (this.authRequired) return { status: 'PAUSED', reason: 'AUTH_REQUIRED' };
     if (!owner) return { status: 'PAUSED', reason: 'NO_OWNER' };
@@ -240,20 +346,116 @@ export class AccountLifecycle implements AuthLifecycle {
   }
 
   /**
-   * Task 13A only scaffolds exit: it never clears data or switches subjects.
-   * A durable barrier or any established owner makes exit fail closed.
+   * Begins the exit: freezes new writes + replay and reports that a controlled
+   * drain is required. The caller then runs `completeExit()` (drained) or
+   * confirms an explicit discard.
    */
-  beginExit(): ExitDecision {
-    if (this.context.getOwner()) {
-      return { status: 'BLOCKED', reason: 'EXIT_NOT_IMPLEMENTED' };
+  beginExit(_reason: BarrierReason = 'SIGN_OUT'): ExitDecision {
+    if (this.freezing) return { status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' };
+    const owner = this.context.getOwner();
+    if (!owner) return { status: 'PROCEED' };
+    this.freezing = true;
+    this.notify();
+    return { status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' };
+  }
+
+  /**
+   * Completes sign-out / account switch. Order is load-bearing:
+   *  1. gate on the controlled drain (unless an explicit informed discard),
+   *  2. persist the durable barrier BEFORE any destructive step,
+   *  3. clear local ownership (advancing the epoch, fencing late results) and
+   *     notify other tabs,
+   *  4. invalidate the remote session; on failure persist a deferred-logout
+   *     marker that blocks all activation,
+   *  5. clear old-account data (only after the barrier is durable).
+   */
+  async completeExit(options: CompleteExitOptions = {}): Promise<ExitDecision> {
+    const owner = this.context.getOwner();
+    this.freezing = true;
+    if (!owner) {
+      // No local account to exit; still clear any stale barrier.
+      await this.persistence.clearBarrier();
+      this.freezing = false;
+      return { status: 'PROCEED' };
     }
+
+    if (options.discard !== true) {
+      // Un-synced sign-out MUST be gated on the disjoint controlled-drain
+      // contract, never a raw pending count (which includes blocked successors).
+      const report = await this.exitDeps.controlledDrain();
+      if (!report.fullyDrained) {
+        return { status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' };
+      }
+    }
+
+    // 2. Persist the durable barrier BEFORE any destructive step.
+    await this.persistBarrier(owner.subject, owner.epoch, options.reason ?? 'SIGN_OUT');
+    // 3. Clear local ownership (advances the epoch, fencing every late result).
+    await this.context.clear();
+    this.authRequired = false;
+    this.freezing = false;
+    this.notify();
+
+    // 4. Invalidate the remote session; a timeout/failure is NOT proof the old
+    //    cookie is gone, so persist a durable deferred marker that blocks
+    //    activation until invalidation actually completes.
+    let settled = false;
+    try {
+      settled = await this.exitDeps.invalidateSession();
+    } catch {
+      settled = false;
+    }
+    if (settled) {
+      await this.persistence.clearBarrier();
+    } else {
+      await this.persistence.writeDeferredLogout({
+        id: 'deferred-logout',
+        subject: owner.subject,
+        epoch: owner.epoch,
+        createdAt: Date.now(),
+      });
+    }
+
+    // 5. Destructive local cleanup only after the barrier is durable.
+    try {
+      await this.exitDeps.clearLocalData(owner.subject);
+    } catch {
+      // Local cleanup is approved regardless; the durable barrier already
+      // guarantees a new subject cannot activate over inconsistent data.
+    }
+    this.exitDeps.notifyOtherTabs?.();
+
+    return settled ? { status: 'PROCEED' } : { status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' };
+  }
+
+  /**
+   * Retries a deferred remote invalidation. On success the deferred marker and
+   * barrier are cleared, unblocking activation; on failure it stays blocked.
+   */
+  async resolveDeferredLogout(): Promise<ExitDecision> {
+    const deferred = await this.persistence.readDeferredLogout();
+    if (!deferred) {
+      await this.persistence.clearBarrier();
+      return { status: 'PROCEED' };
+    }
+    let settled = false;
+    try {
+      settled = await this.exitDeps.invalidateSession();
+    } catch {
+      settled = false;
+    }
+    if (!settled) return { status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' };
+    await this.persistence.clearDeferredLogout();
+    await this.persistence.clearBarrier();
+    this.notify();
     return { status: 'PROCEED' };
   }
 
-  async completeExit(): Promise<ExitDecision> {
-    // Exit/drain/logout is Task 13B. Task 13A deliberately refuses to clear
-    // data or invalidate sessions here.
-    return { status: 'BLOCKED', reason: 'EXIT_NOT_IMPLEMENTED' };
+  /** True when no durable barrier or deferred logout blocks a new activation. */
+  async activationEligible(): Promise<boolean> {
+    if (await this.persistence.readDeferredLogout()) return false;
+    if (await this.persistence.readBarrier()) return false;
+    return true;
   }
 
   /** Persists a durable barrier that must survive restart. */

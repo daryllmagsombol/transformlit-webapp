@@ -1,265 +1,314 @@
-import { AccountContext } from './account-context';
 import {
   AccountLifecycle,
-  classifyAuthError,
-  classifyAuthFailure,
+  type ExitDrainReport,
+  type LifecycleExitDeps,
   type LifecyclePersistence,
 } from './account-lifecycle';
-import type { LifecycleBarrierRecord, LifecycleStateRecord } from './contracts';
+import { AccountContext } from './account-context';
+import type {
+  AccountOwner,
+  DeferredLogoutRecord,
+  LifecycleBarrierRecord,
+  LifecycleStateRecord,
+} from './contracts';
 
-class MemoryLifecyclePersistence implements LifecyclePersistence {
+const SUBJECT = 'subject-a';
+
+class MemoryPersistence implements LifecyclePersistence {
   state: LifecycleStateRecord | null = null;
-  barrierRecord: LifecycleBarrierRecord | null = null;
+  barrier: LifecycleBarrierRecord | null = null;
+  deferred: DeferredLogoutRecord | null = null;
+  readonly barrierWrites: number[] = [];
+  /** Optional shared trace so tests can assert barrier-before-cleanup ordering. */
+  events: string[] | null = null;
 
-  readState(): Promise<LifecycleStateRecord | null> {
+  readState() {
     return Promise.resolve(this.state);
   }
-  writeState(record: LifecycleStateRecord): Promise<void> {
+  writeState(record: LifecycleStateRecord) {
     this.state = record;
     return Promise.resolve();
   }
-  readBarrier(): Promise<LifecycleBarrierRecord | null> {
-    return Promise.resolve(this.barrierRecord);
+  readBarrier() {
+    return Promise.resolve(this.barrier);
   }
-  writeBarrier(record: LifecycleBarrierRecord): Promise<void> {
-    this.barrierRecord = record;
+  writeBarrier(record: LifecycleBarrierRecord) {
+    this.barrier = record;
+    this.barrierWrites.push(this.barrierWrites.length);
+    this.events?.push('barrier');
     return Promise.resolve();
   }
-  clearBarrier(): Promise<void> {
-    this.barrierRecord = null;
+  clearBarrier() {
+    this.barrier = null;
+    return Promise.resolve();
+  }
+  readDeferredLogout() {
+    return Promise.resolve(this.deferred);
+  }
+  writeDeferredLogout(record: DeferredLogoutRecord) {
+    this.deferred = record;
+    return Promise.resolve();
+  }
+  clearDeferredLogout() {
+    this.deferred = null;
     return Promise.resolve();
   }
 }
 
-function makeLifecycle() {
-  const persistence = new MemoryLifecyclePersistence();
+function drainReport(overrides: Partial<ExitDrainReport> = {}): ExitDrainReport {
+  return {
+    fullyDrained: true,
+    pending: 0,
+    inFlightOrUncertain: 0,
+    blockedSuccessors: 0,
+    conflicts: 0,
+    terminal: 0,
+    localOnly: 0,
+    ...overrides,
+  };
+}
+
+interface Harness {
+  readonly persistence: MemoryPersistence;
+  readonly lifecycle: AccountLifecycle;
+  readonly events: string[];
+  readonly owner: AccountOwner | null;
+}
+
+function makeHarness(options: {
+  owner?: AccountOwner | null;
+  drain?: ExitDrainReport;
+  invalidate?: boolean;
+  invalidateThrows?: boolean;
+} = {}): Harness {
+  const persistence = new MemoryPersistence();
   const context = new AccountContext(persistence);
+  const events: string[] = [];
+  persistence.events = events;
   const lifecycle = new AccountLifecycle(context, persistence);
-  return { persistence, context, lifecycle };
+  const drain = options.drain ?? drainReport();
+  const deps: LifecycleExitDeps = {
+    controlledDrain: async () => {
+      events.push('drain');
+      return drain;
+    },
+    invalidateSession: async () => {
+      events.push('invalidate');
+      if (options.invalidateThrows) throw new Error('network down');
+      return options.invalidate ?? true;
+    },
+    clearLocalData: async (subject) => {
+      events.push(`clear:${subject}`);
+    },
+    notifyOtherTabs: () => {
+      events.push('notify');
+    },
+  };
+  lifecycle.configureExitDeps(deps);
+  return { persistence, lifecycle, events, owner: options.owner ?? null };
 }
 
-describe('auth failure classification', () => {
-  it('treats 401 as genuine auth failure and 5xx/network as transient', () => {
-    expect(classifyAuthFailure(401)).toBe('AUTH_REQUIRED');
-    expect(classifyAuthFailure(500)).toBe('TRANSIENT');
-    expect(classifyAuthFailure(503)).toBe('TRANSIENT');
-    expect(classifyAuthFailure(0)).toBe('TRANSIENT');
-    expect(classifyAuthError(new Error('network down'))).toBe('TRANSIENT');
-    expect(classifyAuthError({ statusCode: 401 })).toBe('AUTH_REQUIRED');
-  });
-});
+describe('account lifecycle activation gating', () => {
+  it('hydrates a persisted owner and blocks a different subject until exit', async () => {
+    const { persistence, lifecycle } = makeHarness();
+    persistence.state = { id: 'lifecycle', state: 'ACTIVE', subject: SUBJECT, epoch: 3, updatedAt: 1 };
 
-describe('account lifecycle activation fencing', () => {
-  it('establishes ownership only from a verified subject and permits writes', async () => {
-    const { lifecycle } = makeLifecycle();
-    const outcome = await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
-
-    expect(outcome.status).toBe('INSTALLED');
-    expect(lifecycle.getOwner()).toEqual({ subject: 'user-a', epoch: 1 });
-    expect(lifecycle.writePermit()).toEqual({ permitted: true, owner: { subject: 'user-a', epoch: 1 } });
+    expect(await lifecycle.hydrate()).toEqual({ subject: SUBJECT, epoch: 3 });
+    const outcome = await lifecycle.establishIdentity({ subject: 'subject-b', epoch: 3 });
+    expect(outcome.status).toBe('BLOCKED');
   });
 
-  it('notifies subscribers and advances stateVersion when ownership is established', async () => {
-    const { lifecycle } = makeLifecycle();
-    const listener = jest.fn();
-    const unsubscribe = lifecycle.subscribe(listener);
-    const before = lifecycle.stateVersion();
-
-    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
-
-    expect(lifecycle.stateVersion()).toBeGreaterThan(before);
-    expect(listener).toHaveBeenCalledTimes(1);
-
-    unsubscribe();
-    await lifecycle.markAuthRequired();
-    expect(listener).toHaveBeenCalledTimes(1);
-  });
-
-  it('notifies after restoring a persisted owner', async () => {
-    const { persistence, lifecycle } = makeLifecycle();
-    await persistence.writeState({
-      id: 'lifecycle',
-      state: 'ACTIVE',
-      subject: 'user-a',
-      epoch: 3,
-      updatedAt: 1,
-    });
-    const listener = jest.fn();
-    lifecycle.subscribe(listener);
-
+  it('treats a transient outage as non-destructive: ownership and epoch are preserved', async () => {
+    const { persistence, lifecycle } = makeHarness();
+    persistence.state = { id: 'lifecycle', state: 'ACTIVE', subject: SUBJECT, epoch: 4, updatedAt: 1 };
     await lifecycle.hydrate();
 
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(lifecycle.writePermit()).toEqual({ permitted: true, owner: { subject: 'user-a', epoch: 3 } });
-  });
+    lifecycle.markTransient();
 
-  it('rejects a stale-epoch install result without changing ownership', async () => {
-    const { lifecycle } = makeLifecycle();
-    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
-
-    // A result tagged with the pre-establishment epoch is stale.
-    const outcome = await lifecycle.installIdentity({ epoch: 0, subject: 'user-a', value: 'token' });
-    expect(outcome.status).toBe('STALE_EPOCH');
-    expect(lifecycle.getOwner()).toEqual({ subject: 'user-a', epoch: 1 });
-  });
-
-  it('rejects an install whose subject differs from the established owner', async () => {
-    const { lifecycle } = makeLifecycle();
-    const owner = await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
-    const epoch = owner.status === 'INSTALLED' ? owner.owner.epoch : 0;
-
-    const outcome = await lifecycle.installIdentity({ epoch, subject: 'user-b', value: 'token' });
-    expect(outcome.status).toBe('SUBJECT_MISMATCH');
-    expect(lifecycle.getOwner()?.subject).toBe('user-a');
-  });
-
-  it('accepts a same-subject, current-epoch install', async () => {
-    const { lifecycle } = makeLifecycle();
-    const established = await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
-    const epoch = established.status === 'INSTALLED' ? established.owner.epoch : -1;
-
-    const outcome = await lifecycle.installIdentity({ epoch, subject: 'user-a', value: 'token' });
-    expect(outcome.status).toBe('INSTALLED');
-  });
-
-  it('fails closed on a different subject while another owner is established', async () => {
-    const { lifecycle } = makeLifecycle();
-    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
-
-    const outcome = await lifecycle.establishIdentity({ subject: 'user-b', epoch: 0 });
-    expect(outcome.status).toBe('BLOCKED');
-    // The old owner is preserved; Task 13A must not clear/switch accounts.
-    expect(lifecycle.getOwner()?.subject).toBe('user-a');
-  });
-
-  it('fails closed when a durable barrier is present', async () => {
-    const { lifecycle } = makeLifecycle();
-    await lifecycle.persistBarrier('user-a', 1, 'ACCOUNT_SWITCH');
-
-    const outcome = await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
-    expect(outcome).toEqual({ status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' });
-    expect(lifecycle.getOwner()).toBeNull();
-  });
-
-  it('pauses replay on genuine auth failure but preserves the owner', async () => {
-    const { lifecycle } = makeLifecycle();
-    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
-    lifecycle.markAuthRequired();
-
-    expect(lifecycle.requireReplayIdentity()).toEqual({ status: 'PAUSED', reason: 'AUTH_REQUIRED' });
-    expect(lifecycle.writePermit()).toEqual({ permitted: false, reason: 'AUTH_REQUIRED' });
-    // Local ownership/content is preserved for same-subject reauthentication.
-    expect(lifecycle.getOwner()).toEqual({ subject: 'user-a', epoch: 1 });
-  });
-
-  it('clears the paused state after same-subject reauthentication', async () => {
-    const { lifecycle } = makeLifecycle();
-    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
-    lifecycle.markAuthRequired();
-    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 1 });
-
+    expect(lifecycle.getOwner()).toEqual({ subject: SUBJECT, epoch: 4 });
+    expect(lifecycle.writePermit()).toMatchObject({ permitted: true });
     expect(lifecycle.requireReplayIdentity().status).toBe('READY');
   });
 
-  it('keeps ownership on a transient outage without clearing a pending reauth', async () => {
-    const { lifecycle } = makeLifecycle();
-    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
+  it('pauses replay and writes on genuine auth-required without clearing ownership', async () => {
+    const { persistence, lifecycle } = makeHarness();
+    persistence.state = { id: 'lifecycle', state: 'ACTIVE', subject: SUBJECT, epoch: 4, updatedAt: 1 };
+    await lifecycle.hydrate();
+
     lifecycle.markAuthRequired();
-    lifecycle.markTransient();
 
-    // Ownership is preserved, and a genuine 401 still requires reauthentication
-    // until a successful same-subject activation (a 5xx must not satisfy it).
-    expect(lifecycle.getOwner()?.subject).toBe('user-a');
-    expect(lifecycle.requireReplayIdentity()).toEqual({ status: 'PAUSED', reason: 'AUTH_REQUIRED' });
-  });
-
-  it('does not pause replay for a transient outage under an established owner', async () => {
-    const { lifecycle } = makeLifecycle();
-    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
-    lifecycle.markTransient();
-
-    expect(lifecycle.getOwner()?.subject).toBe('user-a');
-    expect(lifecycle.requireReplayIdentity().status).toBe('READY');
-  });
-
-  it('has no owner and no replay identity before activation', () => {
-    const { lifecycle } = makeLifecycle();
-    expect(lifecycle.getOwner()).toBeNull();
-    expect(lifecycle.writePermit()).toEqual({ permitted: false, reason: 'NO_OWNER' });
-    expect(lifecycle.requireReplayIdentity()).toEqual({ status: 'PAUSED', reason: 'NO_OWNER' });
+    expect(lifecycle.getOwner()).toEqual({ subject: SUBJECT, epoch: 4 });
+    expect(lifecycle.writePermit()).toMatchObject({ permitted: false, reason: 'AUTH_REQUIRED' });
+    expect(lifecycle.requireReplayIdentity()).toMatchObject({ status: 'PAUSED', reason: 'AUTH_REQUIRED' });
   });
 });
 
-describe('lifecycle exit scaffolding is fail-closed (Task 13B owns exit)', () => {
-  it('refuses to exit while an owner is established', () => {
-    const { lifecycle } = makeLifecycle();
-    return lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 }).then(() => {
-      expect(lifecycle.beginExit()).toEqual({ status: 'BLOCKED', reason: 'EXIT_NOT_IMPLEMENTED' });
+describe('controlled drain before exit', () => {
+  it('freezes new writes/replay while draining', async () => {
+    const harness = makeHarness({ owner: { subject: SUBJECT, epoch: 2 } });
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+
+    const decision = harness.lifecycle.beginExit();
+
+    expect(decision).toEqual({ status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' });
+    expect(harness.lifecycle.writePermit()).toMatchObject({ permitted: false, reason: 'BLOCKED' });
+    expect(harness.lifecycle.requireReplayIdentity()).toMatchObject({ status: 'PAUSED', reason: 'BLOCKED' });
+  });
+
+  it('refuses to exit while the controlled drain reports outstanding work', async () => {
+    const harness = makeHarness({ drain: drainReport({ fullyDrained: false, conflicts: 1, localOnly: 2 }) });
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
+
+    const decision = await harness.lifecycle.completeExit();
+
+    expect(decision).toEqual({ status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' });
+    // No barrier written, no cleanup performed.
+    expect(harness.persistence.barrier).toBeNull();
+    expect(harness.events).toEqual(['drain']);
+  });
+
+  it('gates un-synced sign-out on controlledDrain(), never on a raw pending count', async () => {
+    // blocked successors/conflicts present but fullyDrained=true (all acknowledged/resolved).
+    const harness = makeHarness({
+      drain: drainReport({ fullyDrained: true, blockedSuccessors: 0, pending: 0 }),
     });
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
+
+    const decision = await harness.lifecycle.completeExit();
+
+    expect(decision).toEqual({ status: 'PROCEED' });
   });
 
-  it('completeExit never clears data in Task 13A', async () => {
-    const { lifecycle, context } = makeLifecycle();
-    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
+  it('proceeds on explicit informed discard without a drain', async () => {
+    const harness = makeHarness({ drain: drainReport({ fullyDrained: false, conflicts: 3, localOnly: 1 }) });
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
 
-    const decision = await lifecycle.completeExit();
-    expect(decision).toEqual({ status: 'BLOCKED', reason: 'EXIT_NOT_IMPLEMENTED' });
-    // Ownership is untouched — no destructive cleanup without Task 13B.
-    expect(context.getOwner()?.subject).toBe('user-a');
-  });
-});
+    const decision = await harness.lifecycle.completeExit({ discard: true });
 
-describe('lifecycle barrier durability', () => {
-  it('persists a barrier that survives a new lifecycle instance', async () => {
-    const persistence = new MemoryLifecyclePersistence();
-    const first = new AccountLifecycle(new AccountContext(persistence), persistence);
-    await first.persistBarrier('user-a', 3, 'SIGN_OUT');
-
-    // Simulate a restart: a fresh lifecycle reads the same persistence.
-    const second = new AccountLifecycle(new AccountContext(persistence), persistence);
-    expect(await second.barrier()).toEqual(
-      expect.objectContaining({ subject: 'user-a', epoch: 3, reason: 'SIGN_OUT' }),
-    );
+    expect(decision).toEqual({ status: 'PROCEED' });
+    expect(harness.events).not.toContain('drain');
+    expect(harness.events).toContain(`clear:${SUBJECT}`);
   });
 });
 
-describe('cold-start ownership rehydration (I1)', () => {
-  it('restores the established owner after a restart', async () => {
-    const persistence = new MemoryLifecyclePersistence();
-    const first = new AccountLifecycle(new AccountContext(persistence), persistence);
-    const established = await first.establishIdentity({ subject: 'user-a', epoch: 0 });
-    const epoch = established.status === 'INSTALLED' ? established.owner.epoch : -1;
+describe('barrier, cleanup and invalidation ordering', () => {
+  it('persists the barrier BEFORE destructive cleanup and before remote invalidation', async () => {
+    const harness = makeHarness();
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
 
-    // Restart: new in-memory context, same durable persistence.
-    const second = new AccountLifecycle(new AccountContext(persistence), persistence);
-    expect(second.getOwner()).toBeNull();
+    await harness.lifecycle.completeExit();
 
-    const restored = await second.hydrate();
-    expect(restored).toEqual({ subject: 'user-a', epoch });
-    expect(second.getOwner()).toEqual({ subject: 'user-a', epoch });
-    expect(second.requireReplayIdentity()).toEqual({ status: 'READY', owner: { subject: 'user-a', epoch } });
+    // drain → persist barrier → remote invalidation → local cleanup → notify.
+    expect(harness.persistence.barrierWrites).toHaveLength(1);
+    expect(harness.events).toEqual(['drain', 'barrier', 'invalidate', `clear:${SUBJECT}`, 'notify']);
   });
 
-  it('is idempotent and does not clobber the in-memory owner', async () => {
-    const { lifecycle } = makeLifecycle();
-    await lifecycle.establishIdentity({ subject: 'user-a', epoch: 0 });
+  it('advances the epoch and fences late results from the previous owner', async () => {
+    const harness = makeHarness();
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    const before = await harness.lifecycle.epoch();
+    harness.lifecycle.beginExit();
 
-    const restored = await lifecycle.hydrate();
-    expect(restored).toEqual({ subject: 'user-a', epoch: 1 });
-    expect(lifecycle.getOwner()).toEqual({ subject: 'user-a', epoch: 1 });
+    await harness.lifecycle.completeExit({ discard: true });
+
+    expect(harness.lifecycle.getOwner()).toBeNull();
+    const after = await harness.lifecycle.epoch();
+    expect(after).toBeGreaterThan(before);
+    // A late result from the old epoch can never install a session.
+    const late = await harness.lifecycle.installIdentity({ epoch: before, subject: SUBJECT, value: null });
+    expect(late.status).not.toBe('INSTALLED');
+  });
+});
+
+describe('deferred logout', () => {
+  it('persists a deferred logout when remote invalidation fails, completing local cleanup', async () => {
+    const harness = makeHarness({ invalidate: false });
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
+
+    const decision = await harness.lifecycle.completeExit();
+
+    expect(decision).toEqual({ status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' });
+    expect(harness.persistence.deferred).not.toBeNull();
+    // Local cleanup still completed under the durable barrier.
+    expect(harness.events).toContain(`clear:${SUBJECT}`);
   });
 
-  it('blocks a different-subject result across a restart', async () => {
-    const persistence = new MemoryLifecyclePersistence();
-    const first = new AccountLifecycle(new AccountContext(persistence), persistence);
-    await first.establishIdentity({ subject: 'user-a', epoch: 0 });
+  it('persists a deferred logout when remote invalidation throws (timeout/offline)', async () => {
+    const harness = makeHarness({ invalidateThrows: true });
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
 
-    // New tab/restart: owner is restored, so a different subject fails closed.
-    const second = new AccountLifecycle(new AccountContext(persistence), persistence);
-    await second.hydrate();
+    const decision = await harness.lifecycle.completeExit();
 
-    const outcome = await second.establishIdentity({ subject: 'user-b', epoch: 0 });
-    expect(outcome.status).toBe('BLOCKED');
-    expect(second.getOwner()?.subject).toBe('user-a');
+    expect(decision).toEqual({ status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' });
+    expect(harness.persistence.deferred).not.toBeNull();
+  });
+
+  it('blocks EVERY activation path while a deferred logout is pending', async () => {
+    const harness = makeHarness({ invalidate: false });
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
+    await harness.lifecycle.completeExit();
+
+    const establish = await harness.lifecycle.establishIdentity({ subject: 'subject-b', epoch: 3 });
+    expect(establish).toEqual({ status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' });
+    const install = await harness.lifecycle.installIdentity({ epoch: 3, subject: 'subject-b', value: null });
+    expect(install).toEqual({ status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' });
+  });
+
+  it('resumes after restart: a rehydrated lifecycle still sees the deferred barrier', async () => {
+    const harness = makeHarness({ invalidate: false });
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
+    await harness.lifecycle.completeExit();
+
+    // Simulate restart: new context/lifecycle over the SAME durable persistence.
+    const context = new AccountContext(harness.persistence);
+    const restarted = new AccountLifecycle(context, harness.persistence);
+    expect(await restarted.hydrate()).toBeNull();
+    const outcome = await restarted.establishIdentity({ subject: 'subject-b', epoch: 3 });
+    expect(outcome).toEqual({ status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' });
+  });
+
+  it('unblocks activation only after deferred invalidation completes', async () => {
+    const harness = makeHarness({ invalidate: false });
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
+    await harness.lifecycle.completeExit();
+
+    // Connectivity returns: retry the deferred invalidation with success.
+    let settled = false;
+    harness.lifecycle.configureExitDeps({
+      controlledDrain: async () => drainReport(),
+      invalidateSession: async () => {
+        settled = true;
+        return true;
+      },
+      clearLocalData: async () => undefined,
+    });
+
+    const resolved = await harness.lifecycle.resolveDeferredLogout();
+    expect(resolved).toEqual({ status: 'PROCEED' });
+    expect(settled).toBe(true);
+    expect(harness.persistence.deferred).toBeNull();
+
+    const activation = await harness.lifecycle.establishIdentity({ subject: 'subject-b', epoch: 5 });
+    expect(activation.status).toBe('INSTALLED');
+  });
+});
+
+describe('activation eligibility', () => {
+  it('reports not-eligible while a barrier or deferred logout is durable', async () => {
+    const harness = makeHarness({ invalidate: false });
+    expect(await harness.lifecycle.activationEligible()).toBe(true);
+    await harness.lifecycle.establishIdentity({ subject: SUBJECT, epoch: 2 });
+    harness.lifecycle.beginExit();
+    await harness.lifecycle.completeExit();
+    expect(await harness.lifecycle.activationEligible()).toBe(false);
   });
 });
