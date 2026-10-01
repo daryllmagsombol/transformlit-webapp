@@ -1,8 +1,9 @@
-import { createSnapshotStore, createReceiptStore } from './sync-service';
+import { createSnapshotStore, createReceiptStore, toOutcome } from './sync-service';
 import { OfflineDatabase, resetOfflineDatabaseHandle } from './database';
 import { qualifyKey, type AccountOwner, type OutboxReceiptRecord } from './contracts';
 import type { BookMergeResult } from './sync-coordinator';
 import { createMemoryIndexedDb, memoryIdbKeyRange, type MemoryIndexedDb } from '../../../test/helpers/memory-indexeddb';
+import type { ReaderOperationDispatch } from '../reader/api';
 
 const OWNER: AccountOwner = { subject: 'subject-a', epoch: 1 };
 const BOOK = 'book-1';
@@ -17,6 +18,30 @@ function mergeResult(overrides: Partial<BookMergeResult> = {}): BookMergeResult 
     ...overrides,
   };
 }
+
+describe('toOutcome', () => {
+  it('preserves the serverValue and conflict copy for conflict UX', () => {
+    const serverValue = { __typename: 'HighlightRecord' as const, id: 'hl-1', revision: 5 };
+    const result: ReaderOperationDispatch = {
+      operationId: 'op-1',
+      result: {
+        __typename: 'ReaderOperationConflict',
+        kind: 'CONFLICT',
+        entityId: 'hl-1',
+        serverRevision: 5,
+        serverValue,
+        conflictCopy: null,
+      },
+    } as unknown as ReaderOperationDispatch;
+
+    expect(toOutcome(result)).toMatchObject({
+      kind: 'CONFLICT',
+      entityId: 'hl-1',
+      serverRevision: 5,
+      serverValue,
+    });
+  });
+});
 
 describe('sync-service durable stores', () => {
   let memory: MemoryIndexedDb;
