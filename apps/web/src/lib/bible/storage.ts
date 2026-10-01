@@ -94,19 +94,47 @@ export interface BiblePrefs {
   translation?: string;
 }
 
-export function loadPrefs(): BiblePrefs {
+// Navigation preferences are account-scoped so one account's last-read
+// position can never surface under another account on a shared browser
+// profile. `local:<subject>` is a presentation namespace only — it is not the
+// authoritative saved-chapter store (which lives in the offline database).
+function prefsKey(subject: string | null): string {
+  return subject ? `${PREFS_KEY}:${subject}` : PREFS_KEY;
+}
+
+export function loadPrefs(subject: string | null = null): BiblePrefs {
   try {
-    const raw = localStorage.getItem(PREFS_KEY);
+    const raw = localStorage.getItem(prefsKey(subject));
     return raw ? (JSON.parse(raw) as BiblePrefs) : {};
   } catch {
     return {};
   }
 }
 
-export function savePrefs(prefs: BiblePrefs): void {
+export function savePrefs(prefs: BiblePrefs, subject: string | null = null): void {
   try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    localStorage.setItem(prefsKey(subject), JSON.stringify(prefs));
   } catch {
     // ignore quota/private-mode errors
   }
+}
+
+/** Removes one account's navigation prefs without touching other accounts. */
+export function clearAccountPrefs(subject: string): void {
+  try {
+    localStorage.removeItem(prefsKey(subject));
+  } catch {
+    // ignore private-mode errors
+  }
+}
+
+// ── Search cache key ─────────────────────────────────────────────────
+
+/**
+ * Key for the whole-translation search corpus. This cache is a rebuildable
+ * convenience index; it is deliberately separate from account-scoped
+ * saved-chapter authority and must never be promoted into a download.
+ */
+export function searchIndexKey(translation: string): string {
+  return `bible:${translation}:index`;
 }

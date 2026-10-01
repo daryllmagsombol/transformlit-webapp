@@ -91,6 +91,7 @@ function makeFakeIndexedDB(opts: { failOpen?: boolean; failOps?: boolean } = {})
 
 describe('bible storage', () => {
   afterEach(() => {
+    jest.restoreAllMocks();
     delete (globalThis as { indexedDB?: unknown }).indexedDB;
     localStorage.clear();
     jest.resetModules();
@@ -176,6 +177,42 @@ describe('bible storage', () => {
         throw new Error('quota exceeded');
       });
       expect(() => savePrefs({ translation: 'BSB' })).not.toThrow();
+    });
+  });
+
+  describe('per-account navigation prefs', () => {
+    it('namespaces navigation prefs by immutable subject', () => {
+      const { savePrefs, loadPrefs } = require('./storage');
+      savePrefs({ translation: 'BSB' }, 'user-a');
+      savePrefs({ translation: 'ENGWEBP' }, 'user-b');
+
+      expect(loadPrefs('user-a')).toEqual({ translation: 'BSB' });
+      expect(loadPrefs('user-b')).toEqual({ translation: 'ENGWEBP' });
+      // An unscoped read must not adopt any account's position.
+      expect(loadPrefs()).toEqual({});
+    });
+
+    it('clears one account navigation prefs without touching another', () => {
+      const { savePrefs, loadPrefs, clearAccountPrefs } = require('./storage');
+      savePrefs({ translation: 'BSB' }, 'user-a');
+      savePrefs({ translation: 'ENGWEBP' }, 'user-b');
+
+      clearAccountPrefs('user-a');
+      expect(loadPrefs('user-a')).toEqual({});
+      expect(loadPrefs('user-b')).toEqual({ translation: 'ENGWEBP' });
+    });
+  });
+
+  describe('search cache separation', () => {
+    it('keeps the whole-translation search index in its own namespace', async () => {
+      (globalThis as { indexedDB?: unknown }).indexedDB = makeFakeIndexedDB();
+      const { getKVStore, searchIndexKey } = require('./storage');
+      const store = getKVStore();
+      await store.set(searchIndexKey('BSB'), { verses: ['x'] });
+      // The search cache key is stable and distinct from account-scoped
+      // saved-chapter authority in the offline database.
+      expect(searchIndexKey('BSB')).toBe('bible:BSB:index');
+      expect(await store.get(searchIndexKey('BSB'))).toEqual({ verses: ['x'] });
     });
   });
 });

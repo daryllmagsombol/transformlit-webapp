@@ -2,7 +2,7 @@ import { useReaderStore } from './reader-store';
 
 describe('reader store', () => {
   beforeEach(() => {
-    useReaderStore.setState({ theme: 'paper', mode: 'paged', zoom: 1, lastPage: {} });
+    useReaderStore.setState({ theme: 'paper', mode: 'paged', zoom: 1 });
   });
 
   it('sets theme, mode and zoom', () => {
@@ -15,9 +15,18 @@ describe('reader store', () => {
     expect(state.zoom).toBe(1.25);
   });
 
-  it('records last page per book', () => {
-    useReaderStore.getState().setLastPage('book-1', 12);
-    useReaderStore.getState().setLastPage('book-2', 3);
-    expect(useReaderStore.getState().lastPage).toEqual({ 'book-1': 12, 'book-2': 3 });
+  it('no longer owns authoritative last-page persistence', () => {
+    const state = useReaderStore.getState() as unknown as Record<string, unknown>;
+    expect('lastPage' in state).toBe(false);
+    expect('setLastPage' in state).toBe(false);
+  });
+
+  it('persists only harmless presentation preferences', () => {
+    const partialize = useReaderStore.persist.getOptions().partialize;
+    const persisted = (partialize ? partialize(useReaderStore.getState()) : {}) as Record<string, unknown>;
+    expect(Object.keys(persisted).sort()).toEqual(['mode', 'theme', 'zoom']);
+
+    // Zustand's actual JSON storage must not carry progress either.
+    expect(globalThis.localStorage.getItem('reader-storage') ?? '').not.toContain('lastPage');
   });
 });

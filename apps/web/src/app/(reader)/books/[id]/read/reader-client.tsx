@@ -56,7 +56,6 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
   const router = useRouter();
   const searchParams = useSearchParams();
   const theme = useReaderStore((s) => s.theme);
-  const setLastPage = useReaderStore((s) => s.setLastPage);
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(initialPage ?? 1);
@@ -154,8 +153,9 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
       if (!cancelled) setItems([]);
     });
 
-    // Local position updates instantly; the server save is debounced on page settle.
-    setLastPage(bookId, page);
+    // Reading position is owned by the account-scoped offline store (added in
+    // a later task); the reader store no longer keeps an authoritative copy.
+    // The debounced server save below remains best-effort until then.
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       saveReaderProgress(bookId, page).catch(() => {
@@ -166,7 +166,7 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
       cancelled = true;
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [bookId, manifest, page, sessionReady, setLastPage]);
+  }, [bookId, manifest, page, sessionReady]);
 
   // Flush the position when the tab is hidden or the reader unmounts.
   useEffect(() => {

@@ -16,7 +16,7 @@ jest.mock('../../../../../lib/apollo-client', () => ({ apolloClient: { query: mo
 jest.mock('../../../../../store', () => ({
   useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector({ user: { id: '1' }, isHydrated: true }),
   useReaderStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ theme: 'paper', mode: 'paged', zoom: 1, lastPage: {}, setLastPage: jest.fn(), setTheme: jest.fn(), setMode: jest.fn(), setZoom: jest.fn() }),
+    selector({ theme: 'paper', mode: 'paged', zoom: 1, setTheme: jest.fn(), setMode: jest.fn(), setZoom: jest.fn() }),
 }));
 
 jest.mock('../../../../../lib/reader/api', () => ({
