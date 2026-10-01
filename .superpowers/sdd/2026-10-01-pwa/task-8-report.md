@@ -241,3 +241,120 @@ hand-edited.
 ### Round 1 commit
 
 `fix(api): make reader mutations race-safe and conflict-serializable`
+
+---
+
+## Round 2 verification — DB-backed gates and canonical SDL regeneration
+
+Round 2 (HEAD before work: `c198771`). Docker is now available via Colima; all commands were run in
+`.worktrees/pwa-lane-a` with:
+
+```bash
+export DOCKER_HOST="unix:///Users/daryllmagsombol/.colima/default/docker.sock"
+export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="/var/run/docker.sock"
+export TESTCONTAINERS_RYUK_DISABLED=true
+```
+
+`docker version` showed a live server (Engine 29.5.2) and `docker ps` worked. The owned-disposable-DB
+guard (`test/helpers/pwa-disposable-db.ts`) was used unchanged; no shared/default database fallback.
+
+### 1. Previously-blocked DB-backed integration suites (all PASS)
+
+| Suite | Result | Count |
+| --- | --- | --- |
+| `test/offline-download.integration.spec.ts` | PASS | 6/6 |
+| `test/reader-security.integration.spec.ts` | PASS | 7/7 |
+| `test/reader-sync.integration.spec.ts` | PASS | 8/8 |
+| `test/pwa-migration.integration.spec.ts` | PASS | 3/3 |
+
+Run via `pnpm --filter @transformlit/api test:integration --runInBand --runTestsByPath <spec>`.
+The real concurrency cases (simultaneous same-base progress race, simultaneous duplicate operation
+IDs) and the real `prisma migrate deploy` path both pass against live disposable Postgres. No
+product defects surfaced; no source changes were needed for these suites.
+
+### 2. Canonical SDL export/check — HANG DIAGNOSED AND FIXED
+
+**Symptom:** `graphql:schema:export` printed
+`Exported canonical GraphQL SDL to apps/api/src/schema.gql` within ~1s, then never exited (hung
+>300s until an external alarm killed it). The sibling `graphql:schema:check` reaches
+`Canonical GraphQL SDL is current.` and then hangs identically.
+
+**Diagnosis (instrumented throwaway copy of the compiled artifact; no product code touched):**
+
+```
+### PROBE before container            t=...122406
+### PROBE container ready             t=...123409   (1.0s)
+### PROBE migrations applied          t=...123542
+### PROBE module compiled             t=...123561
+### PROBE app init done               t=...123648
+### PROBE schema bytes built len=12485 t=...123650
+Canonical GraphQL SDL is current.     (assertion already passed)
+### PROBE finally: calling app.close  t=...123655   <-- stalls here forever
+```
+
+The root cause is **(b) the compiled AppModule bootstrap does not exit**, specifically
+`app.close()`. It is **not** a Testcontainers/Colima port-mapping problem: the container started,
+Postgres listened, migrations applied, AppModule compiled/initialized, and both the export write and
+the check assertion completed in ~2s.
+
+**Exact defect:** `PubSubService.onModuleInit()` obtained a dedicated client via
+`this.pool.connect()` and never released it. `onModuleDestroy()` then `await this.pool.end()`;
+node-postgres `Pool.end()` waits for every checked-out client, and the LISTEN client is checked out
+forever, so `pool.end()` never resolves. This made `app.close()` hang, which made the schema
+export/check commands hang. It also hung **production graceful shutdown** (`main.ts` calls
+`enableShutdownHooks()`), so this is a real product bug, not a test-only artifact.
+
+**Fix (TDD, minimal, in-lane):** retain the LISTEN `PoolClient` and release it before `pool.end()`
+in `onModuleDestroy()`. Added a Jest test asserting `client.release()` is called exactly once and
+before `pool.end()`; RED against the pre-fix service (1 failed), GREEN after.
+
+### 3. Regenerated SDL contents (`apps/api/src/schema.gql`)
+
+`pnpm --filter @transformlit/api graphql:schema:export` wrote the file and now exits; `+150` lines,
+no other bytes changed. Confirmed present:
+
+- Mutation: `applyBookReaderOperation(input: ReaderOperationInput!): ReaderOperationResult!`
+- `input ReaderOperationInput`, `type ReaderOperationResult`
+- `union ReaderOperationResultVariant = ReaderOperationAccessDenied | ReaderOperationApplied |
+  ReaderOperationConflict | ReaderOperationIncompatibleVersion`
+- `union ReaderServerValue = BookmarkRecord | ConflictCopy | HighlightRecord | ProgressRecord`
+- `type ConflictCopy`, `enum ConflictReason`, `type BookmarkRecord`, `type HighlightRecord`,
+  `type ProgressRecord`, `enum OperationKind`, `enum OperationResultKind`,
+  `enum OperationTargetKind`, `type PageTextAnchorV1`, `input PageTextAnchorV1Input`
+
+`BookContentVersion` is **not** a GraphQL type and none was expected: Task 5 defined it as a Prisma
+model / REST offline-manifest concept (endpoints `GET /books/:id/offline-manifest` etc.), with no
+GraphQL object type or query. No GraphQL artifact exists to add, and adding one would exceed Lane A
+scope.
+
+`pnpm --filter @transformlit/api graphql:schema:check` — `Canonical GraphQL SDL is current.` (≈10s,
+terminates). No hand-editing of SDL; the guarded export is the only writer.
+
+### 4. DB-free regression gates
+
+```
+pnpm --filter @transformlit/api test --runInBand
+  Test Suites: 40 passed, 40 total   Tests: 654 passed, 654 total
+
+pnpm --filter @transformlit/api test:command-runner      # the second half of test:contracts
+  Schema command runner preserves design:paramtypes.
+  Compiled AppModule bootstrap matches canonical SDL without mutation.   (PASS)
+
+pnpm --filter @transformlit/api typecheck                # exit 0
+git diff --check                                         # clean
+```
+
+**`test:contracts` ends non-zero for a PRE-EXISTING reason (not a regression).** The Jest contract
+runner (`jest.contract.config.ts`) sweeps `test/scripts/pwa-harness.spec.ts`, which imports
+`describe`/`it` from `node:test`; Jest registers zero tests and fails the suite with
+`Your test suite must contain at least one test.` (15 node:test cases actually pass under the
+Node runner). Verified identical on the pre-fix commit via `git stash`. This is the same
+pre-existing condition documented in `task-5-report.md`. Because the jest invocation fails, the
+chained `&& pnpm test:command-runner` never ran inside `test:contracts`; it was run separately above
+and passes. `pnpm --filter @transformlit/api lint` is also broken repo-wide (ESLint 10 with no
+`eslint.config.js`); pre-existing and unrelated.
+
+### Round 2 commits
+
+- `fix(api): release pubsub LISTEN connection so shutdown terminates`
+- `chore(api): regenerate canonical GraphQL SDL`
