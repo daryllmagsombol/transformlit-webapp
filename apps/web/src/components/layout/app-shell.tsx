@@ -8,6 +8,7 @@ import { ScrollToTop } from './scroll-to-top';
 import { useUIStore } from '../../store';
 import { ProfileSheetProvider } from '../friends/profile-sheet-provider';
 import { ChatProvider } from '../chat/chat-provider';
+import { SyncStatusConnected } from '../offline/sync-status-connected';
 
 export function AppShell({ children }: { readonly children: React.ReactNode }) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
@@ -49,6 +50,7 @@ export function AppShell({ children }: { readonly children: React.ReactNode }) {
           }`}
         >
           <div className="max-w-[1200px] mx-auto px-4 md:px-5">
+            <SyncStatusConnected />
             {children}
           </div>
         </main>

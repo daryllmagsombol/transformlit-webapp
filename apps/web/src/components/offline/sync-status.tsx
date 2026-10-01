@@ -14,19 +14,31 @@ export interface SyncStatusProps {
   readonly conflicts: number;
   readonly state: 'IDLE' | 'SYNCING' | 'BLOCKED' | 'ERROR';
   readonly lastError?: string | null;
+  /**
+   * Explicit auth-required signal emitted by the coordinator. Preferred over
+   * parsing `lastError`; the string form is still honored for compatibility.
+   */
+  readonly authRequired?: boolean;
+  /** True when a storage fault (not a network failure) is blocking sync. */
+  readonly storageFailure?: boolean;
   readonly onRetry: () => void;
   readonly onReauthenticate: () => void;
   readonly onDiscard: () => void;
 }
 
-type AuthRequired = boolean;
-
-function isAuthRequired(lastError: string | null | undefined): AuthRequired {
-  return lastError === 'AUTH_REQUIRED';
+function isAuthRequired(authRequired: boolean | undefined, lastError: string | null | undefined): boolean {
+  return authRequired === true || lastError === 'AUTH_REQUIRED';
 }
 
-function statusLabel(pending: number, conflicts: number, state: SyncStatusProps['state'], authRequired: boolean): string {
+function statusLabel(
+  pending: number,
+  conflicts: number,
+  state: SyncStatusProps['state'],
+  authRequired: boolean,
+  storageFailure: boolean,
+): string {
   if (authRequired) return 'Sign in again to sync your changes';
+  if (storageFailure) return 'This device could not store your changes';
   if (conflicts > 0) {
     return `${conflicts} change${conflicts === 1 ? '' : 's'} need${conflicts === 1 ? 's' : ''} your attention`;
   }
@@ -42,13 +54,15 @@ export function SyncStatus({
   conflicts,
   state,
   lastError = null,
+  authRequired: authRequiredProp,
+  storageFailure = false,
   onRetry,
   onReauthenticate,
   onDiscard,
 }: SyncStatusProps) {
-  const authRequired = isAuthRequired(lastError);
-  const hasWork = pending > 0 || conflicts > 0;
-  const label = statusLabel(pending, conflicts, state, authRequired);
+  const authRequired = isAuthRequired(authRequiredProp, lastError);
+  const hasWork = pending > 0 || conflicts > 0 || storageFailure;
+  const label = statusLabel(pending, conflicts, state, authRequired, storageFailure);
 
   const controls = (
     <div className="flex flex-wrap gap-2">
@@ -87,7 +101,14 @@ export function SyncStatus({
       data-testid="sync-status"
       className="flex flex-col gap-3 rounded-xl border border-outline-variant bg-surface-container-low p-4"
     >
-      <SyncStatusBody label={label} conflicts={conflicts} authRequired={authRequired} showControls={hasWork} controls={controls} />
+      <SyncStatusBody
+        label={label}
+        conflicts={conflicts}
+        authRequired={authRequired}
+        storageFailure={storageFailure}
+        showControls={hasWork}
+        controls={controls}
+      />
     </section>
   );
 }
@@ -96,16 +117,18 @@ function SyncStatusBody({
   label,
   conflicts,
   authRequired,
+  storageFailure,
   showControls,
   controls,
 }: {
   readonly label: string;
   readonly conflicts: number;
   readonly authRequired: boolean;
+  readonly storageFailure: boolean;
   readonly showControls: boolean;
   readonly controls: ReactNode;
 }) {
-  if (conflicts > 0 || authRequired) {
+  if (conflicts > 0 || authRequired || storageFailure) {
     return (
       <>
         <p role="alert" className="font-small text-small text-error" data-testid="sync-alert">

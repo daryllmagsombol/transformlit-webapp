@@ -41,6 +41,39 @@ describe('SyncStatus', () => {
     expect(onReauthenticate).toHaveBeenCalledTimes(1);
   });
 
+  it('offers reauthentication from the explicit authRequired flag the coordinator emits', () => {
+    const onReauthenticate = jest.fn();
+    render(
+      <SyncStatus
+        pending={1}
+        conflicts={0}
+        state="BLOCKED"
+        authRequired
+        onRetry={jest.fn()}
+        onReauthenticate={onReauthenticate}
+        onDiscard={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(/sign in again/i);
+    fireEvent.click(screen.getByRole('button', { name: /sign in again/i }));
+    expect(onReauthenticate).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces a storage failure honestly and distinctly from a network retry', () => {
+    render(
+      <SyncStatus
+        pending={0}
+        conflicts={0}
+        state="ERROR"
+        storageFailure
+        onRetry={jest.fn()}
+        onReauthenticate={jest.fn()}
+        onDiscard={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not store/i);
+  });
+
   it('never claims synchronized when work remains', () => {
     render(<SyncStatus pending={1} conflicts={0} state="SYNCING" onRetry={jest.fn()} onReauthenticate={jest.fn()} onDiscard={jest.fn()} />);
     expect(screen.queryByText(/all changes synchronized/i)).not.toBeInTheDocument();
