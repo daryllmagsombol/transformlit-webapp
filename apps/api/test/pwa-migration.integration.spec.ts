@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Pool } from 'pg';
 import { type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -23,7 +23,10 @@ describe('PWA reader sync migration', () => {
   const apiCwd = resolve(__dirname, '..');
 
   function runMigrateDeploy(url: string): string {
-    return execFileSync('pnpm', ['exec', 'prisma', 'migrate', 'deploy', '--schema', 'prisma/schema.prisma'], {
+    // Rehearse the EXACT production command (`db:migrate:deploy`) rather than a
+    // hand-rolled prisma invocation, so packaging/runtime path differences are
+    // exercised by the migration test.
+    return execFileSync('pnpm', ['run', 'db:migrate:deploy'], {
       cwd: apiCwd,
       env: { ...process.env, DATABASE_URL: url },
       encoding: 'utf8',
@@ -98,5 +101,41 @@ describe('PWA reader sync migration', () => {
 
   it('refuses to run against a database not owned by a live container', () => {
     expect(() => assertOwnedDisposableDatabaseUrl('postgresql://localhost:5432/transformlit', container)).toThrow(/owned/i);
+  });
+});
+
+/**
+ * Static rollback policy (no database required). Rollback must be able to run
+ * the PREVIOUS compatible client against the additive schema, or fail safely
+ * with no data deletion — never decrement/drop to make rollback "succeed".
+ */
+describe('PWA migration rollback policy', () => {
+  const migrationsDir = resolve(__dirname, '..', 'prisma', 'migrations');
+
+  it('contains no destructive SQL that would drop/downgrade data on rollout', () => {
+    const sqlFiles = readdirSync(migrationsDir).flatMap((entry) => {
+      const entryPath = join(migrationsDir, entry);
+      try {
+        return readdirSync(entryPath)
+          .filter((file) => file.endsWith('.sql'))
+          .map((file) => join(entryPath, file));
+      } catch {
+        return [];
+      }
+    });
+    expect(sqlFiles.length).toBeGreaterThan(0);
+
+    const destructive = /(DROP\s+TABLE|DROP\s+COLUMN|TRUNCATE|DELETE\s+FROM)/i;
+    const violations = sqlFiles.filter((file) => destructive.test(readFileSync(file, 'utf8')));
+    expect(violations).toEqual([]);
+  });
+
+  it('keeps the reader-sync migration strictly additive (CREATE only)', () => {
+    const sql = readFileSync(
+      join(migrationsDir, '20261001000200_pwa_reader_sync', 'migration.sql'),
+      'utf8',
+    );
+    expect(sql).toMatch(/CREATE TABLE/i);
+    expect(sql).not.toMatch(/(DROP\s+TABLE|DROP\s+COLUMN|TRUNCATE|DELETE\s+FROM)/i);
   });
 });

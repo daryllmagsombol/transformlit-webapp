@@ -109,6 +109,16 @@ const nextConfig: NextConfig = {
           { key: 'Service-Worker-Allowed', value: '/' },
         ],
       },
+      {
+        // The worker verifies the served release against this inventory on
+        // install; a stale/mixed copy must never be cached (or a mixed-release
+        // install could be accepted). No worker/cache rule may override this.
+        source: '/pwa-assets.json',
+        headers: [
+          { key: 'Content-Type', value: 'application/json; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+        ],
+      },
     ];
   },
 };
