@@ -10,6 +10,7 @@ import { AuthService } from '../src/auth/auth.service';
 import { BooksService } from '../src/books/books.service';
 import { BookDownloadService } from '../src/books/book-download.service';
 import { ConversionRunner } from '../src/books/conversion/conversion.runner';
+import { ConversionJobService } from '../src/books/conversion/conversion-job.service';
 import { buildTestPdf } from './fixtures/build-pdf';
 import { assertOwnedDisposableDatabaseUrl, startOwnedDisposableDatabase } from './helpers/pwa-disposable-db.js';
 
@@ -29,6 +30,7 @@ describe('Offline book downloads', () => {
   let books: BooksService;
   let downloads: BookDownloadService;
   let runner: ConversionRunner;
+  let conversionJobs: ConversionJobService;
   let container: StartedPostgreSqlContainer | null = null;
   let token: string;
   let userId: string;
@@ -91,6 +93,7 @@ describe('Offline book downloads', () => {
     books = moduleFixture.get<BooksService>(BooksService);
     downloads = moduleFixture.get<BookDownloadService>(BookDownloadService);
     runner = moduleFixture.get<ConversionRunner>(ConversionRunner);
+    conversionJobs = moduleFixture.get<ConversionJobService>(ConversionJobService);
 
     const stamp = Date.now();
     const auth = moduleFixture.get<AuthService>(AuthService);
@@ -227,5 +230,50 @@ describe('Offline book downloads', () => {
     const frame = manifest.assets.find((asset) => asset.kind === 'PAGE_IMAGE');
     const asset = await downloads.getAssetById(bookId, userId, priorVersion, frame!.assetId);
     expect(asset.sha256).toBe(frame!.sha256);
+  });
+
+  it('allocates distinct versions under two simultaneous conversions and never corrupts a committed version', async () => {
+    const stamp = Date.now();
+    const raceBook = await prisma.book.create({
+      data: { title: `Conversion race ${stamp}`, status: 'PUBLISHED', accessLevel: 'FREE' },
+    });
+    // uploadBookFile enqueues one job; add a second so two workers race one book.
+    await books.uploadBookFile(raceBook.id, buildTestPdf(['Race A']), userId, UserRole.ADMIN);
+    await conversionJobs.enqueue(raceBook.id);
+
+    // Two workers race one book. Each claims a distinct job and runs conversion
+    // concurrently. Atomic version allocation must give each attempt its own
+    // asset prefix, so exactly one version row exists per attempt and every
+    // committed version's checksums still match its stored bytes.
+    await Promise.all([runner.runOnce(), runner.runOnce()]);
+
+    const jobs = await prisma.bookConversionJob.findMany({ where: { bookId: raceBook.id } });
+    expect(jobs).toHaveLength(2);
+    expect(jobs.every((job) => job.status === 'READY')).toBe(true);
+
+    const versions = await prisma.bookContentVersion.findMany({
+      where: { bookId: raceBook.id },
+      include: { pages: { orderBy: { index: 'asc' } } },
+      orderBy: { contentVersion: 'asc' },
+    });
+    expect(versions).toHaveLength(2);
+    // Distinct version numbers: no duplicate (bookId, contentVersion) and no
+    // shared asset prefix could have been overwritten.
+    expect(new Set(versions.map((version) => version.contentVersion)).size).toBe(2);
+    const book = await prisma.book.findUniqueOrThrow({ where: { id: raceBook.id } });
+    // The pointer tracks the highest committed version.
+    expect(book.contentVersion).toBe(versions[1].contentVersion);
+
+    // Every committed version is downloadable and its bytes still match the
+    // recorded checksums (no cross-version byte overwrite).
+    for (const version of versions) {
+      expect(version.eligible).toBe(true);
+      const manifest = await downloads.getManifest(raceBook.id, userId, version.contentVersion);
+      expect(manifest.contentVersion).toBe(version.contentVersion);
+      for (const page of version.pages) {
+        const asset = await downloads.getAssetById(raceBook.id, userId, version.contentVersion, `${page.id}:frame`);
+        expect(asset.sha256).toBe(page.frameSha256);
+      }
+    }
   });
 });
