@@ -4,7 +4,16 @@ Project-specific rules for AI coding agents. These supplement the global AGENTS.
 
 ## SonarQube Compliance
 
-All code MUST pass SonarQube quality gate. See `docs/SONAR-GUIDELINES.md` for the full rule set. Key non-negotiable rules:
+All code MUST pass SonarQube quality gate. See `docs/SONAR-GUIDELINES.md` for the full rule set.
+
+**Mandatory review workflow (do not skip):**
+
+- Every SonarQube and every opencode/AI code review MUST be performed **against `docs/SONAR-GUIDELINES.md`** and MUST **update that file** with any newly discovered rule, gate condition, or finding — so the same issue cannot recur in a future session.
+- Treat `docs/SONAR-GUIDELINES.md` as a **living document**: when a review surfaces a finding not already documented, append it (rule ID, fix, and a ❌/✅ example) **in the same change/PR**.
+- Reviews must check the **New Code quality-gate conditions** (0 new issues, ≥80% new-line coverage, ≤3% new duplication, 100% security hotspots reviewed) — a single Low/Minor issue or an unreviewed hotspot fails the entire gate. See the "Quality Gate Conditions" section.
+- Prefer writing code that **cannot** trigger a finding (e.g. avoid hardcoded IPs/secrets so no security hotspot needs review).
+
+Key non-negotiable rules:
 
 - **No `window` references** — use `globalThis.window` or `globalThis` (S6653)
 - **No array index in React keys** — use stable unique IDs (S6479)
