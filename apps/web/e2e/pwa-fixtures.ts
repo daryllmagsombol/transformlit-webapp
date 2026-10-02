@@ -8,7 +8,14 @@ type PwaFixture = {
   origin: 'https://localhost:3443';
   context: BrowserContext;
   ids: PwaIds;
-  loginAs(index: number): Promise<void>;
+  /**
+   * Signs in and establishes the browser session (refresh cookie), returning the
+   * freshly minted access token. Login returns `{ accessToken, user }` in the
+   * BODY and sets the httpOnly refresh cookie; the app's Apollo client attaches
+   * that access token as `Authorization: Bearer …`. A raw `fetch('/api/graphql')`
+   * from a spec must do the same, so expose the token here.
+   */
+  loginAs(index: number): Promise<string>;
 };
 
 export const test = base.extend<PwaFixture>({
@@ -50,12 +57,15 @@ export const test = base.extend<PwaFixture>({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ email, password }),
         });
-        if (!response.ok) return { loginStatus: response.status, refreshStatus: 0 };
+        if (!response.ok) return { loginStatus: response.status, refreshStatus: 0, accessToken: '' };
+        const login = await response.json() as { accessToken?: string };
         const refresh = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
-        return { loginStatus: response.status, refreshStatus: refresh.status };
+        return { loginStatus: response.status, refreshStatus: refresh.status, accessToken: login.accessToken ?? '' };
       }, credential);
       if (result.loginStatus !== 200) throw new Error(`Fixture login failed with HTTP ${result.loginStatus}`);
       if (result.refreshStatus !== 200) throw new Error(`Fixture refresh failed with HTTP ${result.refreshStatus}`);
+      if (!result.accessToken) throw new Error('Fixture login returned no access token');
+      return result.accessToken;
     });
   },
 });

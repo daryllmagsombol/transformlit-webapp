@@ -27,20 +27,20 @@ function uniqueDbName(): string {
 
 test.describe('offline storage browser semantics', () => {
   test('downloads an authorized whole book through the UI and publishes its ready marker', async ({ page, origin, loginAs, ids }) => {
-    await loginAs(0);
+    const accessToken = await loginAs(0);
     await page.goto(`${origin}/books`);
 
-    const book = await page.evaluate(async (bookId) => {
+    const book = await page.evaluate(async ({ bookId, token }) => {
       const response = await fetch('/api/graphql', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
         body: JSON.stringify({ query: '{ books { id title conversionStatus } }' }),
       });
       if (!response.ok) throw new Error(`Books query failed with ${response.status}`);
       const payload = await response.json() as { data?: { books?: Array<{ id: string; title: string }> } };
       return payload.data?.books?.find((entry) => entry.id === bookId) ?? null;
-    }, ids.readableBookId);
+    }, { bookId: ids.readableBookId, token: accessToken });
     expect(book).not.toBeNull();
     const download = page.getByRole('button', { name: `${book?.title}: save offline` });
     await expect(download).toBeEnabled();
