@@ -11,11 +11,81 @@ import { createServer } from 'node:http';
 import { createConnection } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { once } from 'node:events';
+import ts from 'typescript';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createPwaProxy, isLoopbackPeer, stripApiPrefix, pipeSafely } from './pwa-proxy.js';
 import { assertOwnedMetadata, assertPortAvailable, assertSupervisorNonce, assertSupervisorSocketIdentity, cleanupOwnedResources, cleanupAfterStartupFailure, assertOwnedArtifactPath, assertOwnedPublicAssetRoot, isContainerReadableAssetMode, parsePwaHarnessArgs, waitForHarnessReady, waitForSupervisorExit, listenPwaSupervisorControl, requestPwaSupervisorControl } from './pwa-process.js';
 import { assertTask1AOwnedDatabaseUrl } from './pwa-db.js';
 import { createPwaFixturePlan, createPwaFramePayload, createPwaTextPayload } from '../helpers/pwa-fixtures.js';
+
+function inspectPwaLoginUi(sourceText: string): {
+  capturesLoginResponse: boolean;
+  submitsLoginForm: boolean;
+  waitsForFeed: boolean;
+  bypassesLoginUi: boolean;
+} {
+  const source = ts.createSourceFile('pwa-fixtures.ts', sourceText, ts.ScriptTarget.Latest, true);
+  let loginFunction: ts.FunctionDeclaration | undefined;
+  function findLogin(node: ts.Node): void {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'loginPwaPage') {
+      loginFunction = node;
+    }
+    ts.forEachChild(node, findLogin);
+  }
+  findLogin(source);
+  if (!loginFunction?.body) {
+    return { capturesLoginResponse: false, submitsLoginForm: false, waitsForFeed: false, bypassesLoginUi: false };
+  }
+
+  const calls: ts.CallExpression[] = [];
+  function collectCalls(node: ts.Node): void {
+    if (ts.isCallExpression(node)) calls.push(node);
+    ts.forEachChild(node, collectCalls);
+  }
+  collectCalls(loginFunction.body);
+
+  function methodName(call: ts.CallExpression): string | null {
+    return ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : null;
+  }
+  function pageMethod(call: ts.CallExpression, method: string): boolean {
+    return methodName(call) === method && ts.isPropertyAccessExpression(call.expression) &&
+      ts.isIdentifier(call.expression.expression) && call.expression.expression.text === 'page';
+  }
+  function subtreeContainsLoginPath(node: ts.Node): boolean {
+    if (ts.isStringLiteral(node) && node.text === '/api/auth/login') {
+      return true;
+    }
+    return node.getChildren(source).some(subtreeContainsLoginPath);
+  }
+
+  const capturesLoginResponse = calls.some((call) =>
+    pageMethod(call, 'waitForResponse') && call.arguments.some(subtreeContainsLoginPath),
+  );
+  const submitsLoginForm = calls.some((call) => {
+    if (methodName(call) !== 'click' || !ts.isPropertyAccessExpression(call.expression)) {
+      return false;
+    }
+    const locator = call.expression.expression;
+    return ts.isCallExpression(locator) && ts.isPropertyAccessExpression(locator.expression) &&
+      locator.expression.name.text === 'getByRole' && ts.isIdentifier(locator.expression.expression) &&
+      locator.expression.expression.text === 'page';
+  });
+  const waitsForFeed = calls.some((call) => {
+    if (methodName(call) !== 'toHaveURL' || !ts.isPropertyAccessExpression(call.expression)) {
+      return false;
+    }
+    const assertion = call.expression.expression;
+    return ts.isCallExpression(assertion) && ts.isIdentifier(assertion.expression) &&
+      assertion.expression.text === 'expect' &&
+      assertion.arguments.some((argument) => ts.isIdentifier(argument) && argument.text === 'page') &&
+      call.arguments.some((argument) => ts.isRegularExpressionLiteral(argument) && /feed/.test(argument.text));
+  });
+  const bypassesLoginUi = calls.some((call) =>
+    (ts.isIdentifier(call.expression) && call.expression.text === 'fetch') ||
+    methodName(call) === 'post' || methodName(call) === 'clearCookies',
+  );
+  return { capturesLoginResponse, submitsLoginForm, waitsForFeed, bypassesLoginUi };
+}
 
 describe('PWA harness safety contract', () => {
   it('strips /api while preserving path and query', () => {
@@ -261,7 +331,12 @@ describe('PWA harness safety contract', () => {
     assert.match(fixtureSeeder, /publishPwaVersion2/);
     assert.match(webFixtures, /PWA_FIXTURE_CREDENTIALS/);
     assert.match(webFixtures, /\/api\/auth\/login/);
-    assert.match(webFixtures, /\/api\/auth\/refresh/);
+    assert.deepEqual(inspectPwaLoginUi(webFixtures), {
+      capturesLoginResponse: true,
+      submitsLoginForm: true,
+      waitsForFeed: true,
+      bypassesLoginUi: false,
+    });
     assert.match(harness, /127\.0\.0\.1:3000\/login/);
     assert.doesNotMatch(harness, /127\.0\.0\.1:3000\/offline/);
     assert.ok(harness.indexOf("['build', '-f', 'apps/api/Dockerfile'") < harness.indexOf('randomBytes(48)'));
@@ -279,6 +354,24 @@ describe('PWA harness safety contract', () => {
     assert.equal(isContainerReadableAssetMode(0o600, 'file'), false);
     assert.match(harness, /child\.once\('exit'/);
     assert.match(harness, /Supervisor exited during startup/);
+  });
+
+  it('checks the PWA UI-login AST contract and rejects comments/API bypasses', () => {
+    const commentOnly = `// page.getByRole('button').click(); page.waitForResponse('/api/auth/login'); expect(page).toHaveURL(/feed/);\nfunction loginPwaPage(page) { return undefined; }`;
+    assert.deepEqual(inspectPwaLoginUi(commentOnly), {
+      capturesLoginResponse: false,
+      submitsLoginForm: false,
+      waitsForFeed: false,
+      bypassesLoginUi: false,
+    });
+
+    const bypasses = `function loginPwaPage(page) { fetch('/api/auth/login'); page.request.post('/api/auth/login'); page.context.clearCookies(); }`;
+    assert.deepEqual(inspectPwaLoginUi(bypasses), {
+      capturesLoginResponse: false,
+      submitsLoginForm: false,
+      waitsForFeed: false,
+      bypassesLoginUi: true,
+    });
   });
 });
 

@@ -33,7 +33,9 @@ type PwaFixture = {
 export async function loginPwaPage(page: Page, index: number, origin = 'https://localhost:3443'): Promise<string> {
   const credentials = JSON.parse(process.env.PWA_FIXTURE_CREDENTIALS ?? '[]') as PwaCredential[];
   const credential = credentials[index];
-  if (!credential) throw new Error('PWA fixture credential is missing');
+  if (!credential) {
+    throw new Error('PWA fixture credential is missing');
+  }
 
   await page.goto(`${origin}/login`);
   const recoveryDialog = page.getByTestId('account-exit-dialog');
@@ -74,7 +76,9 @@ export const test = base.extend<PwaFixture>({
   },
   profilePath: async ({}, use, testInfo) => {
     const profileRoot = process.env.PWA_BROWSER_PROFILE;
-    if (!profileRoot) throw new Error('Owned PWA browser profile root is required');
+    if (!profileRoot) {
+      throw new Error('Owned PWA browser profile root is required');
+    }
     const testIdentity = `${testInfo.testId}-${randomUUID()}`.replaceAll(/[^a-zA-Z0-9._-]/g, '_');
     const profilePath = resolve(profileRoot, 'test-profiles', testIdentity);
     await mkdir(profilePath, { recursive: true, mode: 0o700 });
@@ -82,7 +86,9 @@ export const test = base.extend<PwaFixture>({
   },
   context: async ({ profilePath }, use) => {
     const fingerprint = process.env.PWA_TLS_SPKI;
-    if (!fingerprint) throw new Error('Owned PWA TLS SPKI pin is required');
+    if (!fingerprint) {
+      throw new Error('Owned PWA TLS SPKI pin is required');
+    }
     const context = await chromium.launchPersistentContext(profilePath, {
       headless: true,
       ignoreHTTPSErrors: false,

@@ -1,15 +1,26 @@
 # Production-PWA E2E follow-up — CI run 37037490814
 
+## Oracle-confirmed bounded follow-up — 9184032
+
+Oracle approved the per-test-profile isolation direction and identified two
+corrections: add braces around guards; replace the stale refresh-endpoint
+source-text assertion with an AST contract for the actual login UI; and align
+the conflict fixture's epoch/sequence with persisted lifecycle/outbox state.
+The AST check now locates `loginPwaPage` and inspects call expressions, with
+negative cases proving comments don't satisfy the contract and direct fetch,
+request `.post`, and cookie-clearing bypasses are rejected. Runtime CI proof
+remains pending; this follow-up did not start the Docker harness.
+
 ## Evidence and scope
 
 Read Oracle-confirmed traces for CI run **37037490814**: nine setup timeouts
 originated from a recovery barrier left by a prior scenario sharing the same
 persistent browser profile. Also reviewed CI run **37032368483** error contexts
-for reading, storage READY marker, and sync receipt. This round changes only
-E2E fixtures/specs, Sonar configuration and documentation. No production code,
-account specs, dependencies, Docker harness or remote/GitHub commands were
-changed/run. The local harness launch previously hung over 15 minutes; another
-launch is expressly prohibited.
+for reading, storage READY marker, and sync receipt. This follow-up changes only
+the API harness contract test, PWA E2E fixtures/spec, guidelines and SDD report.
+No production code, account specs, dependencies, Docker harness or
+remote/GitHub commands were changed/run. The local harness launch previously
+hung over 15 minutes; another launch is expressly prohibited.
 
 ## Cause → fix ledger
 
@@ -26,12 +37,9 @@ launch is expressly prohibited.
 ## Locally verified
 
 - `pnpm --filter @transformlit/web typecheck`: **passed**.
-- `pnpm --filter @transformlit/api test:harness`: **20/21 passed** after final
-  edits. The sole failure is the out-of-scope source-text assertion in
-  `apps/api/test/scripts/pwa-harness.spec.ts:264`, which requires the literal
-  `/api/auth/refresh` in the E2E fixture. The real login UI returns the access
-  token and installs session state without an extra refresh call; do not add a
-  misleading comment/string or change that test outside the authorized scope.
+- `pnpm --filter @transformlit/api test:harness`: **22/22 passed** after replacing
+  the stale source-text assertion with structural AST checks and two negative
+  cases.
 - `pnpm --dir apps/web exec playwright test -c playwright.pwa.config.ts --list`:
   **passed**, 37 tests discovered in 9 files. Discovery is not an E2E pass.
 - Diff inspection and `git diff --check`: **passed**.
@@ -51,9 +59,6 @@ launch is expressly prohibited.
 - Browser auth, barrier diagnostics, profile reuse/cold restart, epoch alignment,
   receipt polling and second-device snapshot remain CI-only until the parent
   verifies this commit.
-- E2E source-string contract update should be handled in a separate authorized
-  change if the owner confirms it is stale; it is not made green by a textual
-  workaround in this fixture.
 - Audited every `PWA_BROWSER_PROFILE` occurrence under `apps/web/e2e`: account,
   install, deployment, upgrade, worker and sync/reading guards only check harness
   configuration; the reading cold restart now uses the actual per-test
