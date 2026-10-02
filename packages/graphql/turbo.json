@@ -1,0 +1,13 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "inputs": ["$TURBO_DEFAULT$", "codegen.ts", "operations/**/*.graphql", "../../apps/api/src/schema.gql"],
+      "outputs": ["dist/**", "src/__generated__/**"]
+    },
+    "typecheck": {
+      "inputs": ["$TURBO_DEFAULT$", "codegen.ts", "operations/**/*.graphql", "../../apps/api/src/schema.gql"],
+      "outputs": ["src/__generated__/**"]
+    }
+  }
+}

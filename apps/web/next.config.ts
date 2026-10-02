@@ -26,10 +26,11 @@ const CSP_DIRECTIVES = [
   // Bible content/fonts/audio from helloao; seeded group media from GCS +
   // Google avatar CDN; felt-paper background texture from transparenttextures.
   // img-src gains the dev API origin only. Reader page frames load as plain
-  // <img src> (never next/image); prod API is same-origin via 'self'.
+  // <img src> (never next/image); prod API is same-origin via 'self'. `blob:`
+  // is required because offline readers render downloaded pages from Blob URLs.
   IS_PROD
-    ? "img-src 'self' data: https://bible.helloao.org https://www.transparenttextures.com https://*.blob.core.windows.net https://lh3.googleusercontent.com"
-    : "img-src 'self' data: http://localhost:3005 https://bible.helloao.org https://www.transparenttextures.com https://*.blob.core.windows.net https://lh3.googleusercontent.com",
+    ? "img-src 'self' blob: data: https://bible.helloao.org https://www.transparenttextures.com https://*.blob.core.windows.net https://lh3.googleusercontent.com"
+    : "img-src 'self' blob: data: http://localhost:3005 https://bible.helloao.org https://www.transparenttextures.com https://*.blob.core.windows.net https://lh3.googleusercontent.com",
   // Chapter audio is streamed from the dedicated audio host (see thisChapterAudioLinks).
   "media-src 'self' https://bible.helloao.org https://audio.bible.helloao.org",
   // fetch() / XHR / WS go to the GraphQL API origin. Prod API is same-origin
@@ -47,6 +48,8 @@ const CSP_DIRECTIVES = [
   "form-action 'self'",
   // No upstream object/worker embedding from other origins.
   "object-src 'none'",
+  // The PWA service worker is same-origin; no worker is registered here.
+  "worker-src 'self'",
 ];
 
 /** Split a single CSP string into an object of directive → value arrays for Next. */
@@ -96,6 +99,24 @@ const nextConfig: NextConfig = {
               .map(([k, v]) => `${k} ${v.join(' ')}`.trim())
               .join('; '),
           },
+        ],
+      },
+      {
+        source: '/sw.js',
+        headers: [
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+          { key: 'Service-Worker-Allowed', value: '/' },
+        ],
+      },
+      {
+        // The worker verifies the served release against this inventory on
+        // install; a stale/mixed copy must never be cached (or a mixed-release
+        // install could be accepted). No worker/cache rule may override this.
+        source: '/pwa-assets.json',
+        headers: [
+          { key: 'Content-Type', value: 'application/json; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
         ],
       },
     ];

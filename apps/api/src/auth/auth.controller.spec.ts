@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   UnauthorizedException,
   BadRequestException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { AuthController, REFRESH_COOKIE_NAME, stripTrailingSlashes } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -42,6 +43,7 @@ describe('AuthController (REST httpOnly cookie flows)', () => {
       loginLocal: jest.fn().mockResolvedValue(mockTokens),
       registerLocal: jest.fn().mockResolvedValue(mockTokens),
       refreshTokens: jest.fn().mockResolvedValue(mockTokens),
+      logout: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -151,13 +153,30 @@ describe('AuthController (REST httpOnly cookie flows)', () => {
         UnauthorizedException,
       );
     });
+
+    it('does NOT convert an infrastructure failure into an invalid-credential 401', async () => {
+      const infraError = new Error('database unavailable');
+      authService.refreshTokens.mockRejectedValue(infraError);
+      const req = {
+        cookies: { [REFRESH_COOKIE_NAME]: 'good-token' },
+      } as unknown as Request;
+
+      // The exact infra error surfaces (so the client treats it as transient and
+      // preserves local state) rather than being flattened into a 401 that would
+      // force an offline sign-out.
+      await expect(controller.refresh(req, createRes())).rejects.toBe(infraError);
+    });
   });
 
   describe('POST /auth/logout', () => {
-    it('clears the refresh cookie (maxAge 0) and returns {}', async () => {
+    it('revokes the refresh family and clears the refresh cookie (maxAge 0)', async () => {
       const res = createRes();
-      const result = await controller.logout(res);
+      const req = {
+        cookies: { [REFRESH_COOKIE_NAME]: 'raw-refresh-token-1' },
+      } as unknown as Request;
+      const result = await controller.logout(req, res);
 
+      expect(authService.logout).toHaveBeenCalledWith('raw-refresh-token-1');
       expect(res.clearCookie).toHaveBeenCalledWith(
         REFRESH_COOKIE_NAME,
         expect.objectContaining({
@@ -167,7 +186,41 @@ describe('AuthController (REST httpOnly cookie flows)', () => {
           maxAge: 0,
         }),
       );
-      expect(result).toEqual({});
+      expect(result).toEqual({ revoked: true });
+    });
+
+    it('returns an explicit unconfirmable signal (not revoked:true) when no cookie is present', async () => {
+      const res = createRes();
+      const req = { cookies: {} } as unknown as Request;
+      const result = await controller.logout(req, res);
+
+      expect(authService.logout).not.toHaveBeenCalled();
+      expect(res.clearCookie).toHaveBeenCalled();
+      // The server cannot confirm invalidation without a credential; the client
+      // must keep its deferred-logout barrier for this signal.
+      expect(result).toEqual({ revoked: false, reason: 'no-credential' });
+    });
+
+    it('surfaces a non-2xx signal when server-side revocation fails, still clearing the cookie', async () => {
+      authService.logout.mockRejectedValue(new Error('db down'));
+      const res = createRes();
+      const req = {
+        cookies: { [REFRESH_COOKIE_NAME]: 'raw-refresh-token-1' },
+      } as unknown as Request;
+
+      // A failed revocation must NOT look like a successful logout: the client
+      // uses this signal to persist a durable deferred-logout barrier.
+      await expect(controller.logout(req, res)).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(res.clearCookie).toHaveBeenCalled();
+    });
+
+    it('returns an explicit revoked:true signal when the family is invalidated', async () => {
+      const res = createRes();
+      const req = {
+        cookies: { [REFRESH_COOKIE_NAME]: 'raw-refresh-token-1' },
+      } as unknown as Request;
+      const result = await controller.logout(req, res);
+      expect(result).toEqual({ revoked: true });
     });
   });
 });

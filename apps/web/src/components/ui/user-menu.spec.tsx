@@ -2,36 +2,36 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { UserMenu } from './user-menu';
 
 var mockPush: jest.Mock;
-var mockClearAuthStore: jest.Mock;
-var mockClearAuthStorage: jest.Mock;
-var mockResetApolloState: jest.Mock;
-var mockFetch: jest.Mock;
+var mockRequestAccountExit: jest.Mock;
+var mockCompleteAccountExit: jest.Mock;
+var mockCancelAccountExit: jest.Mock;
+
+const EMPTY_WORK = {
+  pending: 0,
+  inFlightOrUncertain: 0,
+  blockedSuccessors: 0,
+  conflicts: 0,
+  localOnly: 0,
+  fullyDrained: true,
+};
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
   usePathname: () => '/feed',
 }));
 
-jest.mock('../../store', () => ({
-  useAuthStore: Object.assign(
-    (selector: (s: { user: unknown; clearAuth: jest.Mock }) => unknown) =>
-      selector({ user: null, clearAuth: mockClearAuthStore }),
-    {
-      getState: () => ({ user: null, clearAuth: mockClearAuthStore }),
-    }
-  ),
-}));
-
-jest.mock('../../lib/auth', () => ({
-  clearAuth: () => mockClearAuthStorage(),
-}));
-
-jest.mock('../../lib/apollo-client', () => ({
-  resetApolloState: () => mockResetApolloState(),
-}));
-
-jest.mock('../../lib/constants', () => ({
-  API_BASE: 'http://localhost:3005',
+jest.mock('../../lib/offline/account-exit', () => ({
+  EMPTY_EXIT_WORK: {
+    pending: 0,
+    inFlightOrUncertain: 0,
+    blockedSuccessors: 0,
+    conflicts: 0,
+    localOnly: 0,
+    fullyDrained: true,
+  },
+  requestAccountExit: () => mockRequestAccountExit(),
+  completeAccountExit: (discard: boolean, drained: boolean) => mockCompleteAccountExit(discard, drained),
+  cancelAccountExit: () => mockCancelAccountExit(),
 }));
 
 const mockUser = {
@@ -46,11 +46,12 @@ const mockUser = {
 describe('UserMenu', () => {
   beforeEach(() => {
     mockPush = jest.fn();
-    mockClearAuthStore = jest.fn();
-    mockClearAuthStorage = jest.fn();
-    mockResetApolloState = jest.fn();
-    mockFetch = jest.fn().mockResolvedValue({ ok: true });
-    global.fetch = mockFetch as unknown as typeof fetch;
+    mockRequestAccountExit = jest.fn().mockResolvedValue({
+      decision: { status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' },
+      work: EMPTY_WORK,
+    });
+    mockCompleteAccountExit = jest.fn().mockResolvedValue({ status: 'PROCEED' });
+    mockCancelAccountExit = jest.fn();
   });
 
   describe('trigger', () => {
@@ -123,53 +124,107 @@ describe('UserMenu', () => {
     });
   });
 
-  describe('logout', () => {
-    it('clears auth and navigates to login when Log out is clicked', async () => {
+  describe('logout through the lifecycle gate', () => {
+    it('signs out and navigates to login when there is no outstanding work', async () => {
       render(<UserMenu user={mockUser} />);
 
       fireEvent.click(screen.getByRole('button', { expanded: false }));
       fireEvent.click(screen.getByRole('menuitem', { name: /log out/i }));
 
-      await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalledWith(
-          'http://localhost:3005/auth/logout',
-          expect.objectContaining({
-            method: 'POST',
-            credentials: 'include',
-          }),
-        );
-      });
-
-      expect(mockClearAuthStorage).toHaveBeenCalledTimes(1);
-      expect(mockClearAuthStore).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(mockCompleteAccountExit).toHaveBeenCalledWith(false, true));
       expect(mockPush).toHaveBeenCalledWith('/login');
-      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('account-exit-dialog')).not.toBeInTheDocument();
     });
 
-    it('still clears local auth when the logout endpoint fails', async () => {
-      mockFetch.mockRejectedValue(new Error('network down'));
+    it('opens the informed exit dialog (naming the work) when the drain is not complete', async () => {
+      mockRequestAccountExit.mockResolvedValue({
+        decision: { status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' },
+        work: { ...EMPTY_WORK, fullyDrained: false, pending: 2, conflicts: 1 },
+      });
 
       render(<UserMenu user={mockUser} />);
-
       fireEvent.click(screen.getByRole('button', { expanded: false }));
       fireEvent.click(screen.getByRole('menuitem', { name: /log out/i }));
 
-      await waitFor(() => {
-        expect(mockClearAuthStorage).toHaveBeenCalledTimes(1);
-      });
-      expect(mockClearAuthStore).toHaveBeenCalledTimes(1);
-      expect(mockPush).toHaveBeenCalledWith('/login');
+      const dialog = await screen.findByTestId('account-exit-dialog');
+      expect(dialog).toHaveTextContent(/2 waiting to sync/i);
+      expect(dialog).toHaveTextContent(/1 conflict/i);
+      // Not signed out yet.
+      expect(mockCompleteAccountExit).not.toHaveBeenCalled();
+      expect(mockPush).not.toHaveBeenCalled();
     });
 
-    it('resets the Apollo cache on logout to prevent cross-user data leaks', async () => {
-      render(<UserMenu user={mockUser} />);
+    it('does not discard until the user explicitly confirms, then navigates to login', async () => {
+      mockRequestAccountExit.mockResolvedValue({
+        decision: { status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' },
+        work: { ...EMPTY_WORK, fullyDrained: false, pending: 1 },
+      });
 
+      render(<UserMenu user={mockUser} />);
       fireEvent.click(screen.getByRole('button', { expanded: false }));
       fireEvent.click(screen.getByRole('menuitem', { name: /log out/i }));
 
-      await waitFor(() => {
-        expect(mockResetApolloState).toHaveBeenCalledTimes(1);
+      const discard = await screen.findByRole('button', { name: /discard and sign out/i });
+      expect(discard).toBeDisabled();
+      fireEvent.click(screen.getByLabelText(/permanently discard/i));
+
+      mockCompleteAccountExit.mockResolvedValue({ status: 'PROCEED' });
+      fireEvent.click(discard);
+
+      await waitFor(() => expect(mockCompleteAccountExit).toHaveBeenCalledWith(true, false));
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/login'));
+    });
+
+    it('leaves the dialog open and surfaces an error when the drain still cannot complete', async () => {
+      mockRequestAccountExit.mockResolvedValue({
+        decision: { status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' },
+        work: { ...EMPTY_WORK, fullyDrained: false, pending: 3 },
       });
+      mockCompleteAccountExit.mockResolvedValue({ status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' });
+
+      render(<UserMenu user={mockUser} />);
+      fireEvent.click(screen.getByRole('button', { expanded: false }));
+      fireEvent.click(screen.getByRole('menuitem', { name: /log out/i }));
+
+      fireEvent.click(await screen.findByRole('button', { name: /sync now/i }));
+
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/still need to sync/i));
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it('unfreezes and surfaces an error when starting the exit rejects (never stuck frozen)', async () => {
+      mockRequestAccountExit.mockRejectedValue(new Error('hydrate failed'));
+
+      render(<UserMenu user={mockUser} />);
+      fireEvent.click(screen.getByRole('button', { expanded: false }));
+      fireEvent.click(screen.getByRole('menuitem', { name: /log out/i }));
+
+      await waitFor(() => expect(mockCancelAccountExit).toHaveBeenCalled());
+      expect(screen.getByTestId('account-exit-dialog')).toHaveTextContent(/could not start sign-out/i);
+    });
+
+    it('cancels the exit (unfreezing) when the user cancels the dialog', async () => {
+      mockRequestAccountExit.mockResolvedValue({
+        decision: { status: 'SYNC_REQUIRED', reason: 'PENDING_WORK' },
+        work: { ...EMPTY_WORK, fullyDrained: false, pending: 1 },
+      });
+
+      render(<UserMenu user={mockUser} />);
+      fireEvent.click(screen.getByRole('button', { expanded: false }));
+      fireEvent.click(screen.getByRole('menuitem', { name: /log out/i }));
+
+      fireEvent.click(await screen.findByRole('button', { name: /cancel/i }));
+      expect(mockCancelAccountExit).toHaveBeenCalled();
+    });
+
+    it('navigates to login even when remote invalidation is deferred (local UI stays signed out)', async () => {
+      mockCompleteAccountExit.mockResolvedValue({ status: 'BLOCKED', reason: 'DEFERRED_LOGOUT' });
+
+      render(<UserMenu user={mockUser} />);
+      fireEvent.click(screen.getByRole('button', { expanded: false }));
+      fireEvent.click(screen.getByRole('menuitem', { name: /log out/i }));
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/login'));
     });
   });
 });

@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./dist-schema",
+    "incremental": false,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "types": ["node", "jest"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "test/graphql-schema.ts",
+    "test/graphql-schema.integration.spec.ts",
+    "test/command-runner-metadata.ts",
+    "test/schema-runtime-probe.ts",
+    "test/helpers/pwa-disposable-db.ts",
+    "test/helpers/schema-drift.ts",
+    "test/helpers/schema-check-path.ts"
+  ],
+  "exclude": ["node_modules", "dist", "dist-schema"]
+}

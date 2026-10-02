@@ -6,15 +6,37 @@ interface ReaderToolbarProps {
   readonly pageCount: number;
   readonly onPageChange: (page: number) => void;
   readonly onBack: () => void;
+  /** Toggles the annotations panel. Omit to hide the control entirely. */
+  readonly onToggleAnnotations?: () => void;
+  readonly annotationsOpen?: boolean;
 }
 
-export function ReaderToolbar({ title, page, pageCount, onPageChange, onBack }: ReaderToolbarProps) {
+export function ReaderToolbar({
+  title,
+  page,
+  pageCount,
+  onPageChange,
+  onBack,
+  onToggleAnnotations,
+  annotationsOpen = false,
+}: ReaderToolbarProps) {
   return (
     <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-outline-variant bg-surface-container-low px-4 py-2">
       <button type="button" onClick={onBack} aria-label="Back to library" className="material-symbols-outlined min-h-11 min-w-11">
         arrow_back
       </button>
       <h1 className="min-w-0 flex-1 truncate font-display text-headline-h3">{title}</h1>
+      {onToggleAnnotations ? (
+        <button
+          type="button"
+          onClick={onToggleAnnotations}
+          aria-label="Annotations"
+          aria-pressed={annotationsOpen}
+          className="material-symbols-outlined min-h-11 min-w-11"
+        >
+          {annotationsOpen ? 'edit_note' : 'note_add'}
+        </button>
+      ) : null}
       <nav aria-label="Page navigation" className="flex items-center gap-2">
         <button
           type="button"

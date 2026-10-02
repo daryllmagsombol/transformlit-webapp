@@ -1,4 +1,5 @@
 name: PR Checks
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -7,7 +8,12 @@ concurrency:
   group: pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
+  # Fast, pure-TypeScript compile gate. `turbo run typecheck` builds workspace
+  # dependencies first, so no explicit build steps are needed here.
   typecheck:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -27,6 +33,225 @@ jobs:
         run: pnpm --filter @transformlit/api run db:generate
       - run: pnpm typecheck
 
+  # Guarded schema contract + clean generated-package consumer.
+  #
+  # The GraphQL package's generated sources/dist are untracked and rebuilt from
+  # the tracked canonical SDL (`apps/api/src/schema.gql`). This job proves the
+  # SDL is authoritative and never mutated by ordinary commands, and that a
+  # CLEAN codegen + compile + package-root import produces a real DocumentNode.
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client
+        run: pnpm --filter @transformlit/api run db:generate
+      - name: Build workspace dependencies
+        run: pnpm --filter @transformlit/shared run build
+      # Non-mutating: boots AppModule against an owned disposable database and
+      # compares deterministic runtime SDL bytes with the committed canonical
+      # file. It never writes the SDL. The diff makes any accidental mutation
+      # from this job fail loudly.
+      - name: Guarded schema non-mutation check
+        run: |
+          pnpm --filter @transformlit/api run graphql:schema:check
+          git diff --exit-code -- apps/api/src/schema.gql
+      # `graphql test` runs `clean` -> `graphql:codegen` -> `tsc`, then imports a
+      # real generated DocumentNode through the package ROOT and asserts the
+      # Turbo SDL/operation input + output contract. Running from a clean tree
+      # proves codegen is reproducible from the tracked canonical SDL alone.
+      - name: Codegen clean package consumer
+        run: pnpm --filter @transformlit/graphql test
+      # The whole job must never write the tracked canonical SDL — codegen, the
+      # package build and the consumer test all read it, and only the explicit
+      # guarded export command may write it.
+      - name: Canonical SDL must be untouched by codegen/build
+        run: git diff --exit-code -- apps/api/src/schema.gql
+
+  # Unit suites for every workspace. Node 24 is required: the API's
+  # pdf.converter suite loads ESM PDF.js and Jest's synchronous require(ESM)
+  # needs Node >= 24.9 (see the SonarQube workflow note).
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client
+        run: pnpm --filter @transformlit/api run db:generate
+      # The API suites import @transformlit/shared, which resolves to its built
+      # dist/*.d.ts. Web specs import @transformlit/graphql (reader GraphQL
+      # drift guards), which resolves to its built dist. Build both first.
+      - name: Build workspace dependencies
+        run: |
+          pnpm --filter @transformlit/shared run build
+          pnpm --filter @transformlit/graphql run build
+      - name: Shared unit tests
+        run: pnpm --filter @transformlit/shared test
+      - name: API unit tests
+        run: pnpm --filter @transformlit/api test --runInBand
+      - name: Web unit tests
+        run: pnpm --filter @transformlit/web test --runInBand
+
+  # Scoped production builds, including generation + coherence verification of
+  # the PWA worker/inventory artifacts.
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client
+        run: pnpm --filter @transformlit/api run db:generate
+      - name: Build workspace dependencies
+        run: |
+          pnpm --filter @transformlit/shared run build
+          pnpm --filter @transformlit/graphql run build
+      - name: Build API
+        run: pnpm --filter @transformlit/api build
+      - name: Build web (production) with PWA assets
+        run: pnpm --filter @transformlit/web build
+      # Fails if public/sw.js or public/pwa-assets.json do not describe the
+      # current .next/BUILD_ID (stale packaging can never ship beside a fresh build).
+      - name: Verify generated PWA inventory matches the build
+        run: node apps/web/scripts/build-pwa-assets.mjs --verify
+
+  # Disposable-database API integration checks that exercise the PWA migration,
+  # reader schema/security/sync and offline-download correctness gates. Uses
+  # Testcontainers against a live Docker daemon on the runner; requires no
+  # external database and never targets an arbitrary DATABASE_URL.
+  #
+  # Scoped intentionally. Four pre-existing suites (groups/chat/friends/auth)
+  # fail on drift introduced at/before the task base (`6c90c3d`, `8596ad7`) and
+  # are NOT included rather than being made non-blocking or faked green. They
+  # must be repaired and added back by their owners. Every suite listed here
+  # passes today against an owned disposable database.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client
+        run: pnpm --filter @transformlit/api run db:generate
+      - name: Build workspace dependencies
+        run: pnpm --filter @transformlit/shared run build
+      - name: Scoped API integration (owned disposable databases)
+        run: |
+          pnpm --filter @transformlit/api test:integration --runInBand \
+            --runTestsByPath \
+              test/pwa-migration.integration.spec.ts \
+              test/reader-schema.integration.spec.ts \
+              test/reader-security.integration.spec.ts \
+              test/reader-sync.integration.spec.ts \
+              test/offline-download.integration.spec.ts \
+              test/books.integration.spec.ts \
+              test/chat-graphql.integration.spec.ts \
+              test/graphql-schema.integration.spec.ts
+
+  # Production PWA acceptance in a real Chromium against the owned same-origin
+  # HTTPS harness (production web/API images + disposable DB + TLS proxy).
+  #
+  # UNVERIFIED IN THE AUTHORING ENVIRONMENT: the harness supervisor is reaped
+  # shortly after `ready` on macOS/Colima, so this job's exact behavior was not
+  # observed locally. It is wired as a real blocking check; it must not be
+  # reported as passing until it has run green in CI.
+  pwa-chromium:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client
+        run: pnpm --filter @transformlit/api run db:generate
+      - name: Build workspace dependencies
+        run: |
+          pnpm --filter @transformlit/shared run build
+          pnpm --filter @transformlit/graphql run build
+      - name: Install Playwright Chromium
+        run: pnpm --filter @transformlit/web exec playwright install --with-deps chromium
+      # `up` refuses a missing Docker runtime/occupied ports and owns its
+      # resources; the trap tears down only this invocation even when tests fail.
+      - name: Production PWA harness (up -> test -> down)
+        run: |
+          harness() { pnpm --filter @transformlit/api exec tsx test/scripts/pwa-harness.ts "$@"; }
+          dump_diagnostics() {
+            echo "=== harness state dir ==="
+            ls -la .pwa-harness 2>&1 || true
+            echo "=== owner metadata ==="
+            cat .pwa-harness/environment.json 2>&1 || true
+            echo "=== supervisor log(s) ==="
+            find .pwa-harness -name 'supervisor.log' -print -exec tail -200 {} \; 2>&1 || true
+            echo "=== owned containers ==="
+            docker ps -a --filter label=transformlit.owner 2>&1 || true
+            for cid in $(docker ps -aq --filter label=transformlit.owner); do
+              echo "=== docker logs $cid ==="
+              docker logs "$cid" 2>&1 | tail -200 || true
+            done
+          }
+          set +e
+          harness up
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            harness test
+            status=$?
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::PWA harness/test failed (exit $status); capturing diagnostics before teardown"
+            mkdir -p .pwa-diagnostics
+            dump_diagnostics | tee .pwa-diagnostics/summary.txt
+            cp -a .pwa-harness/. .pwa-diagnostics/ 2>/dev/null || true
+          fi
+          harness down || true
+          exit "$status"
+      - name: Upload PWA harness diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwa-harness-diagnostics
+          path: |
+            .pwa-diagnostics/**
+            .pwa-harness/**
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 14
+      - name: Upload Playwright results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwa-playwright-results
+          path: |
+            apps/web/test-results/**
+            apps/web/playwright-report/**
+          if-no-files-found: ignore
+          retention-days: 14
+
   review:
     if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
@@ -41,7 +266,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # Non-blocking by design. This action is a write-capable agent: on a
+      # Informational only. This action is a write-capable agent: on a
       # `pull_request` event it treats the PR as a work target and, when its
       # worktree is dirty, runs `git commit` + `git push`. It never sets a git
       # identity when `use_github_token: true` (configureGit is gated on
@@ -58,7 +283,8 @@ jobs:
       # are no longer tracked, so the worktree stays clean and the action takes
       # its clean path: post the review as a PR issue comment.
       #
-      # typecheck is the real blocking gate; the review is informational.
+      # The jobs above are the real blocking security/correctness gates; the AI
+      # review is informational and must never be treated as one.
       - name: AI Code Review
         continue-on-error: true
         uses: anomalyco/opencode/github@v1.17.8
@@ -83,14 +309,21 @@ jobs:
             Add the model's name at the end of your review for traceability.
 
   gate:
-    needs: [typecheck, review]
+    needs: [typecheck, contracts, unit, build, integration, pwa-chromium, review]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Typecheck must pass
-        if: needs.typecheck.result != 'success' && needs.typecheck.result != 'skipped'
+      - name: Required correctness checks must pass
+        if: >-
+          needs.typecheck.result != 'success' ||
+          needs.contracts.result != 'success' ||
+          needs.unit.result != 'success' ||
+          needs.build.result != 'success' ||
+          needs.integration.result != 'success' ||
+          needs.pwa-chromium.result != 'success'
         run: |
-          echo "❌ TypeScript compilation failed"
+          echo "❌ A required correctness check failed or did not run."
+          echo "typecheck=${{ needs.typecheck.result }} contracts=${{ needs.contracts.result }} unit=${{ needs.unit.result }} build=${{ needs.build.result }} integration=${{ needs.integration.result }} pwa-chromium=${{ needs.pwa-chromium.result }}"
           exit 1
 
       # Informational only — the AI review is deliberately non-blocking (see the
@@ -101,4 +334,4 @@ jobs:
           echo "::warning::AI review job did not complete — see its logs. Not blocking."
 
       - name: All clear
-        run: echo "✅ All checks passed"
+        run: echo "✅ All required checks passed"

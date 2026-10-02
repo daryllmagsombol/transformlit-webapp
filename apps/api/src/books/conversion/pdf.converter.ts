@@ -1,10 +1,16 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { definePDFJSModule, getDocumentProxy, getResolvedPDFJS, renderPageAsImage } from 'unpdf';
 import { pathToFileURL } from 'node:url';
 import { STORAGE_ADAPTER, StorageAdapter } from '../../storage/storage-adapter.js';
 import { ConvertedBook, ConvertedPage, ConvertedTocEntry, TextItemBox } from './reader.types.js';
 
 export const RENDER_SCALE = 2;
+
+/** Lowercase hex SHA-256 used for immutable download checksums. */
+export function sha256Hex(data: Buffer): string {
+  return createHash('sha256').update(data).digest('hex');
+}
 
 /** Release document-level pdf.js caches every N pages (see `convert`). */
 const DOC_CLEANUP_INTERVAL = 10;
@@ -230,8 +236,12 @@ export class PdfConverter {
 
       const assetKey = `books/${input.bookId}/v${input.contentVersion}/pages/${index}.png`;
       const textKey = `books/${input.bookId}/v${input.contentVersion}/pages/${index}.json`;
-      await this.storage.put(assetKey, Buffer.from(image), 'image/png');
-      await this.storage.put(textKey, Buffer.from(JSON.stringify({ items: boxes })), 'application/json');
+      const frameBuffer = Buffer.from(image);
+      // An explicit, valid empty text layer is a real asset: persist the JSON
+      // document (possibly `{"items":[]}`) and checksum those exact bytes.
+      const textBuffer = Buffer.from(JSON.stringify({ items: boxes }));
+      await this.storage.put(assetKey, frameBuffer, 'image/png');
+      await this.storage.put(textKey, textBuffer, 'application/json');
 
       lastWidth = Math.round(viewport.width);
       lastHeight = Math.round(viewport.height);
@@ -243,6 +253,12 @@ export class PdfConverter {
         width: lastWidth,
         height: lastHeight,
         itemCount: boxes.length,
+        frameByteLength: frameBuffer.byteLength,
+        frameSha256: sha256Hex(frameBuffer),
+        textByteLength: textBuffer.byteLength,
+        textSha256: sha256Hex(textBuffer),
+        charCount: boxes.reduce((total, box) => total + box.t.length, 0),
+        hasTextLayer: true,
       });
 
       // pdf.js retains each page's operator list and decoded image objects

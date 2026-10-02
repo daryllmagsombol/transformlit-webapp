@@ -432,57 +432,25 @@ describe('BooksService', () => {
 
   // ── saveProgress ───────────────────────────────────────────────────────────
 
-  describe('saveProgress', () => {
+  describe('saveProgress (legacy, rejected)', () => {
     const input = { bookId: 'book-1', currentPage: 15, scrollY: 300 };
 
-    it('should upsert on composite key userId_bookId', async () => {
-      await service.saveProgress('user-1', input);
-      expect(prisma.bookProgress.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { userId_bookId: { userId: 'user-1', bookId: 'book-1' } },
-        }),
-      );
-    });
-
-    it('should update with currentPage, scrollY, and lastReadAt', async () => {
-      await service.saveProgress('user-1', input);
-      const call = prisma.bookProgress.upsert.mock.calls[0][0];
-      expect(call.update).toEqual(
-        expect.objectContaining({
-          currentPage: 15,
-          scrollY: 300,
-        }),
-      );
-      expect(call.update.lastReadAt).toBeInstanceOf(Date);
-    });
-
-    it('should create with userId, bookId, currentPage, scrollY', async () => {
-      await service.saveProgress('user-1', input);
-      const call = prisma.bookProgress.upsert.mock.calls[0][0];
-      expect(call.create).toEqual(
-        expect.objectContaining({
-          userId: 'user-1',
-          bookId: 'book-1',
-          currentPage: 15,
-          scrollY: 300,
-        }),
-      );
-    });
-
-    it('should return progress', async () => {
-      const result = await service.saveProgress('user-1', input);
-      expect(result).toEqual(mockProgress);
+    it('rejects with UPGRADE_REQUIRED and performs no write', async () => {
+      await expect(service.saveProgress('user-1', input)).rejects.toMatchObject({
+        extensions: { code: 'UPGRADE_REQUIRED' },
+      });
+      expect(prisma.bookProgress.upsert).not.toHaveBeenCalled();
     });
   });
 
   // ── listBookmarks ──────────────────────────────────────────────────────────
 
   describe('listBookmarks', () => {
-    it('should find bookmarks by userId and bookId', async () => {
+    it('should find non-deleted bookmarks by userId and bookId', async () => {
       await service.listBookmarks('user-1', 'book-1');
       expect(prisma.bookmark.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: 'user-1', bookId: 'book-1' },
+          where: { userId: 'user-1', bookId: 'book-1', deletedAt: null },
         }),
       );
     });
@@ -506,49 +474,36 @@ describe('BooksService', () => {
 
   // ── addBookmark ────────────────────────────────────────────────────────────
 
-  describe('addBookmark', () => {
+  describe('addBookmark (legacy, rejected)', () => {
     const input = { bookId: 'book-1', page: 5, label: 'Important', color: '#ff0' };
 
-    it('should create bookmark with userId and input data', async () => {
-      await service.addBookmark('user-1', input);
-      expect(prisma.bookmark.create).toHaveBeenCalledWith({
-        data: { userId: 'user-1', ...input },
+    it('rejects with UPGRADE_REQUIRED and performs no write', async () => {
+      await expect(service.addBookmark('user-1', input)).rejects.toMatchObject({
+        extensions: { code: 'UPGRADE_REQUIRED' },
       });
-    });
-
-    it('should return created bookmark', async () => {
-      const result = await service.addBookmark('user-1', input);
-      expect(result).toEqual(mockBookmark);
+      expect(prisma.bookmark.create).not.toHaveBeenCalled();
     });
   });
 
   // ── removeBookmark ─────────────────────────────────────────────────────────
 
-  describe('removeBookmark', () => {
-    it('should delete bookmark by id and userId', async () => {
-      const result = await service.removeBookmark('bookmark-1', 'user-1');
-      expect(prisma.bookmark.deleteMany).toHaveBeenCalledWith({
-        where: { id: 'bookmark-1', userId: 'user-1' },
+  describe('removeBookmark (legacy, rejected)', () => {
+    it('rejects with UPGRADE_REQUIRED and performs no delete', async () => {
+      await expect(service.removeBookmark('bookmark-1', 'user-1')).rejects.toMatchObject({
+        extensions: { code: 'UPGRADE_REQUIRED' },
       });
-      expect(result).toBe(true);
-    });
-
-    it('should throw NotFoundException when bookmark not owned by user', async () => {
-      prisma.bookmark.deleteMany.mockResolvedValue({ count: 0 });
-      await expect(
-        service.removeBookmark('bookmark-1', 'user-2'),
-      ).rejects.toThrow(NotFoundException);
+      expect(prisma.bookmark.deleteMany).not.toHaveBeenCalled();
     });
   });
 
   // ── listHighlights ─────────────────────────────────────────────────────────
 
   describe('listHighlights', () => {
-    it('should find highlights by userId and bookId', async () => {
+    it('should find non-deleted highlights by userId and bookId', async () => {
       await service.listHighlights('user-1', 'book-1');
       expect(prisma.highlight.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: 'user-1', bookId: 'book-1' },
+          where: { userId: 'user-1', bookId: 'book-1', deletedAt: null },
         }),
       );
     });
@@ -572,38 +527,25 @@ describe('BooksService', () => {
 
   // ── addHighlight ───────────────────────────────────────────────────────────
 
-  describe('addHighlight', () => {
+  describe('addHighlight (legacy, rejected)', () => {
     const input = { bookId: 'book-1', page: 3, text: 'Some text', note: 'Note', color: '#ff0' };
 
-    it('should create highlight with userId and input data', async () => {
-      await service.addHighlight('user-1', input);
-      expect(prisma.highlight.create).toHaveBeenCalledWith({
-        data: { userId: 'user-1', ...input },
+    it('rejects with UPGRADE_REQUIRED and performs no write', async () => {
+      await expect(service.addHighlight('user-1', input)).rejects.toMatchObject({
+        extensions: { code: 'UPGRADE_REQUIRED' },
       });
-    });
-
-    it('should return created highlight', async () => {
-      const result = await service.addHighlight('user-1', input);
-      expect(result).toEqual(mockHighlight);
+      expect(prisma.highlight.create).not.toHaveBeenCalled();
     });
   });
 
   // ── removeHighlight ────────────────────────────────────────────────────────
 
-  describe('removeHighlight', () => {
-    it('should delete highlight by id and userId', async () => {
-      const result = await service.removeHighlight('highlight-1', 'user-1');
-      expect(prisma.highlight.deleteMany).toHaveBeenCalledWith({
-        where: { id: 'highlight-1', userId: 'user-1' },
+  describe('removeHighlight (legacy, rejected)', () => {
+    it('rejects with UPGRADE_REQUIRED and performs no delete', async () => {
+      await expect(service.removeHighlight('highlight-1', 'user-1')).rejects.toMatchObject({
+        extensions: { code: 'UPGRADE_REQUIRED' },
       });
-      expect(result).toBe(true);
-    });
-
-    it('should throw NotFoundException when highlight not owned by user', async () => {
-      prisma.highlight.deleteMany.mockResolvedValue({ count: 0 });
-      await expect(
-        service.removeHighlight('highlight-1', 'user-2'),
-      ).rejects.toThrow(NotFoundException);
+      expect(prisma.highlight.deleteMany).not.toHaveBeenCalled();
     });
   });
 

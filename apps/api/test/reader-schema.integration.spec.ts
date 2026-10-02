@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { assertOwnedDisposableDatabaseUrl, startOwnedDisposableDatabase } from './helpers/pwa-disposable-db.js';
 
 describe('Reader schema', () => {
   let app: INestApplication;
@@ -12,17 +13,12 @@ describe('Reader schema', () => {
   beforeAll(async () => {
     let databaseUrl: string;
     try {
-      const { execSync } = await import('node:child_process');
-      execSync('docker info', { stdio: 'ignore' });
-      container = await new PostgreSqlContainer('postgres:15-alpine')
-        .withDatabase('testdb')
-        .withUsername('test')
-        .withPassword('test')
-        .start();
+      container = await startOwnedDisposableDatabase();
       databaseUrl = container.getConnectionUri();
-    } catch {
-      databaseUrl = process.env.TEST_DATABASE_URL || 'postgresql://localhost:5432/transformlit_test';
+    } catch (error) {
+      throw new Error('Could not start owned disposable database for reader schema integration test', { cause: error });
     }
+    assertOwnedDisposableDatabaseUrl(databaseUrl, container);
     process.env.DATABASE_URL = databaseUrl;
     process.env.JWT_SECRET = 'test-jwt-secret';
     process.env.AZURE_STORAGE_CONNECTION_STRING = '';
@@ -54,9 +50,13 @@ describe('Reader schema', () => {
     }
     await pool.end();
 
+    const canonicalSchemaPath = join(__dirname, '../src/schema.gql');
+    const canonicalSchema = readFileSync(canonicalSchemaPath);
+
     const moduleFixture: TestingModule = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleFixture.createNestApplication();
     await app.init();
+    expect(readFileSync(canonicalSchemaPath)).toEqual(canonicalSchema);
     prisma = moduleFixture.get<PrismaService>(PrismaService);
   }, 120000);
 
@@ -80,6 +80,39 @@ describe('Reader schema', () => {
     expect(book.conversionStatus).toBe('NOT_APPLICABLE');
     expect(book.contentVersion).toBe(1);
     expect(book.format).toBeNull();
+  });
+
+  it('stores receipts, tombstones and conflict copies with revision provenance', async () => {
+    const stamp = Date.now();
+    const user = await prisma.user.create({
+      data: { email: `sync${stamp}@example.com`, emailNormalized: `sync${stamp}@example.com`, displayName: 'Sync Reader' },
+    });
+    const book = await prisma.book.create({
+      data: { title: 'Sync storage', status: 'PUBLISHED', conversionStatus: 'READY', accessLevel: 'FREE' },
+    });
+    const receipt = await prisma.readerOperationReceipt.create({
+      data: { subject: user.id, operationId: `op-${stamp}`, payloadHash: 'hash', result: { kind: 'APPLIED' } },
+    });
+    expect(receipt.id).toBeTruthy();
+    await prisma.readerTombstone.create({ data: { subject: user.id, entityId: `bm-${stamp}`, kind: 'BOOKMARK', revision: 2 } });
+    expect(await prisma.readerTombstone.count({ where: { subject: user.id } })).toBe(1);
+    await prisma.conflictCopy.create({
+      data: {
+        subject: user.id,
+        operationId: `op-${stamp}`,
+        sourceEntityId: `hl-${stamp}`,
+        bookId: book.id,
+        contentVersion: 1,
+        page: 1,
+        text: 'offline edit',
+        anchor: { version: 1, page: 1, startOffset: 0, endOffset: 5 },
+        reason: 'STALE_REVISION',
+      },
+    });
+    expect(await prisma.conflictCopy.count({ where: { subject: user.id } })).toBe(1);
+    // Progress defaults to revision 0 (no prior revision) on a legacy row.
+    const progress = await prisma.bookProgress.create({ data: { userId: user.id, bookId: book.id, currentPage: 1 } });
+    expect(progress.revision).toBe(0);
   });
 
   it('stores pages, toc entries, jobs, sessions and page views', async () => {

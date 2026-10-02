@@ -1,4 +1,17 @@
-import { Controller, Get, Post, HttpCode, Body, Req, Res, UseGuards, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  HttpCode,
+  Body,
+  Req,
+  Res,
+  UseGuards,
+  UnauthorizedException,
+  BadRequestException,
+  ServiceUnavailableException,
+  Logger,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service.js';
@@ -46,6 +59,8 @@ export interface AuthResponse {
 
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(private readonly authService: AuthService) {}
 
   // ── Credential endpoints (plain POST handlers — no JWT guard) ─────────────
@@ -94,20 +109,56 @@ export class AuthController {
       const tokens = await this.authService.refreshTokens(raw);
       this.setRefreshCookie(res, tokens.refreshToken);
       return { accessToken: tokens.accessToken, user: tokens.user } as AuthResponse;
-    } catch {
-      // Reuse/invalid/expired token — surface a clean 401. The refresh cookie is
-      // left for the caller to clear via /auth/logout if they choose.
-      // Exception is re-thrown as UnauthorizedException
-      throw new UnauthorizedException('Invalid refresh token');
+    } catch (error) {
+      // A genuine credential rejection (reuse/invalid/expired token) is a 401.
+      if (error instanceof UnauthorizedException) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
+      // An infrastructure failure (DB outage, timeout) is NOT an invalid
+      // credential: re-throw so it surfaces as a 5xx. The client classifies it
+      // as transient and preserves local offline state instead of force-signing
+      // the user out. The refresh cookie is left for the caller to clear via
+      // /auth/logout if they choose.
+      throw error;
     }
   }
 
   @Public()
   @Post('logout')
   @HttpCode(200)
-  logout(@Res({ passthrough: true }) res: Response) {
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const raw = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
+    if (!raw) {
+      // No credential was presented, so the server CANNOT confirm the old
+      // refresh family is invalidated. Return an explicit unconfirmable signal
+      // (not `revoked: true`) so the client keeps its deferred-logout barrier
+      // instead of unblocking a possibly-live session. This is deliberately NOT
+      // a 503: a genuinely cookie-less client should reach a deterministic
+      // "cannot confirm" state, and the client offers an explicit informed
+      // escape (`abandonDeferredLogout`) rather than blocking forever.
+      this.clearRefreshCookie(res);
+      return { revoked: false, reason: 'no-credential' };
+    }
+
+    try {
+      // Revoke the refresh family server-side so a captured token cannot be
+      // rotated after sign-out. An unknown/already-revoked cookie is a
+      // successful no-op inside the service.
+      await this.authService.logout(raw);
+    } catch (error) {
+      // A failed revocation is NOT a successful logout: the old session may
+      // still be live. Signal it so the client persists a durable
+      // deferred-logout barrier instead of assuming the cookie is gone.
+      this.clearRefreshCookie(res);
+      this.logger.error(
+        `Refresh-family revocation failed during logout; deferring session invalidation. Cookie present: true. Cause: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw new ServiceUnavailableException('Session invalidation failed; sign-out deferred');
+    }
     this.clearRefreshCookie(res);
-    return {};
+    return { revoked: true };
   }
 
   // ── OAuth endpoints ────────────────────────────────────────────────────────

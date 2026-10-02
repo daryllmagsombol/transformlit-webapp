@@ -2,10 +2,24 @@
   "name": "@transformlit/graphql",
   "version": "0.1.0",
   "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "graphql:codegen": "graphql-codegen --config codegen.ts",
-    "typecheck": "tsc --noEmit",
-    "clean": "rm -rf __generated__"
+    "build": "pnpm run clean && pnpm graphql:codegen && tsc -p tsconfig.json --incremental false",
+    "typecheck": "pnpm graphql:codegen && tsc --noEmit -p tsconfig.json --incremental false",
+    "test": "pnpm run build && node --test test/clean-consumer.spec.cjs test/turbo-contract.spec.cjs",
+    "clean": "rm -rf src/__generated__ dist tsconfig.tsbuildinfo"
+  },
+  "dependencies": {
+    "@graphql-typed-document-node/core": "^3.2.0"
   },
   "devDependencies": {
     "@graphql-codegen/cli": "^7.2.0",

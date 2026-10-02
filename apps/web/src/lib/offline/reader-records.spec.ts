@@ -1,0 +1,419 @@
+import { ReaderRecords } from './reader-records';
+import { OfflineDatabase, resetOfflineDatabaseHandle } from './database';
+import { createMemoryIndexedDb, memoryIdbKeyRange, type MemoryIndexedDb } from '../../../test/helpers/memory-indexeddb';
+import { keyBelongsToSubject, type AccountOwner, type OutboxOperation } from './contracts';
+import type { OutboxOperationRecord } from './outbox';
+
+const OWNER: AccountOwner = { subject: 'subject-a', epoch: 1 };
+const BOOK = 'book-1';
+
+let idCounter = 0;
+
+beforeAll(() => {
+  if (typeof globalThis.IDBKeyRange === 'undefined') {
+    Object.defineProperty(globalThis, 'IDBKeyRange', { writable: true, value: memoryIdbKeyRange });
+  }
+});
+
+function createHarness(owner: AccountOwner | null = OWNER) {
+  const memory: MemoryIndexedDb = createMemoryIndexedDb();
+  (globalThis as { indexedDB?: unknown }).indexedDB = memory.indexedDB;
+  resetOfflineDatabaseHandle();
+  const database = new OfflineDatabase();
+  const records = new ReaderRecords({
+    database,
+    getOwner: () => owner,
+    now: () => 1_700_000_000_000,
+    newId: () => `id-${(idCounter += 1)}`,
+  });
+  return { memory, database, records };
+}
+
+async function seedLifecycle(database: OfflineDatabase, owner: AccountOwner | null): Promise<void> {
+  await database.writeLifecycle({
+    id: 'lifecycle',
+    state: owner ? 'ACTIVE' : 'SIGNED_OUT',
+    subject: owner?.subject ?? null,
+    epoch: owner?.epoch ?? 0,
+    updatedAt: 1,
+  });
+}
+
+async function listOutbox(database: OfflineDatabase, subject: string): Promise<OutboxOperationRecord[]> {
+  return database.getAllByIndex<OutboxOperationRecord>('outbox', 'subject', subject);
+}
+
+/** Seeds a locally downloaded, active pinned version for the book. */
+async function seedActiveVersion(database: OfflineDatabase, owner: AccountOwner, bookId: string, version: number): Promise<void> {
+  await database.putDownloadRecord(owner.subject, owner.epoch, 'bookVersions', {
+    id: `${owner.subject}\u0000bookversion\u0000${bookId}\u0000${version}`,
+    subject: owner.subject,
+    bookId,
+    contentVersion: version,
+    status: 'READY',
+    active: true,
+    title: 'Downloaded',
+    author: null,
+    description: null,
+    coverAssetId: null,
+    totalPages: 1,
+    toc: [],
+    provenance: 'test',
+    createdAt: 1,
+  });
+}
+
+describe('ReaderRecords local-first mutations', () => {
+  beforeEach(() => {
+    idCounter = 0;
+  });
+
+  afterEach(() => {
+    resetOfflineDatabaseHandle();
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  it('reports SAVED and persists the progress record plus its outbox operation atomically', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+
+    const result = await records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 5, scrollY: 40 });
+
+    expect(result.status).toBe('SAVED');
+    const progress = await records.getProgress(BOOK);
+    expect(progress?.currentPage).toBe(5);
+    const outbox = await listOutbox(database, OWNER.subject);
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]).toMatchObject({
+      subject: OWNER.subject,
+      epoch: OWNER.epoch,
+      kind: 'PROGRESS_SET',
+      baseRevision: 0,
+      contentVersion: 1,
+      dispatchState: 'PENDING',
+      seq: 1,
+    });
+  });
+
+  it('never stamps a non-positive contentVersion on a progress operation', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+
+    // The online reader passes 0 (no pinned version); the envelope requires a
+    // positive integer, so the operation must carry a valid value.
+    await records.saveProgress({ bookId: BOOK, contentVersion: 0, currentPage: 1, scrollY: null });
+
+    const [operation] = await listOutbox(database, OWNER.subject);
+    expect(operation.contentVersion).toBeGreaterThanOrEqual(1);
+    expect(Number.isSafeInteger(operation.contentVersion)).toBe(true);
+  });
+
+  it('stamps progress with the locally downloaded active version when the caller has none', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+    // A stored, locally downloaded active version is the pinned truth.
+    await seedActiveVersion(database, OWNER, BOOK, 7);
+
+    await records.saveProgress({ bookId: BOOK, contentVersion: 0, currentPage: 1, scrollY: null });
+
+    const [operation] = await listOutbox(database, OWNER.subject);
+    expect(operation.contentVersion).toBe(7);
+  });
+
+  it('never stamps contentVersion 0 on any annotation operation', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+    // The online reader queues annotations with 0 (no pinned version); every
+    // annotation mutation must still resolve a positive envelope version.
+    const created = await records.createHighlight({
+      bookId: BOOK,
+      contentVersion: 0,
+      page: 1,
+      text: 'hello',
+      note: null,
+      color: null,
+      anchor: { version: 1, page: 1, startOffset: 0, endOffset: 5 },
+    });
+    expect(created.status).toBe('SAVED');
+    const [highlight] = await records.listHighlights(BOOK);
+
+    await records.updateHighlight({
+      bookId: BOOK,
+      contentVersion: 0,
+      entityId: highlight.id,
+      baseRevision: highlight.revision,
+      page: 1,
+      text: 'hello',
+      note: 'a note',
+      color: null,
+      anchor: { version: 1, page: 1, startOffset: 0, endOffset: 5 },
+    });
+    await records.deleteHighlight({ bookId: BOOK, contentVersion: 0, entityId: highlight.id, baseRevision: 2 });
+
+    const added = await records.addBookmark({ bookId: BOOK, contentVersion: 0, page: 1, anchor: null });
+    expect(added.status).toBe('SAVED');
+    const [bookmark] = await records.listBookmarks(BOOK);
+    await records.removeBookmark({ bookId: BOOK, contentVersion: 0, entityId: bookmark.id, baseRevision: bookmark.revision });
+
+    const outbox = await listOutbox(database, OWNER.subject);
+    expect(outbox.length).toBe(5);
+    for (const operation of outbox) {
+      expect(operation.contentVersion).toBeGreaterThanOrEqual(1);
+      expect(Number.isSafeInteger(operation.contentVersion)).toBe(true);
+    }
+  });
+
+  it('stamps annotation operations with the locally downloaded active version when the caller has none', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+    await seedActiveVersion(database, OWNER, BOOK, 9);
+
+    await records.createHighlight({
+      bookId: BOOK,
+      contentVersion: 0,
+      page: 1,
+      text: 'hello',
+      note: null,
+      color: null,
+      anchor: { version: 1, page: 1, startOffset: 0, endOffset: 5 },
+    });
+    await records.addBookmark({ bookId: BOOK, contentVersion: 0, page: 1, anchor: null });
+
+    const outbox = await listOutbox(database, OWNER.subject);
+    expect(outbox).toHaveLength(2);
+    for (const operation of outbox) {
+      expect(operation.contentVersion).toBe(9);
+    }
+  });
+
+  it('keeps the caller contentVersion on annotation operations when it is already positive', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+    await seedActiveVersion(database, OWNER, BOOK, 9);
+
+    await records.createHighlight({
+      bookId: BOOK,
+      contentVersion: 4,
+      page: 1,
+      text: 'hello',
+      note: null,
+      color: null,
+      anchor: { version: 1, page: 1, startOffset: 0, endOffset: 5 },
+    });
+
+    const [operation] = await listOutbox(database, OWNER.subject);
+    expect(operation.contentVersion).toBe(4);
+  });
+
+  it('reports FAILED and leaves no partial record when the transaction aborts', async () => {
+    const { database, records, memory } = createHarness();
+    await seedLifecycle(database, OWNER);
+    // The outbox write fails; the atomic transaction must roll back the record too.
+    memory.failPutWhen((store) => store === 'outbox');
+
+    const result = await records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 7, scrollY: null });
+
+    expect(result.status).toBe('FAILED');
+    expect(result.error).toBeTruthy();
+    expect(await records.getProgress(BOOK)).toBeNull();
+    expect(await listOutbox(database, OWNER.subject)).toHaveLength(0);
+  });
+
+  it('refuses to save when no account is established', async () => {
+    const { database, records } = createHarness(null);
+    await seedLifecycle(database, null);
+    const result = await records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 1, scrollY: null });
+    expect(result).toMatchObject({ status: 'FAILED', operationId: null });
+  });
+
+  it('coalesces a newer unsent progress pair onto the original unsent operation', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+
+    await records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 2, scrollY: null });
+    const firstOutbox = await listOutbox(database, OWNER.subject);
+    expect(firstOutbox).toHaveLength(1);
+
+    await records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 9, scrollY: 12 });
+
+    const outbox = await listOutbox(database, OWNER.subject);
+    expect(outbox).toHaveLength(1);
+    // Original operation id retained; payload advanced.
+    expect(outbox[0].operationId).toBe(firstOutbox[0].operationId);
+    expect(outbox[0].payload).toEqual({ currentPage: 9, scrollY: 12 });
+    // Durability happened immediately; only the payload coalesced.
+    expect((await records.getProgress(BOOK))?.currentPage).toBe(9);
+  });
+
+  it('does not coalesce into a dispatched progress operation; a later edit appends separately', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+    await records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 2, scrollY: null });
+
+    // Simulate Task 11 having dispatched the first operation.
+    const [first] = await listOutbox(database, OWNER.subject);
+    await database.putAccountRecord(OWNER.subject, OWNER.epoch, 'outbox', {
+      ...first,
+      dispatchState: 'DISPATCHED',
+    });
+
+    await records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 3, scrollY: null });
+
+    const outbox = await listOutbox(database, OWNER.subject);
+    expect(outbox).toHaveLength(2);
+    const dispatched = outbox.find((row) => row.operationId === first.operationId);
+    expect(dispatched?.payload).toEqual({ currentPage: 2, scrollY: null });
+    const appended = outbox.find((row) => row.operationId !== first.operationId);
+    expect(appended?.seq).toBeGreaterThan(first.seq);
+  });
+
+  it('keeps a single unsent progress operation under concurrent saves (atomic coalesce)', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+
+    // Two overlapping page changes must not both take REPLACE or append
+    // duplicates: the read + coalesce + put must be serialized.
+    await Promise.all([
+      records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 2, scrollY: null }),
+      records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 3, scrollY: null }),
+      records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 4, scrollY: null }),
+    ]);
+
+    const outbox = await listOutbox(database, OWNER.subject);
+    expect(outbox).toHaveLength(1);
+    // The newest value wins and the original operation id is retained.
+    expect(outbox[0].payload).toEqual({ currentPage: 4, scrollY: null });
+    expect((await records.getProgress(BOOK))?.currentPage).toBe(4);
+  });
+
+  it('keeps a create and a later update as separate ordered operations for one entity', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+
+    const created = await records.createHighlight({
+      bookId: BOOK,
+      contentVersion: 1,
+      page: 1,
+      text: 'hello',
+      note: null,
+      color: null,
+      anchor: { version: 1, page: 1, startOffset: 0, endOffset: 5 },
+    });
+    expect(created.status).toBe('SAVED');
+
+    const highlights = await records.listHighlights(BOOK);
+    expect(highlights).toHaveLength(1);
+    const highlight = highlights[0];
+
+    const updated = await records.updateHighlight({
+      bookId: BOOK,
+      contentVersion: 1,
+      entityId: highlight.id,
+      baseRevision: highlight.revision,
+      page: 1,
+      text: 'hello',
+      note: 'a note',
+      color: null,
+      anchor: { version: 1, page: 1, startOffset: 0, endOffset: 5 },
+    });
+    expect(updated.status).toBe('SAVED');
+
+    const outbox = await listOutbox(database, OWNER.subject);
+    expect(outbox).toHaveLength(2);
+    expect(outbox[0].kind).toBe('ANNOTATION_CREATE');
+    expect(outbox[1].kind).toBe('ANNOTATION_UPDATE');
+    // The edit depends on the create and never shares its payload/id.
+    expect(outbox[1].dependsOn).toBe(outbox[0].id);
+    expect(outbox[1].payload).not.toEqual(outbox[0].payload);
+
+    // The in-flight create's payload is still the untouched original.
+    expect(outbox[0].payload).toMatchObject({ text: 'hello', note: null });
+    expect(outbox[1].payload).toMatchObject({ text: 'hello', note: 'a note' });
+  });
+
+  it('adds and removes a bookmark only (no label/color editing), keeping local state in step', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+
+    const added = await records.addBookmark({ bookId: BOOK, contentVersion: 1, page: 4, anchor: null });
+    expect(added.status).toBe('SAVED');
+    const bookmarks = await records.listBookmarks(BOOK);
+    expect(bookmarks).toHaveLength(1);
+    expect(bookmarks[0]).toMatchObject({ label: null, color: null, page: 4 });
+
+    const removed = await records.removeBookmark({
+      bookId: BOOK,
+      contentVersion: 1,
+      entityId: bookmarks[0].id,
+      baseRevision: bookmarks[0].revision,
+    });
+    expect(removed.status).toBe('SAVED');
+    expect(await records.listBookmarks(BOOK)).toHaveLength(0);
+
+    const outbox = await listOutbox(database, OWNER.subject);
+    expect(outbox.map((row) => row.kind)).toEqual(['BOOKMARK_ADD', 'BOOKMARK_REMOVE']);
+  });
+
+  it('survives a cold restart: records and outbox reload from the same store', async () => {
+    const memory = createMemoryIndexedDb();
+    (globalThis as { indexedDB?: unknown }).indexedDB = memory.indexedDB;
+    resetOfflineDatabaseHandle();
+    const database = new OfflineDatabase();
+    await seedLifecycle(database, OWNER);
+    const records = new ReaderRecords({
+      database,
+      getOwner: () => OWNER,
+      now: () => 1_700_000_000_000,
+      newId: () => `id-${(idCounter += 1)}`,
+    });
+    await records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 11, scrollY: null });
+    await records.addBookmark({ bookId: BOOK, contentVersion: 1, page: 2, anchor: null });
+
+    // "Restart": drop module handles and re-open from the same in-memory store.
+    resetOfflineDatabaseHandle();
+    const reopened = new ReaderRecords({ database: new OfflineDatabase(), getOwner: () => OWNER });
+    expect((await reopened.getProgress(BOOK))?.currentPage).toBe(11);
+    expect(await reopened.listBookmarks(BOOK)).toHaveLength(1);
+    expect((await listOutbox(new OfflineDatabase(), OWNER.subject)).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('namespaces every record and outbox key by the owner subject', async () => {
+    const { database, records } = createHarness();
+    await seedLifecycle(database, OWNER);
+    await records.saveProgress({ bookId: BOOK, contentVersion: 1, currentPage: 1, scrollY: null });
+    const outbox = await listOutbox(database, OWNER.subject);
+    for (const operation of outbox) {
+      expect(operation.subject).toBe(OWNER.subject);
+      expect(keyBelongsToSubject(OWNER.subject, operation.id)).toBe(true);
+    }
+  });
+});
+
+describe('ReaderRecords never routes Bible content', () => {
+  it('exposes no Bible mutation entrypoint', () => {
+    const { records } = createHarness();
+    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(records));
+    expect(methods.some((name) => name.toLowerCase().includes('bible'))).toBe(false);
+  });
+});
+
+/** The outbox operation contract must include every field the brief requires. */
+it('outbox operations carry owner, epoch, operationId, entityKey, seq, dependency, base revision, version, payload and dispatch state', async () => {
+  const { database, records } = createHarness();
+  await seedLifecycle(database, OWNER);
+  await records.addBookmark({ bookId: BOOK, contentVersion: 3, page: 1, anchor: null });
+  const [operation] = await listOutbox(database, OWNER.subject);
+  expect(operation).toMatchObject({
+    subject: OWNER.subject,
+    epoch: OWNER.epoch,
+    operationId: expect.any(String),
+    entityKey: expect.any(String),
+    seq: expect.any(Number),
+    dependsOn: null,
+    baseRevision: null,
+    contentVersion: 3,
+    dispatchState: 'PENDING',
+    payload: expect.any(Object),
+  });
+  expect(operation as unknown as OutboxOperation).toBeTruthy();
+});

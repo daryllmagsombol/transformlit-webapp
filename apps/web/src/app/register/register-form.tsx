@@ -11,6 +11,8 @@ import type { GraphQLUser } from '@transformlit/shared';
 import { useToast, TextInput, SpinnerIcon, PersonIcon, MailIcon, LockIcon, EyeIcon, EyeOffIcon, GoogleIcon, FacebookIcon, MicrosoftIcon } from '../../components/ui';
 import { Footer } from '../../components/layout';
 import { API_BASE } from '../../lib/constants';
+import { completeLocalAuth } from '../../lib/offline/account-activation';
+import { withAuthLifecycleLock } from '../../lib/auth';
 
 /* ------------------------------------------------------------------ */
 /*  Zod schema                                                        */
@@ -30,7 +32,6 @@ type RegisterFormValues = z.infer<typeof registerSchema>;
 
 export default function RegisterForm() {
   const router = useRouter();
-  const setAuth = useAuthStore((s) => s.setAuth);
   const user = useAuthStore((s) => s.user);
   const isHydrated = useAuthStore((s) => s.isHydrated);
   const { addToast } = useToast();
@@ -61,6 +62,10 @@ export default function RegisterForm() {
     async (values: RegisterFormValues) => {
       setLoading(true);
       try {
+        // Hold the auth-lifecycle lock across the cookie-setting registration
+        // AND the lifecycle install so a concurrent logout/refresh cannot
+        // interleave its Set-Cookie with this session.
+        await withAuthLifecycleLock(async () => {
         const res = await fetch(`${API_BASE}/auth/register`, {
           method: 'POST',
           credentials: 'include',
@@ -87,7 +92,10 @@ export default function RegisterForm() {
         }
 
         const data = (await res.json()) as { accessToken: string; user: GraphQLUser };
-        setAuth(data.user, data.accessToken);
+        // Route installation through the account-lifecycle gate.
+        const installed = await completeLocalAuth(data.user, data.accessToken);
+        if (!installed) throw new Error('Could not activate this account. Please try again.');
+        });
 
         addToast('Account created! Welcome to TransformLit.', 'success');
         router.push('/feed');
@@ -98,7 +106,7 @@ export default function RegisterForm() {
         setLoading(false);
       }
     },
-    [router, setAuth, addToast],
+    [router, addToast],
   );
 
   /* ---------- Social login handlers ---------- */

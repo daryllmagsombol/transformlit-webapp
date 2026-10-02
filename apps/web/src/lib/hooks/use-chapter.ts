@@ -3,7 +3,42 @@
 import { useEffect, useState } from 'react';
 import { getChapter, getWords } from '../bible/api';
 import { hasWordAnnotations } from '../bible/words';
+import { BibleRepository } from '../bible/repository';
+import { OfflineDatabase } from '../offline/database';
+import { accountLifecycle } from '../offline/account-activation';
 import type { BibleChapter, ChapterWords } from '../bible/types';
+
+/**
+ * Resolves a saved chapter from the offline store when the provider cannot be
+ * reached. Returns null when nothing is stored or no local account is active,
+ * so the caller still surfaces the same network error it would have.
+ */
+async function loadSavedChapter(
+  translation: string,
+  book: string,
+  chapter: number,
+): Promise<BibleChapter | null> {
+  try {
+    const owner = accountLifecycle().getOwner();
+    if (!owner) return null;
+    const repository = new BibleRepository({
+      database: new OfflineDatabase(),
+      getOwner: () => owner,
+    });
+    const opened = await repository.openChapter(translation, book, chapter);
+    return {
+      translation: opened.translationMeta,
+      book: opened.bookMeta,
+      thisChapterLink: '',
+      nextChapterApiLink: null,
+      previousChapterApiLink: null,
+      numberOfVerses: 0,
+      chapter: opened.chapterContent,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export function useChapter(translation: string, book: string, chapter: number) {
   const [chapterData, setChapterData] = useState<BibleChapter | null>(null);
@@ -23,10 +58,17 @@ export function useChapter(translation: string, book: string, chapter: number) {
       try {
         ch = await getChapter(translation, book, chapter);
       } catch {
-        if (!cancelled) {
-          setError('Failed to load chapter.');
+        // The provider is unreachable. Fall back to a saved download so a
+        // reader can open offline without a separate storage branch in the UI.
+        const saved = await loadSavedChapter(translation, book, chapter);
+        if (cancelled) return;
+        if (saved) {
+          setChapterData(saved);
           setLoading(false);
+          return;
         }
+        setError('Failed to load chapter.');
+        setLoading(false);
         return;
       }
       if (cancelled) return;

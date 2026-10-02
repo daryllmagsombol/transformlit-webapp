@@ -1,4 +1,8 @@
 import '@testing-library/jest-dom';
+// NOTE: jsdom capability shims for `Blob`/`crypto`/`Response`/Text encoder live
+// in `test/helpers/offline-dom-shims.ts` and are imported only by the specs that
+// need them. Installing them globally replaced those globals for every suite and
+// could change `instanceof Blob`/`File` behavior in unrelated UI tests.
 
 // Mock window.matchMedia for responsive sidebar logic
 Object.defineProperty(globalThis.window, 'matchMedia', {

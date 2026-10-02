@@ -83,6 +83,7 @@ export const SIDEBAR_NAV_ITEMS = [
   { label: 'Chat', href: '/chat', icon: 'chat_bubble' },
   { label: 'Groups', href: '/groups', icon: 'diversity_3' },
   { label: 'Books', href: '/books', icon: 'menu_book' },
+  { label: 'Downloads', href: '/offline', icon: 'download' },
 ] as const;
 
 export const BOTTOM_NAV_ITEMS = SIDEBAR_NAV_ITEMS;

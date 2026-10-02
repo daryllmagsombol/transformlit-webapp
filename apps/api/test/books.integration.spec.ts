@@ -10,6 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import { BookAccessLevel } from '@transformlit/shared';
+import { assertOwnedDisposableDatabaseUrl } from './helpers/pwa-disposable-db.js';
 
 function isDockerAvailable(): boolean {
   try {
@@ -55,21 +56,20 @@ describe('Books Integration', () => {
   let testUserId: string;
 
   beforeAll(async () => {
-    let databaseUrl: string;
-
-    if (isDockerAvailable()) {
-      container = await new PostgreSqlContainer('postgres:15-alpine')
-        .withDatabase('testdb')
-        .withUsername('test')
-        .withPassword('test')
-        .start();
-      databaseUrl = container.getConnectionUri();
-    } else {
-      databaseUrl =
-        process.env.TEST_DATABASE_URL ||
-        'postgresql://localhost:5432/transformlit_test';
+    if (!isDockerAvailable()) {
+      // No shared-database fallback: these tests reset the schema via
+      // `runMigrations`, so running them against an arbitrary TEST_DATABASE_URL
+      // would be unsafe. Fail loudly instead of silently targeting a real DB.
+      throw new Error('Docker is required for Books Integration tests (Testcontainers); no shared-database fallback is supported');
     }
+    container = await new PostgreSqlContainer('postgres:15-alpine')
+      .withDatabase('testdb')
+      .withUsername('test')
+      .withPassword('test')
+      .start();
+    const databaseUrl = container.getConnectionUri();
 
+    assertOwnedDisposableDatabaseUrl(databaseUrl, container);
     process.env.DATABASE_URL = databaseUrl;
     process.env.JWT_SECRET = 'test-jwt-secret';
     process.env.GOOGLE_CLIENT_ID = 'test';
@@ -166,199 +166,58 @@ describe('Books Integration', () => {
     });
   });
 
-  describe('saveProgress', () => {
+  // ── Legacy reader writes are rejected (UPGRADE_REQUIRED) ────────────────────
+
+  describe('legacy reader writes', () => {
     let bookId: string;
 
     beforeEach(async () => {
       const book = await booksService.uploadBook(
-        { title: 'Progress Book', accessLevel: BookAccessLevel.FREE },
+        { title: 'Legacy Writes Book', accessLevel: BookAccessLevel.FREE },
         testUserId,
       );
       bookId = book.id;
     });
 
-    it('should save reading progress for a user and book', async () => {
-      const result = await booksService.saveProgress(testUserId, {
-        bookId,
-        currentPage: 42,
-        scrollY: 500,
-      });
-
-      expect(result.bookId).toBe(bookId);
-      expect(result.userId).toBe(testUserId);
-      expect(result.currentPage).toBe(42);
-      expect(result.scrollY).toBe(500);
-      expect(result.lastReadAt).toBeTruthy();
-    });
-
-    it('should upsert progress on subsequent saves', async () => {
-      await booksService.saveProgress(testUserId, {
-        bookId,
-        currentPage: 10,
-      });
-
-      const updated = await booksService.saveProgress(testUserId, {
-        bookId,
-        currentPage: 20,
-        scrollY: 300,
-      });
-
-      expect(updated.currentPage).toBe(20);
-      expect(updated.scrollY).toBe(300);
-
-      const progress = await prisma.bookProgress.findUnique({
-        where: { userId_bookId: { userId: testUserId, bookId } },
-      });
-      expect(progress?.currentPage).toBe(20);
-    });
-
-    it('should retrieve progress via getProgress', async () => {
-      await booksService.saveProgress(testUserId, {
-        bookId,
-        currentPage: 15,
-      });
-
-      const progress = await booksService.getProgress(testUserId, bookId);
-      expect(progress).toBeTruthy();
-      expect(progress?.currentPage).toBe(15);
+    it.each([
+      ['saveProgress', () => booksService.saveProgress(testUserId, { bookId, currentPage: 42 })],
+      ['addBookmark', () => booksService.addBookmark(testUserId, { bookId, page: 25 })],
+      ['removeBookmark', () => booksService.removeBookmark('missing', testUserId)],
+      ['addHighlight', () => booksService.addHighlight(testUserId, { bookId, page: 7, text: 'x' })],
+      ['removeHighlight', () => booksService.removeHighlight('missing', testUserId)],
+    ])('rejects %s without mutating or receipting', async (_name, invoke) => {
+      await expect(invoke()).rejects.toMatchObject({ extensions: { code: 'UPGRADE_REQUIRED' } });
+      expect(await prisma.readerOperationReceipt.count()).toBe(0);
+      expect(await prisma.bookProgress.count()).toBe(0);
+      expect(await prisma.bookmark.count()).toBe(0);
+      expect(await prisma.highlight.count()).toBe(0);
     });
   });
 
-  describe('addBookmark', () => {
+  describe('reader reads remain available with tombstone exclusion', () => {
     let bookId: string;
 
     beforeEach(async () => {
       const book = await booksService.uploadBook(
-        { title: 'Bookmark Book', accessLevel: BookAccessLevel.FREE },
+        { title: 'Legacy Reads Book', accessLevel: BookAccessLevel.FREE },
         testUserId,
       );
       bookId = book.id;
     });
 
-    it('should add a bookmark to a book', async () => {
-      const result = await booksService.addBookmark(testUserId, {
-        bookId,
-        page: 25,
-        label: 'Key Chapter',
-        color: '#ff0',
-      });
-
-      expect(result).toHaveProperty('id');
-      expect(result.bookId).toBe(bookId);
-      expect(result.userId).toBe(testUserId);
-      expect(result.page).toBe(25);
-      expect(result.label).toBe('Key Chapter');
-      expect(result.color).toBe('#ff0');
-    });
-
-    it('should list bookmarks for a book', async () => {
-      await booksService.addBookmark(testUserId, { bookId, page: 10 });
-      await booksService.addBookmark(testUserId, { bookId, page: 30, label: 'Second' });
-
-      const bookmarks = await booksService.listBookmarks(testUserId, bookId);
-      expect(bookmarks).toHaveLength(2);
-      expect(bookmarks[0].page).toBe(10);
-      expect(bookmarks[1].page).toBe(30);
-    });
-
-    it('should remove a bookmark', async () => {
-      const bookmark = await booksService.addBookmark(testUserId, {
-        bookId,
-        page: 5,
-      });
-
-      await booksService.removeBookmark(bookmark.id);
-
-      const bookmarks = await booksService.listBookmarks(testUserId, bookId);
-      expect(bookmarks).toHaveLength(0);
-    });
-  });
-
-  describe('addHighlight', () => {
-    let bookId: string;
-
-    beforeEach(async () => {
-      const book = await booksService.uploadBook(
-        { title: 'Highlight Book', accessLevel: BookAccessLevel.FREE },
-        testUserId,
-      );
-      bookId = book.id;
-    });
-
-    it('should add a highlight to a book', async () => {
-      const result = await booksService.addHighlight(testUserId, {
-        bookId,
-        page: 7,
-        text: 'This is a highlighted passage',
-        note: 'Important quote',
-        color: '#0f0',
-      });
-
-      expect(result).toHaveProperty('id');
-      expect(result.bookId).toBe(bookId);
-      expect(result.userId).toBe(testUserId);
-      expect(result.page).toBe(7);
-      expect(result.text).toBe('This is a highlighted passage');
-      expect(result.note).toBe('Important quote');
-      expect(result.color).toBe('#0f0');
-    });
-
-    it('should list highlights for a book', async () => {
-      await booksService.addHighlight(testUserId, {
-        bookId,
-        page: 3,
-        text: 'First highlight',
-      });
-      await booksService.addHighlight(testUserId, {
-        bookId,
-        page: 12,
-        text: 'Second highlight',
-      });
-
-      const highlights = await booksService.listHighlights(testUserId, bookId);
-      expect(highlights).toHaveLength(2);
-      expect(highlights[0].page).toBe(3);
-      expect(highlights[1].page).toBe(12);
-    });
-
-    it('should remove a highlight', async () => {
-      const highlight = await booksService.addHighlight(testUserId, {
-        bookId,
-        page: 1,
-        text: 'To be removed',
-      });
-
-      await booksService.removeHighlight(highlight.id);
-
-      const highlights = await booksService.listHighlights(testUserId, bookId);
-      expect(highlights).toHaveLength(0);
-    });
-  });
-
-  describe('listBookmarks and listHighlights together', () => {
-    let bookId: string;
-
-    beforeEach(async () => {
-      const book = await booksService.uploadBook(
-        { title: 'Combined Book', accessLevel: BookAccessLevel.FREE },
-        testUserId,
-      );
-      bookId = book.id;
-    });
-
-    it('should return both bookmarks and highlights independently', async () => {
-      await booksService.addBookmark(testUserId, { bookId, page: 5, label: 'BM1' });
-      await booksService.addBookmark(testUserId, { bookId, page: 15, label: 'BM2' });
-      await booksService.addHighlight(testUserId, { bookId, page: 8, text: 'HL1' });
+    it('lists only non-deleted bookmarks and highlights', async () => {
+      await prisma.bookmark.create({ data: { userId: testUserId, bookId, page: 5, clientEntityId: '11111111-1111-4111-8111-111111111111' } });
+      await prisma.bookmark.create({ data: { userId: testUserId, bookId, page: 6, clientEntityId: '22222222-2222-4222-8222-222222222222', deletedAt: new Date() } });
+      await prisma.highlight.create({ data: { userId: testUserId, bookId, page: 8, text: 'kept', clientEntityId: '33333333-3333-4333-8333-333333333333' } });
+      await prisma.highlight.create({ data: { userId: testUserId, bookId, page: 9, text: 'gone', clientEntityId: '44444444-4444-4444-8444-444444444444', deletedAt: new Date() } });
 
       const bookmarks = await booksService.listBookmarks(testUserId, bookId);
       const highlights = await booksService.listHighlights(testUserId, bookId);
-
-      expect(bookmarks).toHaveLength(2);
-      expect(highlights).toHaveLength(1);
+      expect(bookmarks.map((row) => row.page)).toEqual([5]);
+      expect(highlights.map((row) => row.page)).toEqual([8]);
     });
 
-    it('should isolate bookmarks/highlights per user', async () => {
+    it('isolates bookmarks and highlights per user', async () => {
       const user2 = await authService.registerLocal({
         email: 'reader2@example.com',
         password: 'password123',
@@ -366,21 +225,14 @@ describe('Books Integration', () => {
       });
       const user2Id = user2.user.id;
 
-      await booksService.addBookmark(testUserId, { bookId, page: 5 });
-      await booksService.addHighlight(testUserId, { bookId, page: 10, text: 'My highlight' });
-      await booksService.addBookmark(user2Id, { bookId, page: 20 });
+      await prisma.bookmark.create({ data: { userId: testUserId, bookId, page: 5, clientEntityId: '55555555-5555-4555-8555-555555555555' } });
+      await prisma.bookmark.create({ data: { userId: user2Id, bookId, page: 20, clientEntityId: '66666666-6666-4666-8666-666666666666' } });
+      await prisma.highlight.create({ data: { userId: testUserId, bookId, page: 10, text: 'mine', clientEntityId: '77777777-7777-4777-8777-777777777777' } });
 
-      const user1Bookmarks = await booksService.listBookmarks(testUserId, bookId);
-      const user2Bookmarks = await booksService.listBookmarks(user2Id, bookId);
-      const user1Highlights = await booksService.listHighlights(testUserId, bookId);
-      const user2Highlights = await booksService.listHighlights(user2Id, bookId);
-
-      expect(user1Bookmarks).toHaveLength(1);
-      expect(user1Bookmarks[0].page).toBe(5);
-      expect(user2Bookmarks).toHaveLength(1);
-      expect(user2Bookmarks[0].page).toBe(20);
-      expect(user1Highlights).toHaveLength(1);
-      expect(user2Highlights).toHaveLength(0);
+      expect(await booksService.listBookmarks(testUserId, bookId)).toHaveLength(1);
+      expect(await booksService.listBookmarks(user2Id, bookId)).toHaveLength(1);
+      expect(await booksService.listHighlights(testUserId, bookId)).toHaveLength(1);
+      expect(await booksService.listHighlights(user2Id, bookId)).toHaveLength(0);
     });
   });
 });

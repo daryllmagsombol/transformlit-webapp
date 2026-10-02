@@ -1,5 +1,5 @@
 import { getCompleteTranslation } from '../api';
-import { getKVStore } from '../storage';
+import { getKVStore, searchIndexKey } from '../storage';
 import { buildIndex, type SearchCorpus } from './build-index';
 import { searchCorpus, type SearchResult } from './matcher';
 import { createSearchWorker } from './worker-factory';
@@ -55,11 +55,11 @@ export class SearchClient {
   }
 
   async persistCorpus(translation: string, corpus: SearchCorpus): Promise<void> {
-    await getKVStore().set(`bible:${translation}:index`, corpus);
+    await getKVStore().set(searchIndexKey(translation), corpus);
   }
 
   private async getCorpus(translation: string): Promise<SearchCorpus | null> {
-    return getKVStore().get<SearchCorpus>(`bible:${translation}:index`);
+    return getKVStore().get<SearchCorpus>(searchIndexKey(translation));
   }
 
   async ensureIndex(translation: string): Promise<void> {

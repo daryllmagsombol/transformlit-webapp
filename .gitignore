@@ -4,6 +4,7 @@ node_modules
 # Build outputs
 .next
 dist
+apps/api/dist-schema/
 .turbo
 build
 
@@ -32,6 +33,11 @@ infra/backend.tfvars
 
 # GraphQL codegen
 __generated__/
+packages/graphql/src/__generated__/
+
+# PWA build-generated artifacts (produced by scripts/build-pwa-assets.mjs)
+apps/web/public/sw.js
+apps/web/public/pwa-assets.json
 
 # Local uploads
 /images/uploads/
@@ -46,6 +52,8 @@ apps/api/prisma/migrations/*/generated/
 coverage/
 playwright-report/
 test-results/
+/.pwa-harness/
+/.pwa-harness-assets/
 
 # Docker
 *.log
@@ -57,3 +65,9 @@ Thumbs.db
 # Local Uploads (repo-root only; `uploads/` would also match
 # apps/api/src/uploads/ and hide real source from tools that honor .gitignore)
 /uploads/
+
+# Local implementation worktrees
+/.worktrees/
+
+# SDD orchestration scratch (ledgers, briefs, reports, review packages)
+/.superpowers/

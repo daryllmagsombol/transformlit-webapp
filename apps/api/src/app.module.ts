@@ -5,7 +5,6 @@ import { GraphQLModule } from '@nestjs/graphql';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { GraphQLError, GraphQLScalarType, Kind } from 'graphql';
-import { join } from 'node:path';
 import type { ValidationContext } from 'graphql';
 import depthLimit from 'graphql-depth-limit';
 
@@ -92,11 +91,19 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
+    ThrottlerModule.forRoot([
+      { ttl: 60000, limit: 120 },
+      // Downloads get their own bounded bucket so whole-book fetches cannot
+      // exhaust (or be starved by) the shared reading/GraphQL budget. The
+      // global default here is the same permissive ceiling as `default` so the
+      // named bucket never throttles unrelated routes; download handlers apply
+      // the stricter per-route override.
+      { name: 'download', ttl: 60000, limit: 120 },
+    ]),
 
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: join(__dirname, 'schema.gql'),
+      autoSchemaFile: true,
       sortSchema: true,
       introspection: process.env.NODE_ENV !== 'production',
       // BISECT: depthLimit only

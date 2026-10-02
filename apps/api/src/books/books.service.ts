@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { BlobService } from '../azure/blob.service.js';
@@ -17,6 +18,7 @@ import {
   AddBookmarkInput,
   AddHighlightInput,
 } from './models/book.model.js';
+import { UpgradeRequiredError } from './reader-mutation.errors.js';
 
 /** The Book columns the reader entitlement gate needs. */
 export interface ReadableBookFacts {
@@ -174,14 +176,25 @@ export class BooksService {
    * Non-throwing reader gate. Returns whether `userId` may read `book`.
    * `assertCanRead` delegates to it, and the GraphQL `toc` resolve field needs
    * a boolean (it must return `[]`, not throw, for unreadable books).
+   *
+   * Pass an active transaction client `tx` when the caller already holds one
+   * (e.g. reader mutations): the entitlement rows are then read on the same
+   * connection and isolation snapshot as the guarded write, so a concurrent
+   * revocation cannot slip between the check and the mutation (TOCTOU) and the
+   * check never acquires a second pooled connection from inside a transaction.
+   * Omit `tx` only for standalone pre-transaction checks.
    */
-  async canRead(book: ReadableBookFacts, userId: string): Promise<boolean> {
+  async canRead(
+    book: ReadableBookFacts,
+    userId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<boolean> {
     if (book.deletedAt) return false;
     if (book.status !== 'PUBLISHED') return false;
     if (book.conversionStatus !== 'READY') return false;
     if (book.accessLevel === 'FREE' || book.createdById === userId) return true;
 
-    const access = await this.prisma.bookAccess.findUnique({
+    const access = await (tx ?? this.prisma).bookAccess.findUnique({
       where: { bookId_userId: { bookId: book.id, userId } },
     });
     return access !== null;
@@ -204,6 +217,29 @@ export class BooksService {
     return this.prisma.bookPage.findUnique({ where: { bookId_index: { bookId, index } } });
   }
 
+  /** A retained, verified content version pinned for offline download. */
+  async findEligibleContentVersion(bookId: string, contentVersion: number) {
+    return this.prisma.bookContentVersion.findFirst({
+      where: { bookId, contentVersion, eligible: true },
+      include: {
+        pages: { orderBy: { index: 'asc' } },
+        tocEntries: { orderBy: { order: 'asc' } },
+      },
+    });
+  }
+
+  /** The newest retained, verified version — used when no version is requested. */
+  async findLatestEligibleContentVersion(bookId: string) {
+    return this.prisma.bookContentVersion.findFirst({
+      where: { bookId, eligible: true },
+      orderBy: { contentVersion: 'desc' },
+      include: {
+        pages: { orderBy: { index: 'asc' } },
+        tocEntries: { orderBy: { order: 'asc' } },
+      },
+    });
+  }
+
   // Read progress
   async getProgress(userId: string, bookId: string) {
     return this.prisma.bookProgress.findUnique({
@@ -211,56 +247,51 @@ export class BooksService {
     });
   }
 
-  async saveProgress(userId: string, input: SaveProgressInput) {
-    return this.prisma.bookProgress.upsert({
-      where: { userId_bookId: { userId, bookId: input.bookId } },
-      update: { currentPage: input.currentPage, scrollY: input.scrollY ?? undefined, lastReadAt: new Date() },
-      create: { userId, bookId: input.bookId, currentPage: input.currentPage, scrollY: input.scrollY ?? undefined },
-    });
+  async saveProgress(_userId: string, _input: SaveProgressInput): Promise<never> {
+    // Legacy progress writes carry no revision, so applying one could silently
+    // clobber a newer versioned write. Reject with a stable code; new clients
+    // use applyBookReaderOperation. Routed through the same rejection helper as
+    // the versioned service so it can never drift.
+    throw new UpgradeRequiredError('saveProgress');
   }
 
   // Bookmarks
   async listBookmarks(userId: string, bookId: string) {
+    // Reads remain available to legacy clients, but soft-deleted rows must not
+    // reappear. New clients use bookReaderAnnotationSnapshot.
     return this.prisma.bookmark.findMany({
-      where: { userId, bookId },
+      where: { userId, bookId, deletedAt: null },
       orderBy: { page: 'asc' },
     });
   }
 
-  async addBookmark(userId: string, input: AddBookmarkInput) {
-    return this.prisma.bookmark.create({
-      data: { userId, ...input },
-    });
+  async addBookmark(_userId: string, _input: AddBookmarkInput): Promise<never> {
+    // Legacy bookmark writes have no client identity/revision/tombstone guard.
+    throw new UpgradeRequiredError('addBookmark');
   }
 
-  async removeBookmark(id: string, userId: string) {
-    const result = await this.prisma.bookmark.deleteMany({
-      where: { id, userId },
-    });
-    if (result.count === 0) throw new NotFoundException('Bookmark not found');
-    return true;
+  async removeBookmark(_id: string, _userId: string): Promise<never> {
+    // A legacy hard delete would erase history and bypass tombstone protection.
+    throw new UpgradeRequiredError('removeBookmark');
   }
 
   // Highlights
   async listHighlights(userId: string, bookId: string) {
+    // Legacy reads keep working, but soft-deleted rows must not reappear.
     return this.prisma.highlight.findMany({
-      where: { userId, bookId },
+      where: { userId, bookId, deletedAt: null },
       orderBy: { page: 'asc' },
     });
   }
 
-  async addHighlight(userId: string, input: AddHighlightInput) {
-    return this.prisma.highlight.create({
-      data: { userId, ...input },
-    });
+  async addHighlight(_userId: string, _input: AddHighlightInput): Promise<never> {
+    // Legacy highlight writes have no anchor/contentVersion provenance.
+    throw new UpgradeRequiredError('addHighlight');
   }
 
-  async removeHighlight(id: string, userId: string) {
-    const result = await this.prisma.highlight.deleteMany({
-      where: { id, userId },
-    });
-    if (result.count === 0) throw new NotFoundException('Highlight not found');
-    return true;
+  async removeHighlight(_id: string, _userId: string): Promise<never> {
+    // A legacy hard delete would erase history and bypass tombstone protection.
+    throw new UpgradeRequiredError('removeHighlight');
   }
 
   async deleteBook(id: string, actorId: string, actorRole: UserRole) {

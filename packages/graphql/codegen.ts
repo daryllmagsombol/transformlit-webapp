@@ -1,10 +1,10 @@
 import type { CodegenConfig } from '@graphql-codegen/cli';
 
 const config: CodegenConfig = {
-  schema: '../api/src/schema.gql', // generated later by NestJS
+  schema: '../../apps/api/src/schema.gql',
   documents: ['./operations/**/*.graphql'],
   generates: {
-    './__generated__/': {
+    './src/__generated__/': {
       preset: 'client',
       presetConfig: {
         gqlTagName: 'gql',

@@ -1,19 +1,25 @@
 import { Resolver, Query, Mutation, Args, ResolveField, Parent } from '@nestjs/graphql';
 import { UseGuards, BadRequestException } from '@nestjs/common';
+import { ID } from '@nestjs/graphql';
 import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { BooksService, ReadableBookFacts } from './books.service.js';
+import { ReaderMutationsService } from './reader-mutations.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import {
   Book, BookProgress, Bookmark, Highlight, BookTocEntry,
   UploadBookInput, UpdateBookInput, SaveProgressInput,
   AddBookmarkInput, AddHighlightInput,
+  ReaderOperationInput, ReaderOperationResult, BookReaderAnnotationSnapshot,
 } from './models/book.model.js';
 import { GraphQLUpload, FileUpload } from 'graphql-upload-ts';
 
 @Resolver(() => Book)
 export class BooksResolver {
-  constructor(private readonly booksService: BooksService) {}
+  constructor(
+    private readonly booksService: BooksService,
+    private readonly readerMutations: ReaderMutationsService,
+  ) {}
 
   @Query(() => [Book], { name: 'books' })
   @UseGuards(JwtAuthGuard)
@@ -190,5 +196,34 @@ export class BooksResolver {
   ) {
     await this.booksService.removeHighlight(id, user.id);
     return true;
+  }
+
+  /**
+   * Single replay-safe entry point for every queued offline reader mutation.
+   * Ownership comes only from the authenticated subject; the result is a typed
+   * APPLIED/CONFLICT/INCOMPATIBLE_VERSION/ACCESS_DENIED discriminant.
+   */
+  @Mutation(() => ReaderOperationResult, { name: 'applyBookReaderOperation' })
+  @UseGuards(JwtAuthGuard)
+  async applyBookReaderOperation(
+    @CurrentUser() user: { id: string },
+    @Args('input') input: ReaderOperationInput,
+  ) {
+    return this.readerMutations.applyOperation(user.id, input);
+  }
+
+  /**
+   * Authoritative per-book annotation snapshot: present bookmarks/highlights,
+   * tombstones, and linked conflict copies at one transaction boundary.
+   * Progress is a separate `readProgress` endpoint and is never folded in here.
+   * Ownership/access are enforced from the authenticated subject.
+   */
+  @Query(() => BookReaderAnnotationSnapshot, { name: 'bookReaderAnnotationSnapshot' })
+  @UseGuards(JwtAuthGuard)
+  async bookReaderAnnotationSnapshot(
+    @CurrentUser() user: { id: string },
+    @Args('bookId', { type: () => ID }) bookId: string,
+  ) {
+    return this.readerMutations.getSnapshot(user.id, bookId);
   }
 }

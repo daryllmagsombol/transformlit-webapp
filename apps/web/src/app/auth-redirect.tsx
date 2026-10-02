@@ -8,6 +8,10 @@ import { LoadingSpinner } from '../components/ui/loading-spinner';
 /**
  * Redirects authenticated users away from public pages (home, login, register)
  * to the feed. Only renders children while unauthenticated or before hydration.
+ *
+ * This is a DISPLAY-only gate: `user` is a profile, not proof of local account
+ * ownership. The account-lifecycle gate (`lib/offline/account-activation`)
+ * remains the authority for private downloads/replay.
  */
 export default function AuthRedirect({ children }: { readonly children: React.ReactNode }) {
   const router = useRouter();

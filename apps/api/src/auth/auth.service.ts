@@ -15,6 +15,44 @@ import { randomBytes, createHash } from 'node:crypto';
 const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 128;
 
+/**
+ * Public user projection. Auth responses (login/register/refresh/OAuth) are
+ * serialized straight to clients, so they must never include credential or
+ * internal columns (passwordHash, emailNormalized, deletedAt, updatedAt).
+ *
+ * The select keeps those columns out of the database read entirely, and
+ * `toPublicUser` guarantees the returned object has exactly this shape even if
+ * the query projection is ever widened. Mirrors AuthResponse.user and the
+ * GraphQL User model.
+ */
+export const PUBLIC_USER_SELECT = {
+  id: true,
+  email: true,
+  displayName: true,
+  avatarUrl: true,
+  bio: true,
+  role: true,
+  status: true,
+  lastLoginAt: true,
+  createdAt: true,
+} as const;
+
+type PublicUserRow = Prisma.UserGetPayload<{ select: typeof PUBLIC_USER_SELECT }>;
+
+function toPublicUser(user: PublicUserRow): PublicUserRow {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
+    bio: user.bio,
+    role: user.role,
+    status: user.status,
+    lastLoginAt: user.lastLoginAt,
+    createdAt: user.createdAt,
+  };
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -124,6 +162,24 @@ export class AuthService {
     return { accessToken, refreshToken: newRefresh, user };
   }
 
+  /**
+   * Invalidates the refresh-token family for a presented refresh cookie.
+   *
+   * Idempotent and safe to retry: an absent, unknown, or already-revoked token
+   * is a successful no-op (there is nothing left to invalidate). Used by logout
+   * so a captured refresh token cannot be rotated after the user signs out.
+   */
+  async logout(refreshToken: string): Promise<void> {
+    if (!refreshToken) return;
+    const tokenHash = this.hashToken(refreshToken);
+    const stored = await this.prisma.refreshToken.findUnique({ where: { tokenHash } });
+    if (!stored) return;
+    await this.prisma.refreshToken.updateMany({
+      where: { familyId: stored.familyId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
   async findOrCreateOAuthUser(profile: {
     provider: string;
     providerId: string;
@@ -209,9 +265,11 @@ export class AuthService {
   }
 
   async validateUser(userId: string) {
-    return this.prisma.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: { id: userId, deletedAt: null },
+      select: PUBLIC_USER_SELECT,
     });
+    return user ? toPublicUser(user) : user;
   }
 
   private async generateTokens(
@@ -234,8 +292,15 @@ export class AuthService {
       },
     });
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    return { accessToken, refreshToken: rawRefresh, user };
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: PUBLIC_USER_SELECT,
+    });
+    return {
+      accessToken,
+      refreshToken: rawRefresh,
+      user: user ? toPublicUser(user) : user,
+    };
   }
 
   private hashToken(token: string): string {

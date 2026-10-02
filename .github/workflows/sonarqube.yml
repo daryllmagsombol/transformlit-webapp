@@ -45,10 +45,15 @@ jobs:
         run: pnpm --filter @transformlit/api run db:generate
 
       # The API specs import @transformlit/shared, whose types resolve to its
-      # built dist/*.d.ts. dist is not committed, so build the workspace deps
-      # first or ts-jest fails with "Cannot find module '@transformlit/shared'".
+      # built dist/*.d.ts, and the web reader specs import @transformlit/graphql,
+      # which resolves to its built dist. Neither dist is committed, so build
+      # both workspace deps first or ts-jest fails with "Cannot find module
+      # '@transformlit/shared'" / "@transformlit/graphql" and the coverage run
+      # (which must exit 0 for the quality gate to have data) fails.
       - name: Build workspace dependencies
-        run: pnpm --filter @transformlit/shared run build
+        run: |
+          pnpm --filter @transformlit/shared run build
+          pnpm --filter @transformlit/graphql run build
 
       # Generate LCOV coverage for every workspace. `--coverageThreshold='{}'`
       # overrides the jest config's local thresholds: those are a developer

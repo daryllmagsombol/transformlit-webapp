@@ -78,10 +78,20 @@ enum BookFormat {
 type BookProgress {
   book: Book
   bookId: ID!
+  clientEntityId: String
   completedAt: DateTime
   currentPage: Float!
   lastReadAt: DateTime!
+  revision: Int!
   scrollY: Float
+}
+
+type BookReaderAnnotationSnapshot {
+  annotations: [ReaderAnnotationValue!]!
+  bookId: ID!
+  conflictCopies: [ConflictCopy!]!
+  snapshotRevision: Int!
+  tombstones: [ReaderTombstone!]!
 }
 
 enum BookStatus {
@@ -104,6 +114,41 @@ type Bookmark {
   id: ID!
   label: String
   page: Float!
+}
+
+type BookmarkRecord {
+  anchor: PageTextAnchorV1
+  bookId: ID!
+  clientEntityId: String
+  color: String
+  contentVersion: Int!
+  createdAt: DateTime!
+  deletedAt: DateTime
+  id: ID!
+  label: String
+  page: Int!
+  revision: Int!
+}
+
+type ConflictCopy {
+  anchor: PageTextAnchorV1
+  bookId: ID!
+  color: String
+  contentVersion: Int!
+  createdAt: DateTime!
+  id: ID!
+  note: String
+  operationId: String!
+  page: Int!
+  reason: ConflictReason!
+  revision: Int!
+  sourceEntityId: ID!
+  text: String!
+}
+
+enum ConflictReason {
+  DELETE_VS_EDIT
+  STALE_REVISION
 }
 
 type Conversation {
@@ -252,6 +297,22 @@ type Highlight {
   text: String!
 }
 
+type HighlightRecord {
+  anchor: PageTextAnchorV1
+  bookId: ID!
+  clientEntityId: String
+  color: String
+  contentVersion: Int!
+  createdAt: DateTime!
+  deletedAt: DateTime
+  id: ID!
+  note: String
+  page: Int!
+  revision: Int!
+  text: String!
+  updatedAt: DateTime!
+}
+
 """
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
 """
@@ -286,6 +347,7 @@ type Mutation {
   acceptFriendRequest(friendshipId: String!): Friendship!
   addBookmark(input: AddBookmarkInput!): Bookmark!
   addHighlight(input: AddHighlightInput!): Highlight!
+  applyBookReaderOperation(input: ReaderOperationInput!): ReaderOperationResult!
   approveGroupMember(groupId: String!, userId: String!): GroupMember!
   banGroupMember(groupId: String!, userId: String!): GroupMember!
   createAnnouncement(input: PublishAnnouncementInput!): Announcement!
@@ -344,6 +406,49 @@ enum NotificationType {
   SYSTEM
 }
 
+enum OperationKind {
+  ANNOTATION_CREATE
+  ANNOTATION_DELETE
+  ANNOTATION_UPDATE
+  BOOKMARK_ADD
+  BOOKMARK_REMOVE
+  PROGRESS_SET
+}
+
+enum OperationResultKind {
+  ACCESS_DENIED
+  APPLIED
+  CONFLICT
+  INCOMPATIBLE_VERSION
+}
+
+enum OperationTargetKind {
+  ANNOTATION
+  CONFLICT_COPY
+}
+
+type PageTextAnchorV1 {
+  endOffset: Int!
+  page: Int!
+  startOffset: Int!
+  version: Int!
+}
+
+input PageTextAnchorV1Input {
+  endOffset: Int!
+  page: Int!
+  startOffset: Int!
+  version: Int!
+}
+
+type ProgressRecord {
+  bookId: ID!
+  currentPage: Int!
+  lastReadAt: DateTime!
+  revision: Int!
+  scrollY: Float
+}
+
 input PublishAnnouncementInput {
   body: String!
   category: AnnouncementCategory = GENERAL
@@ -356,6 +461,7 @@ type Query {
   announcement(id: String!): Announcement
   announcements: [Announcement!]!
   book(id: String!): Book!
+  bookReaderAnnotationSnapshot(bookId: ID!): BookReaderAnnotationSnapshot!
   bookToc(bookId: String!): [BookTocEntry!]!
   bookmarks(bookId: String!): [Bookmark!]!
   books: [Book!]!
@@ -383,6 +489,76 @@ type Query {
   userProfile(id: String!): UserProfile!
   users: [User!]!
   verseOfDay: VerseOfDay!
+}
+
+union ReaderAnnotationValue = BookmarkRecord | HighlightRecord
+
+enum ReaderEntityKind {
+  ANNOTATION
+  BOOKMARK
+  PROGRESS
+}
+
+type ReaderOperationAccessDenied {
+  kind: OperationResultKind!
+  reason: String!
+  resourceId: ID!
+}
+
+type ReaderOperationApplied {
+  entityId: ID!
+  kind: OperationResultKind!
+  receiptId: ID!
+  revision: Int!
+}
+
+type ReaderOperationConflict {
+  conflictCopy: ConflictCopy
+  entityId: ID!
+  kind: OperationResultKind!
+  serverRevision: Int!
+  serverValue: ReaderServerValue!
+}
+
+type ReaderOperationIncompatibleVersion {
+  kind: OperationResultKind!
+  requestedContentVersion: Int!
+  supportedContentVersions: [Int!]!
+}
+
+input ReaderOperationInput {
+  anchor: PageTextAnchorV1Input
+  baseRevision: Int
+  bookId: ID!
+  clientEntityId: String
+  color: String
+  contentVersion: Int!
+  currentPage: Int
+  entityId: ID
+  kind: OperationKind!
+  label: String
+  note: String
+  operationId: String!
+  page: Int
+  scrollY: Float
+  targetKind: OperationTargetKind
+  text: String
+}
+
+type ReaderOperationResult {
+  operationId: String!
+  result: ReaderOperationResultVariant!
+}
+
+union ReaderOperationResultVariant = ReaderOperationAccessDenied | ReaderOperationApplied | ReaderOperationConflict | ReaderOperationIncompatibleVersion
+
+union ReaderServerValue = BookmarkRecord | ConflictCopy | HighlightRecord | ProgressRecord
+
+type ReaderTombstone {
+  deletedAt: DateTime!
+  entityId: ID!
+  kind: ReaderEntityKind!
+  revision: Int!
 }
 
 input RegisterLocalInput {

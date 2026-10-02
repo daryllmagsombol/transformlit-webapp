@@ -8,6 +8,12 @@ export interface CuratedTranslation {
   language: 'English' | 'Tagalog';
   hasWords: boolean;
   hasAudio: boolean;
+  /**
+   * Required user-facing attribution recorded with the curated translation, if
+   * any. Presence of attribution text is NOT itself an offline-rights grant:
+   * offline storage is gated separately by `lib/bible/offline-rights`.
+   */
+  attribution?: string;
 }
 
 export const CURATED_TRANSLATIONS: CuratedTranslation[] = [

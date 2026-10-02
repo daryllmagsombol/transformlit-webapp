@@ -1,7 +1,8 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Space_Grotesk, Newsreader, JetBrains_Mono } from 'next/font/google';
 import { ThemeProvider } from 'next-themes';
 import { ToastProvider } from '../components/ui';
+import { PwaProvider } from '../components/pwa/pwa-provider';
 import '../styles/globals.css';
 
 export const metadata: Metadata = {
@@ -18,6 +19,13 @@ export const metadata: Metadata = {
   },
   twitter: { card: 'summary' },
   alternates: { canonical: 'https://transformlit.com' },
+  icons: { apple: '/icons/apple-touch-icon.png' },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#845400',
+  width: 'device-width',
+  initialScale: 1,
 };
 
 const spaceGrotesk = Space_Grotesk({
@@ -70,7 +78,7 @@ export default function RootLayout({
       <body className={`${spaceGrotesk.variable} ${newsreader.variable} ${jetbrainsMono.variable} bg-background text-on-surface font-body overflow-x-hidden paper-texture`}>
         <ThemeProvider attribute="class" defaultTheme="light" disableTransitionOnChange>
           <ToastProvider>
-            {children}
+            <PwaProvider>{children}</PwaProvider>
           </ToastProvider>
         </ThemeProvider>
       </body>

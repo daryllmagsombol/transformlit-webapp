@@ -34,11 +34,28 @@ const mockUser = {
   emailNormalized: 'test@example.com',
   displayName: 'Test User',
   passwordHash: 'hashed-password',
+  avatarUrl: null,
+  bio: null,
   role: 'USER',
   status: 'ACTIVE',
   createdAt: new Date('2024-01-01'),
   lastLoginAt: null,
   deletedAt: null,
+};
+
+// The exact public surface auth responses are allowed to expose. Mirrors
+// AuthResponse.user / the GraphQL User model and deliberately omits
+// passwordHash, emailNormalized, deletedAt, and updatedAt.
+const publicUser = {
+  id: 'user-1',
+  email: 'test@example.com',
+  displayName: 'Test User',
+  avatarUrl: null,
+  bio: null,
+  role: 'USER',
+  status: 'ACTIVE',
+  lastLoginAt: null,
+  createdAt: new Date('2024-01-01'),
 };
 
 describe('AuthService', () => {
@@ -175,7 +192,7 @@ describe('AuthService', () => {
       expect(result).toEqual({
         accessToken: 'mock-access-token',
         refreshToken: expect.any(String),
-        user: mockUser,
+        user: publicUser,
       });
     });
 
@@ -279,7 +296,7 @@ describe('AuthService', () => {
       expect(result).toEqual({
         accessToken: 'mock-access-token',
         refreshToken: expect.any(String),
-        user: mockUser,
+        user: publicUser,
       });
       expect(jwtService.sign).toHaveBeenCalledWith({ sub: 'user-1' });
     });
@@ -395,7 +412,49 @@ describe('AuthService', () => {
       expect(result).toEqual({
         accessToken: 'mock-access-token',
         refreshToken: expect.any(String),
-        user: mockUser,
+        user: publicUser,
+      });
+    });
+  });
+
+  describe('logout', () => {
+    const live = {
+      id: 'rt-1',
+      userId: 'user-1',
+      familyId: 'family-1',
+      tokenHash: 'mock-token-hash',
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 86400000),
+    };
+
+    it('revokes the entire refresh token family for a live token', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue(live);
+      await service.logout('raw-refresh-token');
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { familyId: 'family-1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+    });
+
+    it('is a safe no-op when the refresh cookie is absent', async () => {
+      await expect(service.logout('')).resolves.toBeUndefined();
+      expect(prisma.refreshToken.findUnique).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('is safe when the token is unknown (retry after absence)', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue(null);
+      await expect(service.logout('unknown-token')).resolves.toBeUndefined();
+      expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('is safe when the token is already revoked (retry after a prior logout)', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue({ ...live, revokedAt: new Date() });
+      await expect(service.logout('revoked-token')).resolves.toBeUndefined();
+      // Idempotent: the family revoke is re-issued and matches nothing live.
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { familyId: 'family-1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
       });
     });
   });
@@ -440,7 +499,7 @@ describe('AuthService', () => {
       expect(result).toEqual({
         accessToken: 'mock-access-token',
         refreshToken: expect.any(String),
-        user: mockUser,
+        user: publicUser,
       });
     });
 
@@ -484,7 +543,7 @@ describe('AuthService', () => {
       expect(result).toEqual({
         accessToken: 'mock-access-token',
         refreshToken: expect.any(String),
-        user: mockUser,
+        user: publicUser,
       });
     });
 
@@ -520,7 +579,7 @@ describe('AuthService', () => {
       expect(result).toEqual({
         accessToken: 'mock-access-token',
         refreshToken: expect.any(String),
-        user: mockUser,
+        user: publicUser,
       });
     });
 
@@ -562,24 +621,146 @@ describe('AuthService', () => {
       expect(result).toEqual({
         accessToken: 'mock-access-token',
         refreshToken: expect.any(String),
-        user: oauthOnlyUser,
+        user: publicUser,
       });
     });
   });
 
   describe('validateUser', () => {
-    it('should find user by id where deletedAt is null', async () => {
+    it('should find user by id where deletedAt is null via the public projection', async () => {
       const result = await service.validateUser('user-1');
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { id: 'user-1', deletedAt: null },
+        select: expect.objectContaining({
+          id: true,
+          email: true,
+          displayName: true,
+          role: true,
+          status: true,
+          createdAt: true,
+        }),
       });
-      expect(result).toEqual(mockUser);
+      expect(result).toEqual(publicUser);
+    });
+
+    it('should not expose credential/internal columns on validateUser', async () => {
+      const result = await service.validateUser('user-1');
+      expect(result).not.toHaveProperty('passwordHash');
+      expect(result).not.toHaveProperty('emailNormalized');
+      expect(result).not.toHaveProperty('deletedAt');
     });
 
     it('should return null if user not found', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
       const result = await service.validateUser('nonexistent');
       expect(result).toBeNull();
+    });
+  });
+
+  // Regression guard for the REST token leak: every path that mints tokens
+  // (login/register/refresh/OAuth) reads the user through PUBLIC_USER_SELECT
+  // and maps to an exact public shape. These assertions fail if passwordHash,
+  // emailNormalized, deletedAt (or any other internal column) ever reappears.
+  describe('token generation never leaks private user columns', () => {
+    const privateKeys = ['passwordHash', 'emailNormalized', 'deletedAt', 'updatedAt'] as const;
+    const assertPublicShape = (user: unknown) => {
+      for (const key of privateKeys) {
+        expect(user).not.toHaveProperty(key);
+      }
+      expect(user).toMatchObject({
+        id: 'user-1',
+        email: 'test@example.com',
+        displayName: 'Test User',
+        role: 'USER',
+        status: 'ACTIVE',
+      });
+      expect(user).toEqual(publicUser);
+    };
+
+    it('registerLocal', async () => {
+      (argon2.hash as jest.Mock).mockResolvedValue('hashed-pw');
+      const result = await service.registerLocal({
+        email: 'test@example.com',
+        password: 'password123',
+        displayName: 'Test',
+      });
+      assertPublicShape(result.user);
+    });
+
+    it('loginLocal', async () => {
+      (argon2.verify as jest.Mock).mockResolvedValue(true);
+      prisma.user.findUnique.mockResolvedValue(mockUser);
+      const result = await service.loginLocal({
+        email: 'test@example.com',
+        password: 'password123',
+      });
+      assertPublicShape(result.user);
+    });
+
+    it('refreshTokens', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        id: 'rt-1',
+        userId: 'user-1',
+        familyId: 'family-1',
+        tokenHash: 'mock-token-hash',
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + 86400000),
+      });
+      const result = await service.refreshTokens('valid-token');
+      assertPublicShape(result.user);
+    });
+
+    it('findOrCreateOAuthUser (existing identity)', async () => {
+      prisma.identity.findUnique.mockResolvedValue({
+        id: 'id-1',
+        userId: 'user-1',
+        user: mockUser,
+      });
+      const result = await service.findOrCreateOAuthUser({
+        provider: 'google',
+        providerId: 'google-123',
+        email: 'oauth@example.com',
+        displayName: 'OAuth User',
+      });
+      assertPublicShape(result.user);
+    });
+
+    it('findOrCreateOAuthUser (new user)', async () => {
+      prisma.identity.findUnique.mockResolvedValue(null);
+      prisma.user.findUnique.mockResolvedValueOnce(null).mockResolvedValue(mockUser);
+      const result = await service.findOrCreateOAuthUser({
+        provider: 'google',
+        providerId: 'google-123',
+        email: 'oauth@example.com',
+        displayName: 'OAuth User',
+      });
+      assertPublicShape(result.user);
+    });
+
+    it('issues the user read with a select that excludes private columns', async () => {
+      (argon2.verify as jest.Mock).mockResolvedValue(true);
+      prisma.user.findUnique.mockResolvedValue(mockUser);
+      await service.loginLocal({ email: 'test@example.com', password: 'password123' });
+
+      const generateTokensRead = prisma.user.findUnique.mock.calls.find(
+        ([arg]: [any]) => arg?.where?.id === 'user-1' && !arg.where.emailNormalized,
+      );
+      expect(generateTokensRead?.[0].select).toEqual(
+        expect.objectContaining({
+          id: true,
+          email: true,
+          displayName: true,
+          avatarUrl: true,
+          bio: true,
+          role: true,
+          status: true,
+          lastLoginAt: true,
+          createdAt: true,
+        }),
+      );
+      expect(generateTokensRead?.[0].select).not.toHaveProperty('passwordHash');
+      expect(generateTokensRead?.[0].select).not.toHaveProperty('emailNormalized');
+      expect(generateTokensRead?.[0].select).not.toHaveProperty('deletedAt');
     });
   });
 });

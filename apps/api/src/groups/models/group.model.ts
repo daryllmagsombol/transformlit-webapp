@@ -48,7 +48,7 @@ export class Group {
   @Field(() => Int)
   memberCount: number;
 
-  @Field({ nullable: true })
+  @Field(() => GroupMemberRole, { nullable: true })
   myRole?: GroupMemberRole;
 
   @Field(() => GroupMemberStatus, { nullable: true })

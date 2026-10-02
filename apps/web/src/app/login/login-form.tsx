@@ -12,6 +12,9 @@ import { useToast, TextInput, SpinnerIcon, MailIcon, LockIcon, EyeIcon, EyeOffIc
 import { Footer } from '../../components/layout';
 import { API_BASE } from '../../lib/constants';
 import { bootstrapAuth } from '../../lib/apollo-client';
+import { completeLocalAuth } from '../../lib/offline/account-activation';
+import { withAuthLifecycleLock } from '../../lib/auth';
+import { AccountRecoveryPrompt } from '../../components/offline/account-recovery-prompt';
 
 /* ------------------------------------------------------------------ */
 /*  Zod schema                                                        */
@@ -54,7 +57,6 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
 export default function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const setAuth = useAuthStore((s) => s.setAuth);
   const user = useAuthStore((s) => s.user);
   const isHydrated = useAuthStore((s) => s.isHydrated);
   const { addToast } = useToast();
@@ -120,6 +122,10 @@ export default function LoginForm() {
     async (values: LoginFormValues) => {
       setLoading(true);
       try {
+        // Hold the auth-lifecycle lock across the cookie-setting login AND the
+        // lifecycle install, so a concurrent logout/refresh cannot interleave
+        // its Set-Cookie with this session.
+        await withAuthLifecycleLock(async () => {
         const res = await fetch(`${API_BASE}/auth/login`, {
           method: 'POST',
           credentials: 'include',
@@ -149,7 +155,11 @@ export default function LoginForm() {
         }
 
         const data = (await res.json()) as { accessToken: string; user: GraphQLUser };
-        setAuth(data.user, data.accessToken);
+        // Route installation through the account-lifecycle gate so ownership is
+        // established for the verified subject and account-scoped state resets.
+        const installed = await completeLocalAuth(data.user, data.accessToken);
+        if (!installed) throw new Error('Could not activate this account. Please try again.');
+        });
 
         addToast('Welcome back!', 'success');
         router.push(redirectTargetRef.current);
@@ -160,7 +170,7 @@ export default function LoginForm() {
         setLoading(false);
       }
     },
-    [router, setAuth, addToast],
+    [router, addToast],
   );
 
   /* ---------- Social login handlers ---------- */
@@ -188,6 +198,9 @@ export default function LoginForm() {
           </span>
         </div>
       </header>
+
+      {/* Recovery for a durable barrier whose session could not be confirmed. */}
+      <AccountRecoveryPrompt />
 
       {/* ======================== MAIN ======================== */}
       <main className="flex-1 flex items-center justify-center px-4 pt-20 pb-8">
