@@ -8,6 +8,7 @@ All code MUST pass SonarQube quality gate. See `docs/SONAR-GUIDELINES.md` for th
 
 **Mandatory review workflow (do not skip):**
 
+- **ANY finding from ANY SonarQube or opencode/AI code review MUST be added to `docs/SONAR-GUIDELINES.md` so it cannot happen again.** No exceptions: every new rule, gate condition, hotspot, or review finding gets recorded there (rule ID, the fix, and a ❌/✅ example) **in the same change/PR**.
 - Every SonarQube and every opencode/AI code review MUST be performed **against `docs/SONAR-GUIDELINES.md`** and MUST **update that file** with any newly discovered rule, gate condition, or finding — so the same issue cannot recur in a future session.
 - Treat `docs/SONAR-GUIDELINES.md` as a **living document**: when a review surfaces a finding not already documented, append it (rule ID, fix, and a ❌/✅ example) **in the same change/PR**.
 - Reviews must check the **New Code quality-gate conditions** (0 new issues, ≥80% new-line coverage, ≤3% new duplication, 100% security hotspots reviewed) — a single Low/Minor issue or an unreviewed hotspot fails the entire gate. See the "Quality Gate Conditions" section.
