@@ -43,7 +43,12 @@ export async function cleanupOwnedResources(ids: readonly string[], ownerId: str
   for (const id of ids) {
     let resource: { id: string; labels: Record<string, string | undefined> };
     try { resource = await runtime.inspect(id); }
-    catch (error) { if (isNotFound(error)) continue; throw error; }
+    catch (error) {
+      if (isNotFound(error)) {
+        continue;
+      }
+      throw error;
+    }
     if (resource.id !== id || resource.labels['transformlit.owner'] !== ownerId) {
       throw new Error(`Resource ${id} is not owned by invocation ${ownerId}`);
     }

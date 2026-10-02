@@ -179,7 +179,12 @@ async function verifyPublicAssetRoot(owner: PwaMetadata): Promise<void> {
 async function removePublicAssetRoot(owner: PwaMetadata): Promise<void> {
   if (!owner.assetRoot) return;
   try { await lstat(owner.assetRoot); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  }
   await verifyPublicAssetRoot(owner);
   await rm(assertOwnedPublicAssetRoot(publicAssetRoot, owner.id, owner.assetRoot), { recursive: true, force: true });
 }
@@ -482,7 +487,12 @@ async function up(): Promise<void> {
       throw new Error(boot.failure);
     }
     try { await access(metadataPath); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('Supervisor startup failed and cleaned its owned resources'); throw error; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error('Supervisor startup failed and cleaned its owned resources');
+      }
+      throw error;
+    }
     const metadata = await readMetadata();
     if (metadata.state === 'ready') { console.log('PWA harness ready at https://localhost:3443'); return; }
     if (metadata.state === 'failed') throw new Error(`PWA startup failed: ${metadata.failure ?? 'unknown failure'}`);
@@ -537,7 +547,12 @@ async function cleanupExternalOwner(owner: PwaMetadata): Promise<void> {
 /** True when owner metadata exists; rethrows any non-ENOENT access failure. */
 async function metadataPresent(): Promise<boolean> {
   try { await access(metadataPath); return true; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -580,7 +595,12 @@ async function shutdownReadyOwner(owner: PwaMetadata): Promise<void> {
   if (!result.ok) throw new Error('Supervisor refused shutdown');
   await waitForSupervisorExit(async () => {
     try { await access(metadataPath); return true; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return false;
+      }
+      throw error;
+    }
   });
 }
 

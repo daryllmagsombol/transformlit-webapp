@@ -12,7 +12,7 @@ import { createConnection } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { once } from 'node:events';
 import { WebSocket, WebSocketServer } from 'ws';
-import { createPwaProxy, stripApiPrefix, pipeSafely } from './pwa-proxy.js';
+import { createPwaProxy, isLoopbackPeer, stripApiPrefix, pipeSafely } from './pwa-proxy.js';
 import { assertOwnedMetadata, assertPortAvailable, assertSupervisorNonce, assertSupervisorSocketIdentity, cleanupOwnedResources, cleanupAfterStartupFailure, assertOwnedArtifactPath, assertOwnedPublicAssetRoot, isContainerReadableAssetMode, parsePwaHarnessArgs, waitForHarnessReady, waitForSupervisorExit, listenPwaSupervisorControl, requestPwaSupervisorControl } from './pwa-process.js';
 import { assertTask1AOwnedDatabaseUrl } from './pwa-db.js';
 import { createPwaFixturePlan, createPwaFramePayload, createPwaTextPayload } from '../helpers/pwa-fixtures.js';
@@ -283,6 +283,15 @@ describe('PWA harness safety contract', () => {
 });
 
 describe('same-origin HTTPS proxy', () => {
+  it('accepts only loopback peers including the IPv4-mapped form', () => {
+    assert.equal(isLoopbackPeer('127.0.0.1'), true);
+    assert.equal(isLoopbackPeer('::1'), true);
+    assert.equal(isLoopbackPeer('::ffff:127.0.0.1'), true);
+    assert.equal(isLoopbackPeer('10.0.0.1'), false);
+    assert.equal(isLoopbackPeer('::ffff:10.0.0.1'), false);
+    assert.equal(isLoopbackPeer(undefined), false);
+  });
+
   it('treats a destroy-before-pipe race as a disconnect instead of an uncaught crash', () => {
     // Regression: a browser aborting a fetch while the upstream is still opening
     // leaves the destination destroyed. Node's `pipeline()` throws synchronously

@@ -13,8 +13,13 @@ export function stripApiPrefix(path: string): string | null {
   return null;
 }
 
-function isLoopbackPeer(address: string | undefined): boolean {
-  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+const IPV4_LOOPBACK = '127.0.0.1';
+const IPV6_LOOPBACK = '::1';
+const IPV4_MAPPED_PREFIX = '::ffff:';
+
+export function isLoopbackPeer(address: string | undefined): boolean {
+  if (address === IPV4_LOOPBACK || address === IPV6_LOOPBACK) return true;
+  return address?.startsWith(IPV4_MAPPED_PREFIX) === true && address.slice(IPV4_MAPPED_PREFIX.length) === IPV4_LOOPBACK;
 }
 
 /**
