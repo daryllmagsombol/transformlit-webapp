@@ -256,7 +256,7 @@ test.describe('offline storage browser semantics', () => {
     // in a real browser; server acknowledgement/sync is Task 11.
     await loginAs(0);
     await page.goto(`${origin}/books`);
-    await page.getByRole('button', { name: `${ids.readableBookId}: save offline` }).first().click().catch(() => undefined);
+    await page.waitForURL(/\/books/, { timeout: 15_000 });
 
     const result = await page.evaluate(async ({ subject }) => {
       const request = indexedDB.open('transformlit-offline');

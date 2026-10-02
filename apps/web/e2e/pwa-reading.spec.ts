@@ -32,15 +32,14 @@ test.describe('repository-backed offline reading', () => {
     origin,
     loginAs,
     ids,
+    titles,
   }) => {
     await loginAs(0);
 
     // 1. Download one authorized book through the real UI.
     await page.goto(`${origin}/books`);
-    const download = page.getByRole('button', { name: `${ids.readableBookId}: save offline` });
-    const saveButton = (await download.count()) > 0
-      ? download
-      : page.getByRole('button', { name: /: save offline$/ }).first();
+    // The save control's accessible name is the book TITLE, not its ID.
+    const saveButton = page.getByRole('button', { name: `${titles.readableBook}: save offline` });
     await expect(saveButton).toBeEnabled();
     await saveButton.click();
     await expect(page.getByText('Saved offline')).toBeVisible({ timeout: 30_000 });

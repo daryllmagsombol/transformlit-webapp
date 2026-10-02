@@ -4,16 +4,25 @@ import { resolve } from 'node:path';
 
 type PwaCredential = { email: string; password: string };
 type PwaIds = { readerId: string; outsiderId: string; readableBookId: string; restrictedBookId: string };
+type PwaTitles = { readableBook: string; restrictedBook: string };
 type PwaFixture = {
   origin: 'https://localhost:3443';
   context: BrowserContext;
   ids: PwaIds;
   /**
-   * Signs in and establishes the browser session (refresh cookie), returning the
-   * freshly minted access token. Login returns `{ accessToken, user }` in the
-   * BODY and sets the httpOnly refresh cookie; the app's Apollo client attaches
-   * that access token as `Authorization: Bearer …`. A raw `fetch('/api/graphql')`
-   * from a spec must do the same, so expose the token here.
+   * Fixture book titles. The "save offline" control exposes its accessible name
+   * as `<title>: save offline` (not the book ID), so specs that interact with it
+   * must target the rendered title instead of `ids.readableBookId`.
+   */
+  titles: PwaTitles;
+  /**
+   * Signs in and establishes the APP session, returning the freshly minted
+   * access token. A raw cookie login alone does not install the app's auth
+   * store (login returns `{ accessToken, user }` in the BODY and sets the
+   * httpOnly refresh cookie), so protected routes would redirect to `/login`.
+   * After the cookie login this navigates through `/login` so the app's own
+   * `bootstrapAuth()` exchanges the cookie and installs the session, then waits
+   * for the app to leave the public login route.
    */
   loginAs(index: number): Promise<string>;
 };
@@ -45,6 +54,11 @@ export const test = base.extend<PwaFixture>({
     if (!ids.readerId || !ids.outsiderId || !ids.readableBookId || !ids.restrictedBookId) throw new Error('PWA fixture IDs are missing from owner metadata');
     await use(ids as PwaIds);
   },
+  titles: async ({}, use) => {
+    const titles = JSON.parse(process.env.PWA_FIXTURE_TITLES ?? '{}') as Partial<PwaTitles>;
+    if (!titles.readableBook || !titles.restrictedBook) throw new Error('PWA fixture titles are missing from owner metadata');
+    await use(titles as PwaTitles);
+  },
   loginAs: async ({ page }, use) => {
     const credentials = JSON.parse(process.env.PWA_FIXTURE_CREDENTIALS ?? '[]') as PwaCredential[];
     await use(async (index) => {
@@ -57,14 +71,18 @@ export const test = base.extend<PwaFixture>({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ email, password }),
         });
-        if (!response.ok) return { loginStatus: response.status, refreshStatus: 0, accessToken: '' };
+        if (!response.ok) return { loginStatus: response.status, accessToken: '' };
         const login = await response.json() as { accessToken?: string };
-        const refresh = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
-        return { loginStatus: response.status, refreshStatus: refresh.status, accessToken: login.accessToken ?? '' };
+        return { loginStatus: response.status, accessToken: login.accessToken ?? '' };
       }, credential);
       if (result.loginStatus !== 200) throw new Error(`Fixture login failed with HTTP ${result.loginStatus}`);
-      if (result.refreshStatus !== 200) throw new Error(`Fixture refresh failed with HTTP ${result.refreshStatus}`);
       if (!result.accessToken) throw new Error('Fixture login returned no access token');
+      // The raw cookie login above only sets the httpOnly refresh cookie; it
+      // does NOT install the app's auth store. Reloading `/login` makes the
+      // app's own `bootstrapAuth()` exchange the cookie and install the session,
+      // so protected routes render instead of redirecting to `/login`.
+      await page.goto('/login');
+      await page.waitForURL(/\/(feed|books)/, { timeout: 30_000 });
       return result.accessToken;
     });
   },

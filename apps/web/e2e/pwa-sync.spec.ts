@@ -32,10 +32,12 @@ test.describe('ordered foreground synchronization', () => {
     origin,
     loginAs,
     ids,
+    titles,
   }) => {
     await loginAs(0);
     await page.goto(`${origin}/books`);
-    await page.getByRole('button', { name: `${ids.readableBookId}: save offline` }).first().click().catch(() => undefined);
+    // The save control's accessible name is the book TITLE, not its ID.
+    await page.getByRole('button', { name: `${titles.readableBook}: save offline` }).first().click().catch(() => undefined);
 
     // Drive the local-first outbox directly (the module is not page-importable),
     // then trigger a foreground drain through the app.
@@ -146,6 +148,7 @@ test.describe('ordered foreground synchronization', () => {
   test('surfaces a conflict and resolves it only on an explicit user choice', async ({ page, origin, loginAs, ids }) => {
     await loginAs(0);
     await page.goto(`${origin}/books`);
+    await page.waitForURL(/\/books/, { timeout: 15_000 });
 
     const operationId = await page.evaluate(async ({ subject, bookId }) => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
