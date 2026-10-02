@@ -48,7 +48,14 @@ export function createPwaProxy(options: { keyPath: string; certPath: string; api
     const headers = { ...request.headers, host: `127.0.0.1:${targetPort}`, connection: 'close' };
     const canWrite = (): boolean => !response.destroyed && !response.writableEnded;
     const upstream = httpRequest({ hostname: '127.0.0.1', port: targetPort, method: request.method, path: path ?? request.url, headers }, (upstreamResponse) => {
-      if (canWrite()) response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.statusMessage, { ...upstreamResponse.headers, 'cache-control': 'no-store' });
+      // Preserve the upstream cache policy when it declared one (e.g. the
+      // immutable `/_next/static/**` chunks or the no-store `sw.js`), and only
+      // fall back to `no-store` when the upstream omitted the header entirely.
+      // Forcing `no-store` here would mask the real release headers a production
+      // deployment is expected to serve.
+      const responseHeaders = { ...upstreamResponse.headers };
+      responseHeaders['cache-control'] ??= 'no-store';
+      if (canWrite()) response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.statusMessage, responseHeaders);
       pipeSafely(upstreamResponse, response);
     });
     upstream.on('error', (error) => {

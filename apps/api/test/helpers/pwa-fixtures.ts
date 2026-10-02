@@ -1,6 +1,10 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import * as argon2 from 'argon2';
 import { LocalStorageAdapter } from '../../src/storage/local-storage.adapter.js';
+
+function sha256Hex(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
 
 export interface PwaFixturePlan {
   ownerId: string;
@@ -82,9 +86,22 @@ export async function seedPwaFixtures(
   const plan = createPwaFixturePlan(ownerId);
   const storage = new LocalStorageAdapter(storageDir);
   const frameV1 = createPwaFramePayload(1);
-  await Promise.all(plan.books.readable.pages.map(async (page) => {
-    await storage.put(`books/${plan.books.readable.id}/v1/page-${page.index}.png`, frameV1, 'image/png');
-    await storage.put(`books/${plan.books.readable.id}/v1/page-${page.index}.txt`, createPwaTextPayload(1, page.index, page.text), 'text/plain');
+  const pageBytes = await Promise.all(plan.books.readable.pages.map(async (page) => {
+    const frameKey = `books/${plan.books.readable.id}/v1/page-${page.index}.png`;
+    const textKey = `books/${plan.books.readable.id}/v1/page-${page.index}.txt`;
+    const textBytes = createPwaTextPayload(1, page.index, page.text);
+    await storage.put(frameKey, frameV1, 'image/png');
+    await storage.put(textKey, textBytes, 'text/plain');
+    return {
+      index: page.index,
+      frameKey,
+      textKey,
+      charCount: page.text.length,
+      frameByteLength: frameV1.byteLength,
+      frameSha256: sha256Hex(frameV1),
+      textByteLength: textBytes.byteLength,
+      textSha256: sha256Hex(textBytes),
+    };
   }));
   const [{ PrismaClient }, { PrismaPg }] = await Promise.all([import('@prisma/client'), import('@prisma/adapter-pg')]);
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
@@ -111,7 +128,39 @@ export async function seedPwaFixtures(
         contentVersion: 1,
         createdById: reader.id,
         publishedAt: new Date(),
-        pages: { create: plan.books.readable.pages.map((page) => ({ index: page.index, assetKey: `books/${plan.books.readable.id}/v1/page-${page.index}.png`, textKey: `books/${plan.books.readable.id}/v1/page-${page.index}.txt`, mimeType: 'image/png', width: 1, height: 1, charCount: page.text.length })) },
+        pages: { create: pageBytes.map((page) => ({ index: page.index, assetKey: page.frameKey, textKey: page.textKey, mimeType: 'image/png', width: 1, height: 1, charCount: page.charCount })) },
+      },
+    });
+    // The offline manifest is served from the immutable `BookContentVersion`
+    // snapshot, not the current `BookPage` projection. Without an eligible
+    // version the download UI's `/offline-manifest` request 404s, so the seeder
+    // must persist the verified version (checksums included) for the fixture to
+    // be genuinely downloadable.
+    await prisma.bookContentVersion.create({
+      data: {
+        bookId: book.id,
+        contentVersion: 1,
+        title: plan.books.readable.title,
+        format: 'PDF',
+        pageCount: pageBytes.length,
+        eligible: true,
+        verifiedAt: new Date(),
+        pages: {
+          create: pageBytes.map((page) => ({
+            index: page.index,
+            assetKey: page.frameKey,
+            textKey: page.textKey,
+            hasTextLayer: true,
+            mimeType: 'image/png',
+            width: 1,
+            height: 1,
+            charCount: page.charCount,
+            frameByteLength: page.frameByteLength,
+            frameSha256: page.frameSha256,
+            textByteLength: page.textByteLength,
+            textSha256: page.textSha256,
+          })),
+        },
       },
     });
     await prisma.book.create({
@@ -151,6 +200,7 @@ export async function publishPwaVersion2(
     if (!book || book.title !== `PWA multi-page fixture ${ownerId}` || book.contentVersion !== 1) throw new Error('Book is not this owner\'s active v1 fixture');
     const storage = new LocalStorageAdapter(storageDir);
     const frameV2 = createPwaFramePayload(2);
+    const versionPages: Array<{ index: number; assetKey: string; textKey: string; charCount: number; frameByteLength: number; frameSha256: string; textByteLength: number; textSha256: string }> = [];
     for (const page of book.pages) {
       const nextText = createPwaTextPayload(2, page.index, `Version 2 publication content for page ${page.index}`);
       const assetKey = `books/${bookId}/v2/page-${page.index}.png`;
@@ -158,7 +208,46 @@ export async function publishPwaVersion2(
       await storage.put(assetKey, frameV2, 'image/png');
       await storage.put(textKey, nextText, 'text/plain');
       await prisma.bookPage.update({ where: { id: page.id }, data: { assetKey, textKey, charCount: nextText.length } });
+      versionPages.push({
+        index: page.index,
+        assetKey,
+        textKey,
+        charCount: nextText.length,
+        frameByteLength: frameV2.byteLength,
+        frameSha256: sha256Hex(frameV2),
+        textByteLength: nextText.byteLength,
+        textSha256: sha256Hex(nextText),
+      });
     }
+    // Persist the matching immutable v2 snapshot so `/offline-manifest` serves
+    // the newly published version rather than the retained v1.
+    await prisma.bookContentVersion.create({
+      data: {
+        bookId,
+        contentVersion: 2,
+        title: book.title,
+        format: 'PDF',
+        pageCount: versionPages.length,
+        eligible: true,
+        verifiedAt: new Date(),
+        pages: {
+          create: versionPages.map((page) => ({
+            index: page.index,
+            assetKey: page.assetKey,
+            textKey: page.textKey,
+            hasTextLayer: true,
+            mimeType: 'image/png',
+            width: 1,
+            height: 1,
+            charCount: page.charCount,
+            frameByteLength: page.frameByteLength,
+            frameSha256: page.frameSha256,
+            textByteLength: page.textByteLength,
+            textSha256: page.textSha256,
+          })),
+        },
+      },
+    });
     await prisma.book.update({ where: { id: bookId }, data: { contentVersion: 2, publishedAt: new Date() } });
   } finally {
     await prisma.$disconnect();

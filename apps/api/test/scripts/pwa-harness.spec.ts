@@ -316,6 +316,18 @@ describe('same-origin HTTPS proxy', () => {
         setTimeout(() => response.end('second'), 30);
         return;
       }
+      if (request.url === '/immutable') {
+        // Mirrors Next's real `/_next/static/**` cache policy: the proxy must
+        // pass this through, not clobber it with `no-store`.
+        response.writeHead(200, { 'content-type': 'application/javascript', 'cache-control': 'public, max-age=31536000, immutable' }).end('chunk');
+        return;
+      }
+      if (request.url === '/no-store-worker') {
+        // Mirrors the generated `/sw.js` policy: an explicit upstream no-store
+        // is also preserved verbatim.
+        response.writeHead(200, { 'content-type': 'application/javascript', 'cache-control': 'no-cache, no-store, must-revalidate' }).end('worker');
+        return;
+      }
       response.writeHead(404, { 'content-type': 'application/json' }).end('{"error":"missing"}');
     });
     const web = createServer((_request, response) => response.end('<html>web-shell</html>'));
@@ -349,6 +361,33 @@ describe('same-origin HTTPS proxy', () => {
       assert.equal(response.headers['content-security-policy'], "default-src 'none'");
       assert.equal(response.headers['set-cookie']?.[0], 'session=secret; Secure; HttpOnly; SameSite=Strict');
       assert.equal(response.headers['cache-control'], 'no-store');
+
+      // An upstream-declared cache policy must pass through unchanged. A
+      // forced `no-store` here would hide the real `/_next/static/**` immutable
+      // header a production deployment serves.
+      const immutable = await new Promise<{ status: number; cacheControl: string | undefined; body: string }>((resolve, reject) => {
+        const request = httpsRequest({ hostname: 'localhost', port: proxyPort, path: '/api/immutable', ca: awaitRead(certPath) }, (result) => {
+          const chunks: Buffer[] = [];
+          result.on('data', (chunk: Buffer) => chunks.push(chunk));
+          result.on('end', () => resolve({ status: result.statusCode ?? 0, cacheControl: result.headers['cache-control'], body: Buffer.concat(chunks).toString() }));
+        });
+        request.on('error', reject);
+        request.end();
+      });
+      assert.equal(immutable.status, 200);
+      assert.equal(immutable.body, 'chunk');
+      assert.equal(immutable.cacheControl, 'public, max-age=31536000, immutable');
+
+      const worker = await new Promise<{ status: number; cacheControl: string | undefined }>((resolve, reject) => {
+        const request = httpsRequest({ hostname: 'localhost', port: proxyPort, path: '/api/no-store-worker', ca: awaitRead(certPath) }, (result) => {
+          result.resume();
+          result.on('end', () => resolve({ status: result.statusCode ?? 0, cacheControl: result.headers['cache-control'] }));
+        });
+        request.on('error', reject);
+        request.end();
+      });
+      assert.equal(worker.status, 200);
+      assert.equal(worker.cacheControl, 'no-cache, no-store, must-revalidate');
 
       const missing = await new Promise<{ status: number; body: string }>((resolve, reject) => {
         const request = httpsRequest({ hostname: 'localhost', port: proxyPort, path: '/api/not-found', ca: awaitRead(certPath) }, (result) => {

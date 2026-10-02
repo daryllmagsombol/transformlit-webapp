@@ -21,6 +21,7 @@ interface PwaMetadata extends PwaOwnership {
   assetRoot?: string;
   endpoints: { browser: 'https://localhost:3443'; web: 'http://127.0.0.1:3000'; api: 'http://127.0.0.1:3005' };
   fixtureIds?: { readerId: string; outsiderId: string; readableBookId: string; restrictedBookId: string };
+  fixtureTitles?: { readableBook: string; restrictedBook: string };
   fixtureCredentials?: readonly { email: string; password: string }[];
   tlsSpkiFingerprint?: string;
   failure?: string;
@@ -326,6 +327,10 @@ async function supervise(id: string, nonce: string): Promise<void> {
       readableBookId: fixture.books.readable.id,
       restrictedBookId: fixture.books.restricted.id,
     };
+    owner.fixtureTitles = {
+      readableBook: fixture.books.readable.title,
+      restrictedBook: fixture.books.restricted.title,
+    };
     owner.fixtureCredentials = fixture.credentials;
     owner.artifacts.push(join(ownedDir, 'browser-profile'));
     const jwtSecret = randomBytes(48).toString('base64url');
@@ -517,6 +522,7 @@ async function test(): Promise<void> {
     PWA_TLS_SPKI: owner.tlsSpkiFingerprint,
     PWA_FIXTURE_CREDENTIALS: JSON.stringify(owner.fixtureCredentials ?? []),
     PWA_FIXTURE_IDS: JSON.stringify(owner.fixtureIds ?? {}),
+    PWA_FIXTURE_TITLES: JSON.stringify(owner.fixtureTitles ?? {}),
   };
   try {
     run('pnpm', ['exec', 'playwright', 'test', '-c', 'playwright.pwa.config.ts'], join(root, 'apps/web'), testEnv);
