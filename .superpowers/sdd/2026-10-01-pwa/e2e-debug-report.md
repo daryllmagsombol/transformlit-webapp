@@ -1,5 +1,18 @@
 # Production-PWA E2E follow-up — CI run 37037490814
 
+## Account-lifecycle E2E strengthening — parent follow-up
+
+The deferred-logout test now verifies the persisted SIGNED_OUT epoch, barrier
+and marker; reload persistence; an actual UI login whose server request succeeds
+but whose local installation remains blocked; and recovery only after the
+existing informed reset control is explicitly confirmed. In this codebase that
+control deliberately abandons *unconfirmed remote logout* while clearing local
+state; it does not claim server invalidation. The delayed-logout case is named
+for actual semantics: remote invalidation holds sign-out pending, then a
+subsequent real login succeeds and remains ACTIVE across reload. Concurrent
+successful activation is serialized by the auth-lifecycle lock, so the test no
+longer claims an impossible overlap. Runtime verification remains pending.
+
 ## Oracle-confirmed bounded follow-up — 9184032
 
 Oracle approved the per-test-profile isolation direction and identified two
@@ -10,6 +23,17 @@ The AST check now locates `loginPwaPage` and inspects call expressions, with
 negative cases proving comments don't satisfy the contract and direct fetch,
 request `.post`, and cookie-clearing bypasses are rejected. Runtime CI proof
 remains pending; this follow-up did not start the Docker harness.
+
+The deferred test now checks pre-exit ACTIVE owner/epoch → persisted SIGNED_OUT
+owner plus barrier/deferred marker → attempted UI login receives an HTTP success
+but no lifecycle installation/epoch movement → informed device reset clears the
+local markers → legitimate UI login installs a newer ACTIVE epoch. The delayed
+test now asserts the actual serialized behavior: while the logout response is
+held, the UI remains on its current route and the lifecycle is fenced SIGNED_OUT;
+after release, the server confirms `revoked: true`, then a new UI login remains
+ACTIVE through reload. It is deliberately no longer described as concurrent
+activation surviving a stale response, because activation is serialized behind
+the invalidation lock.
 
 ## Evidence and scope
 
@@ -59,6 +83,12 @@ hung over 15 minutes; another launch is expressly prohibited.
 - Browser auth, barrier diagnostics, profile reuse/cold restart, epoch alignment,
   receipt polling and second-device snapshot remain CI-only until the parent
   verifies this commit.
+- Product semantics note: the recovery dialog's confirmed “Reset this device”
+  action calls `abandonDeferredLogout()` and explicitly accepts unconfirmed
+  remote logout; it does not itself prove server-side invalidation. The deferred
+  test therefore verifies the documented local escape and successful later
+  activation, while the delayed-response test separately verifies confirmed
+  remote invalidation. No production behavior was changed.
 - Audited every `PWA_BROWSER_PROFILE` occurrence under `apps/web/e2e`: account,
   install, deployment, upgrade, worker and sync/reading guards only check harness
   configuration; the reading cold restart now uses the actual per-test
