@@ -26,7 +26,9 @@ async function readPersistedExitState(page: Page): Promise<PersistedExitState> {
         request.onsuccess = () => {
           results[index] = request.result ?? null;
           remaining -= 1;
-          if (remaining === 0) resolve(results);
+          if (remaining === 0) {
+            resolve(results);
+          }
         };
         request.onerror = () => reject(request.error);
       };
@@ -154,61 +156,73 @@ test.describe('account lifecycle barriers', () => {
 
     // Force the remote logout to fail so the exit persists a deferred barrier.
     await page.route('**/api/auth/logout', (route) => route.abort());
-    await page.getByRole('button', { name: /user menu/i }).click();
-    await page.getByRole('menuitem', { name: /log out/i }).click();
-    await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
+    try {
+      await page.getByRole('button', { name: /user menu/i }).click();
+      await page.getByRole('menuitem', { name: /log out/i }).click();
+      await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
 
-    const recovery = page.getByTestId('account-exit-dialog');
-    await expect(recovery).toBeVisible({ timeout: 10_000 });
-    const deferred = await readPersistedExitState(page);
-    expect(deferred.deferred).toMatchObject({ subject: ids.readerId, epoch: ownerBeforeExit.lifecycle?.epoch });
-    expect(deferred.barrier).toMatchObject({ subject: ids.readerId, epoch: ownerBeforeExit.lifecycle?.epoch });
-    expect(deferred.lifecycle).toMatchObject({ state: 'SIGNED_OUT', subject: null });
-    const fencedEpoch = deferred.lifecycle?.epoch;
+      const recovery = page.getByTestId('account-exit-dialog');
+      await expect(recovery).toBeVisible({ timeout: 10_000 });
+      const deferred = await readPersistedExitState(page);
+      expect(deferred.deferred).toMatchObject({ subject: ids.readerId, epoch: ownerBeforeExit.lifecycle?.epoch });
+      expect(deferred.barrier).toMatchObject({ subject: ids.readerId, epoch: ownerBeforeExit.lifecycle?.epoch });
+      expect(deferred.lifecycle).toMatchObject({ state: 'SIGNED_OUT', subject: null });
+      const fencedEpoch = deferred.lifecycle?.epoch;
+      expect(fencedEpoch).toBeGreaterThan(ownerBeforeExit.lifecycle?.epoch ?? 0);
 
-    // Reload must preserve the barrier and must not restore the old account.
-    await page.reload();
-    await expect(page).toHaveURL(/\/login/);
-    const reloadedRecovery = page.getByTestId('account-exit-dialog');
-    await expect(reloadedRecovery).toBeVisible({ timeout: 10_000 });
-    await expect(reloadedRecovery).toContainText(/could not confirm/i);
+      // Reload must preserve the barrier and must not restore the old account.
+      await page.reload();
+      await expect(page).toHaveURL(/\/login/);
+      const reloadedRecovery = page.getByTestId('account-exit-dialog');
+      await expect(reloadedRecovery).toBeVisible({ timeout: 10_000 });
+      await expect(reloadedRecovery).toContainText(/could not confirm/i);
 
     // Dismissing the recovery dialog does not clear its durable fence. A real
     // login API response may succeed, but lifecycle installation must remain
     // blocked and leave ownership/epoch unchanged.
-    await reloadedRecovery.getByRole('button', { name: /cancel/i }).click();
-    const credentials = JSON.parse(process.env.PWA_FIXTURE_CREDENTIALS ?? '[]') as Array<{ email: string; password: string }>;
-    const attemptedLogin = await submitLoginForm(page, credentials[0].email, credentials[0].password);
-    expect(attemptedLogin.ok()).toBe(true);
-    await expect(page.getByText(/could not activate this account/i)).toBeVisible({ timeout: 10_000 });
-    const blockedActivation = await readPersistedExitState(page);
-    expect(blockedActivation.lifecycle).toMatchObject({ state: 'SIGNED_OUT', subject: null, epoch: fencedEpoch });
-    expect(blockedActivation.deferred).toMatchObject({ subject: ids.readerId, epoch: ownerBeforeExit.lifecycle?.epoch });
-    expect(await page.evaluate(() => {
-      const persisted = localStorage.getItem('auth-storage');
-      return persisted ? JSON.parse(persisted).state?.user ?? null : null;
-    })).toBeNull();
+      await reloadedRecovery.getByRole('button', { name: /cancel/i }).click();
+      const credentials = JSON.parse(process.env.PWA_FIXTURE_CREDENTIALS ?? '[]') as Array<{ email: string; password: string }>;
+      const attemptedLogin = await submitLoginForm(page, credentials[0].email, credentials[0].password);
+      expect(attemptedLogin.ok()).toBe(true);
+      await expect(page.getByText(/could not activate this account/i)).toBeVisible({ timeout: 10_000 });
+      const blockedActivation = await readPersistedExitState(page);
+      expect(blockedActivation.lifecycle).toMatchObject({ state: 'SIGNED_OUT', subject: null, epoch: fencedEpoch });
+      expect(blockedActivation.deferred).toMatchObject({ subject: ids.readerId, epoch: ownerBeforeExit.lifecycle?.epoch });
+      expect(await page.evaluate(() => {
+        const persisted = localStorage.getItem('auth-storage');
+        return persisted ? JSON.parse(persisted).state?.user ?? null : null;
+      })).toBeNull();
 
-    // The documented recovery is an explicit, informed local discard; it does
-    // not pretend the failed remote logout was confirmed. It clears the local
-    // barrier so the user can perform a fresh legitimate login afterward.
-    await page.reload();
-    const confirmedRecovery = page.getByTestId('account-exit-dialog');
-    await expect(confirmedRecovery).toBeVisible({ timeout: 10_000 });
-    await confirmedRecovery.getByLabel(/permanently discards/i).check();
-    await confirmedRecovery.getByRole('button', { name: /reset this device/i }).click();
-    await expect(confirmedRecovery).not.toBeVisible({ timeout: 10_000 });
-    const recovered = await readPersistedExitState(page);
-    expect(recovered.deferred).toBeNull();
-    expect(recovered.barrier).toBeNull();
-    expect(recovered.lifecycle).toMatchObject({ state: 'SIGNED_OUT', subject: null, epoch: fencedEpoch });
+      // The documented recovery is an explicit, informed local discard; it does
+      // not pretend the failed remote logout was confirmed. It clears the local
+      // barrier so the user can perform a fresh legitimate login afterward.
+      // Prevent a reload bootstrap from racing the explicitly blocked recovery
+      // attempt. Keep this interception through recovery and the fresh form login.
+      await page.route('**/api/auth/refresh', (route) => route.abort());
+      try {
+        await page.reload();
+        const confirmedRecovery = page.getByTestId('account-exit-dialog');
+        await expect(confirmedRecovery).toBeVisible({ timeout: 10_000 });
+        await confirmedRecovery.getByLabel(/permanently discards/i).check();
+        await confirmedRecovery.getByRole('button', { name: /reset this device/i }).click();
+        await expect(confirmedRecovery).not.toBeVisible({ timeout: 10_000 });
+        const recovered = await readPersistedExitState(page);
+        expect(recovered.deferred).toBeNull();
+        expect(recovered.barrier).toBeNull();
+        expect(recovered.lifecycle).toMatchObject({ state: 'SIGNED_OUT', subject: null, epoch: fencedEpoch });
 
-    const freshLogin = await submitLoginForm(page, credentials[0].email, credentials[0].password);
-    expect(freshLogin.ok()).toBe(true);
-    await expect(page).toHaveURL(/\/feed(?:\?|$)/, { timeout: 15_000 });
-    const activated = await readPersistedExitState(page);
-    expect(activated.lifecycle).toMatchObject({ state: 'ACTIVE', subject: ids.readerId });
-    expect(activated.lifecycle?.epoch).toBeGreaterThan(fencedEpoch ?? 0);
+        const freshLogin = await submitLoginForm(page, credentials[0].email, credentials[0].password);
+        expect(freshLogin.ok()).toBe(true);
+        await expect(page).toHaveURL(/\/feed(?:\?|$)/, { timeout: 15_000 });
+        const activated = await readPersistedExitState(page);
+        expect(activated.lifecycle).toMatchObject({ state: 'ACTIVE', subject: ids.readerId });
+        expect(activated.lifecycle?.epoch).toBeGreaterThan(fencedEpoch ?? 0);
+      } finally {
+        await page.unroute('**/api/auth/refresh').catch(() => undefined);
+      }
+    } finally {
+      await page.unroute('**/api/auth/logout').catch(() => undefined);
+    }
   });
 
   test('offers a user-reachable recovery when the session cannot be confirmed', async ({
@@ -290,8 +304,34 @@ test.describe('account lifecycle barriers', () => {
       expect(newSession.lifecycle).toMatchObject({ state: 'ACTIVE', subject: ids.readerId });
       expect(newSession.lifecycle?.epoch).toBeGreaterThan(pendingExit.lifecycle?.epoch ?? 0);
 
+      const refreshResponsePromise = page.waitForResponse((response) =>
+        new URL(response.url()).pathname === '/api/auth/refresh' && response.request().method() === 'POST' && response.ok(),
+        { timeout: 15_000 },
+      );
+      const feedResponsePromise = page.waitForResponse((response) => {
+        if (new URL(response.url()).pathname !== '/api/graphql' || response.request().method() !== 'POST') return false;
+        try {
+          const body = response.request().postDataJSON() as { operationName?: string; query?: string };
+          const authorization = response.request().headers().authorization;
+          return (body.operationName === 'Feed' || /\bquery\s+Feed\b/.test(body.query ?? '')) &&
+            authorization?.startsWith('Bearer ') === true;
+        } catch {
+          return false;
+        }
+      }, { timeout: 15_000 });
       await page.reload();
       await expect(page).toHaveURL(/\/feed(?:\?|$)/, { timeout: 15_000 });
+      const refreshResponse = await refreshResponsePromise;
+      expect(refreshResponse.ok()).toBe(true);
+      const feedResponse = await feedResponsePromise;
+      expect(feedResponse.ok()).toBe(true);
+      const feedPayload = await feedResponse.json() as {
+        errors?: unknown[];
+        data?: { announcements?: unknown[]; verseOfDay?: unknown | null };
+      };
+      expect(feedPayload.errors ?? []).toEqual([]);
+      expect(feedPayload.data?.announcements).toBeInstanceOf(Array);
+      expect(feedPayload.data).toHaveProperty('verseOfDay');
       const reloadedSession = await readPersistedExitState(page);
       expect(reloadedSession.lifecycle).toMatchObject({ state: 'ACTIVE', subject: ids.readerId });
       expect(reloadedSession.lifecycle?.epoch).toBe(newSession.lifecycle?.epoch);

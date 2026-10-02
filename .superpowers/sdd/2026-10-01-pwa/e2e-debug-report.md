@@ -26,14 +26,18 @@ remains pending; this follow-up did not start the Docker harness.
 
 The deferred test now checks pre-exit ACTIVE owner/epoch → persisted SIGNED_OUT
 owner plus barrier/deferred marker → attempted UI login receives an HTTP success
-but no lifecycle installation/epoch movement → informed device reset clears the
-local markers → legitimate UI login installs a newer ACTIVE epoch. The delayed
-test now asserts the actual serialized behavior: while the logout response is
-held, the UI remains on its current route and the lifecycle is fenced SIGNED_OUT;
-after release, the server confirms `revoked: true`, then a new UI login remains
-ACTIVE through reload. It is deliberately no longer described as concurrent
-activation surviving a stale response, because activation is serialized behind
-the invalidation lock.
+but no lifecycle installation/epoch movement → the SIGNED_OUT epoch advances
+beyond the prior ACTIVE epoch → refresh bootstrap is held while the informed
+device reset clears local markers → legitimate UI login installs a newer ACTIVE
+epoch. The delayed test now asserts the actual serialized behavior: while the
+logout response is held, the UI remains on its current route and the lifecycle
+is fenced SIGNED_OUT; after release, the server confirms `revoked: true`, then a
+new UI login remains ACTIVE through reload. The reload registers a successful
+`/api/auth/refresh` response waiter and a guarded `Feed` GraphQL response waiter;
+it validates a no-error Feed payload with `announcements` and `verseOfDay`, then
+checks the persisted owner/epoch. It is deliberately no longer described as
+concurrent activation surviving a stale response, because activation is
+serialized behind the invalidation lock.
 
 ## Evidence and scope
 
