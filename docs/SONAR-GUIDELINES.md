@@ -835,3 +835,21 @@ flags.every(Boolean);
 | Subject-mismatch fence cleared by `null` | Keep the fence sticky until an affirmative match |
 | SW cache miss offline | Fall back to cached shell, don't reject |
 | Unguarded IndexedDB `createObjectStore` | Guard with `objectStoreNames.contains` (+`oldVersion`) |
+
+## PWA E2E infrastructure findings — CI run 37032368483
+
+- **New-code coverage gate (≥80%; configuration scope, no rule ID):** excluding
+  `**/*.spec.*` alone leaves Playwright fixture helpers classified as production
+  code without Jest coverage. Exclude the entire E2E infrastructure tree from
+  sources and coverage; do not modify production code to compensate.
+  ❌ Only `**/*.spec.*` and `apps/web/test/**` exclusions.
+  ✅ `/apps/web/e2e/**` in `sonar.exclusions` and `apps/web/e2e/**` in
+  `sonar.coverage.exclusions`.
+- **E2E correctness (no Sonar rule ID):** cookie-only login does not install the
+  app session, substring READY checks match `Not saved offline`, and dispatching
+  focus does not await the foreground drain. Use the real login UI, exact READY
+  text and bounded polling of the committed receipt. Authenticate fresh devices
+  independently and assert their server snapshot by acknowledged entity ID.
+  ❌ Raw REST login → route wait; `getByText('Saved offline')`; immediate receipt read.
+  ✅ Capture the form login response; `getByText('Saved offline', { exact: true })`;
+  `expect.poll(readReceipt, { timeout: 15_000 })` asserting `APPLIED`.

@@ -42,7 +42,7 @@ test.describe('repository-backed offline reading', () => {
     const saveButton = page.getByRole('button', { name: `${titles.readableBook}: save offline` });
     await expect(saveButton).toBeEnabled();
     await saveButton.click();
-    await expect(page.getByText('Saved offline')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('Saved offline', { exact: true })).toBeVisible({ timeout: 30_000 });
 
     // Capture the version the offline reader must render.
     const readyVersion = await readActiveVersion(page, ids.readerId, ids.readableBookId);

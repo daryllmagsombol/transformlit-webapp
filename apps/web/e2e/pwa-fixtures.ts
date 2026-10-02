@@ -1,4 +1,4 @@
-import { chromium, test as base, expect, type BrowserContext } from '@playwright/test';
+import { chromium, test as base, expect, type BrowserContext, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -20,12 +20,41 @@ type PwaFixture = {
    * access token. A raw cookie login alone does not install the app's auth
    * store (login returns `{ accessToken, user }` in the BODY and sets the
    * httpOnly refresh cookie), so protected routes would redirect to `/login`.
-   * After the cookie login this navigates through `/login` so the app's own
-   * `bootstrapAuth()` exchanges the cookie and installs the session, then waits
-   * for the app to leave the public login route.
+   * Uses the real login form so `completeLocalAuth` installs the session before
+   * returning. Captures the login response token for raw GraphQL requests.
    */
   loginAs(index: number): Promise<string>;
 };
+
+/** Signs in an independent device without inheriting persisted display auth. */
+export async function loginPwaPage(page: Page, index: number): Promise<string> {
+  const credentials = JSON.parse(process.env.PWA_FIXTURE_CREDENTIALS ?? '[]') as PwaCredential[];
+  const credential = credentials[index];
+  if (!credential) throw new Error('PWA fixture credential is missing');
+
+  // Stop the old page's bootstrap before clearing its cookie. Preserve private
+  // IndexedDB data: account ownership and downloads are not display auth.
+  await page.goto('about:blank');
+  await page.context().clearCookies({ name: 'transformlit_refresh' });
+  await page.goto('https://localhost:3443/offline');
+  await page.evaluate(() => localStorage.removeItem('auth-storage'));
+  await page.goto('https://localhost:3443/login');
+  await page.getByLabel('Email Address').fill(credential.email);
+  await page.getByLabel('Password', { exact: true }).fill(credential.password);
+  // Do not call /api/auth/refresh separately: the login UI installs the access
+  // token itself, and another cookie rotation would race its bootstrap.
+  const [response] = await Promise.all([
+    page.waitForResponse((candidate) =>
+      new URL(candidate.url()).pathname === '/api/auth/login' && candidate.request().method() === 'POST',
+    ),
+    page.getByRole('button', { name: /log in/i }).click(),
+  ]);
+  if (!response.ok()) throw new Error(`Fixture login failed with HTTP ${response.status()}`);
+  const login = await response.json() as { accessToken?: string };
+  if (!login.accessToken) throw new Error('Fixture login returned no access token');
+  await expect(page).toHaveURL(/\/feed(?:\?|$)/, { timeout: 15_000 });
+  return login.accessToken;
+}
 
 export const test = base.extend<PwaFixture>({
   origin: async ({ baseURL, page }, use) => {
@@ -60,31 +89,7 @@ export const test = base.extend<PwaFixture>({
     await use(titles as PwaTitles);
   },
   loginAs: async ({ page }, use) => {
-    const credentials = JSON.parse(process.env.PWA_FIXTURE_CREDENTIALS ?? '[]') as PwaCredential[];
-    await use(async (index) => {
-      const credential = credentials[index];
-      if (!credential) throw new Error('PWA fixture credential is missing');
-      const result = await page.evaluate(async ({ email, password }) => {
-        const response = await fetch('/api/auth/login', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ email, password }),
-        });
-        if (!response.ok) return { loginStatus: response.status, accessToken: '' };
-        const login = await response.json() as { accessToken?: string };
-        return { loginStatus: response.status, accessToken: login.accessToken ?? '' };
-      }, credential);
-      if (result.loginStatus !== 200) throw new Error(`Fixture login failed with HTTP ${result.loginStatus}`);
-      if (!result.accessToken) throw new Error('Fixture login returned no access token');
-      // The raw cookie login above only sets the httpOnly refresh cookie; it
-      // does NOT install the app's auth store. Reloading `/login` makes the
-      // app's own `bootstrapAuth()` exchange the cookie and install the session,
-      // so protected routes render instead of redirecting to `/login`.
-      await page.goto('/login');
-      await page.waitForURL(/\/(feed|books)/, { timeout: 30_000 });
-      return result.accessToken;
-    });
+    await use((index) => loginPwaPage(page, index));
   },
 });
 

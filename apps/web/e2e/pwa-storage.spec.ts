@@ -46,7 +46,7 @@ test.describe('offline storage browser semantics', () => {
     await expect(download).toBeEnabled();
     await download.click();
 
-    await expect(page.getByText('Saved offline')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('Saved offline', { exact: true })).toBeVisible({ timeout: 30_000 });
     const readyMarker = await page.evaluate(async ({ subject, bookId }) => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open('transformlit-offline');

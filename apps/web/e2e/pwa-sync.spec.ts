@@ -1,4 +1,6 @@
-import { test, expect } from './pwa-fixtures.js';
+import { BookReaderAnnotationSnapshotDocument } from '@transformlit/graphql';
+import { print } from 'graphql';
+import { test, expect, loginPwaPage } from './pwa-fixtures.js';
 
 /**
  * Ordered foreground synchronization acceptance (Task 11).
@@ -11,7 +13,7 @@ import { test, expect } from './pwa-fixtures.js';
  *  - acknowledgements are recorded as durable receipts and the acknowledged
  *    operations are removed,
  *  - a snapshot refresh surfaces the acknowledged state,
- *  - a second device (a fresh persistent context) observes the acknowledged
+ *  - a second device (a fresh authenticated context) observes the acknowledged
  *    state.
  *
  * The harness Chromium binary is not installed in the implementation
@@ -32,12 +34,11 @@ test.describe('ordered foreground synchronization', () => {
     origin,
     loginAs,
     ids,
-    titles,
   }) => {
     await loginAs(0);
     await page.goto(`${origin}/books`);
-    // The save control's accessible name is the book TITLE, not its ID.
-    await page.getByRole('button', { name: `${titles.readableBook}: save offline` }).first().click().catch(() => undefined);
+    // Login initializes the offline schema; replay does not require a download.
+    await expect(page).toHaveURL(`${origin}/books`);
 
     // Drive the local-first outbox directly (the module is not page-importable),
     // then trigger a foreground drain through the app.
@@ -94,23 +95,28 @@ test.describe('ordered foreground synchronization', () => {
     // Foreground sync is triggered on focus; dispatch the queued operation.
     await page.evaluate(() => globalThis.window.dispatchEvent(new Event('focus')));
 
-    const receipt = await page.evaluate(async ({ subject, operationId: id }) => {
+    const readReceipt = () => page.evaluate(async ({ subject, operationId: id }) => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open('transformlit-offline');
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
-      const rows = await new Promise<Array<{ operationId: string; resultKind: string }>>((resolve, reject) => {
+      const rows = await new Promise<Array<{ operationId: string; resultKind: string; entityId: string }>>((resolve, reject) => {
         const tx = db.transaction('receipts', 'readonly');
         const request = tx.objectStore('receipts').index('subjectOperation').getAll([subject, id]);
-        request.onsuccess = () => resolve(request.result as Array<{ operationId: string; resultKind: string }>);
+        request.onsuccess = () => resolve(request.result as Array<{ operationId: string; resultKind: string; entityId: string }>);
         request.onerror = () => reject(request.error);
       });
       db.close();
       return rows[0] ?? null;
     }, { subject: ids.readerId, operationId });
 
+    // Focus starts an asynchronous drain; its durable commit is the signal,
+    // not completion of dispatchEvent or an arbitrary sleep.
+    await expect.poll(readReceipt, { timeout: 15_000 }).toMatchObject({ operationId, resultKind: 'APPLIED' });
+    const receipt = await readReceipt();
     expect(receipt).toMatchObject({ operationId, resultKind: 'APPLIED' });
+    if (!receipt) throw new Error('Applied receipt disappeared before the second-device check');
 
     // The acknowledged operation is removed from the outbox.
     const remaining = await page.evaluate(async ({ subject }) => {
@@ -130,13 +136,37 @@ test.describe('ordered foreground synchronization', () => {
     }, { subject: ids.readerId });
     expect(remaining).toBe(0);
 
-    // Second device: a fresh context sees the acknowledged annotation.
+    // A fresh device has neither cookies nor IndexedDB. Authenticate separately
+    // and read the authoritative snapshot, not `/books` (a catalog that does
+    // not render annotations). Match the acknowledged entity, not old text from
+    // another test in the persistent profile.
     const second = await page.context().browser()?.newContext({ ignoreHTTPSErrors: false });
     if (!second) throw new Error('No browser available for second-device check');
-    const secondPage = await second.newPage();
-    await secondPage.goto(`${origin}/books`);
-    await expect(secondPage.getByText('sync acceptance').first()).toBeVisible({ timeout: 15_000 });
-    await second.close();
+    try {
+      const secondPage = await second.newPage();
+      const accessToken = await loginPwaPage(secondPage, 0);
+      const snapshot = await secondPage.evaluate(async ({ token, query, bookId }) => {
+        const response = await fetch('/api/graphql', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+          body: JSON.stringify({ query, variables: { bookId } }),
+        });
+        if (!response.ok) throw new Error(`Second-device snapshot failed with HTTP ${response.status}`);
+        const payload = await response.json() as {
+          errors?: unknown[];
+          data?: { bookReaderAnnotationSnapshot: { annotations: Array<{ id: string; text?: string }> } };
+        };
+        if (payload.errors?.length) throw new Error('Second-device snapshot returned GraphQL errors');
+        return payload.data?.bookReaderAnnotationSnapshot ?? null;
+      }, { token: accessToken, query: print(BookReaderAnnotationSnapshotDocument), bookId: ids.readableBookId });
+      expect(snapshot).not.toBeNull();
+      expect(snapshot?.annotations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: receipt.entityId, text: 'sync acceptance' }),
+      ]));
+    } finally {
+      await second.close();
+    }
   });
 
   /**
