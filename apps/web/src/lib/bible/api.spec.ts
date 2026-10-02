@@ -1,4 +1,11 @@
-import { fetchBible, getBooks, getChapter, getCrossReferences, clearBibleCache } from './api';
+import {
+  fetchBible,
+  fetchChapterForOffline,
+  getBooks,
+  getChapter,
+  getCrossReferences,
+  clearBibleCache,
+} from './api';
 
 const mockFetch = jest.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
@@ -75,5 +82,16 @@ describe('typed getters', () => {
     const result = await getCrossReferences('ROM', 12);
     expect(result.chapter.number).toBe(12);
     expect(mockFetch.mock.calls[0][0]).toBe('https://bible.helloao.org/api/d/open-cross-ref/ROM/12.json');
+  });
+
+  it('fetchChapterForOffline fetches uncached so an explicit download never reuses L1', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ chapter: { number: 3, content: [] } }));
+    const result = await fetchChapterForOffline('BSB', 'GEN', 3);
+    expect(result.chapter.number).toBe(3);
+    expect(mockFetch.mock.calls[0][0]).toBe('https://bible.helloao.org/api/BSB/GEN/3.json');
+    // Uncached: a second explicit download must hit the network again.
+    mockFetch.mockResolvedValue(jsonResponse({ chapter: { number: 3, content: [] } }));
+    await fetchChapterForOffline('BSB', 'GEN', 3);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });

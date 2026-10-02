@@ -4,6 +4,7 @@ import {
   createReceiptStore,
   createOutboxStore,
   createContentVersionResolver,
+  createLocalAnnotationReader,
   createLocalOnlyCounter,
   toOutcome,
 } from './sync-service';
@@ -144,6 +145,96 @@ describe('toOutcome', () => {
       serverRevision: 5,
       serverValue,
     });
+  });
+
+  it('maps every applied/version/access variant to its outcome', () => {
+    expect(
+      toOutcome({
+        operationId: 'op-1',
+        result: {
+          __typename: 'ReaderOperationApplied',
+          entityId: 'hl-1',
+          revision: 7,
+          receiptId: 'r1',
+        },
+      } as unknown as ReaderOperationDispatch),
+    ).toEqual({ kind: 'APPLIED', entityId: 'hl-1', revision: 7, receiptId: 'r1' });
+
+    expect(
+      toOutcome({
+        operationId: 'op-2',
+        result: {
+          __typename: 'ReaderOperationIncompatibleVersion',
+          requestedContentVersion: 1,
+          supportedContentVersions: [2, 3],
+        },
+      } as unknown as ReaderOperationDispatch),
+    ).toEqual({
+      kind: 'INCOMPATIBLE_VERSION',
+      requestedContentVersion: 1,
+      supportedContentVersions: [2, 3],
+    });
+
+    expect(
+      toOutcome({
+        operationId: 'op-3',
+        result: {
+          __typename: 'ReaderOperationAccessDenied',
+          resourceId: 'res-1',
+          reason: 'NO_RIGHTS',
+        },
+      } as unknown as ReaderOperationDispatch),
+    ).toEqual({ kind: 'ACCESS_DENIED', resourceId: 'res-1', reason: 'NO_RIGHTS' });
+  });
+
+  it('converts a wire conflict copy into durable epoch-ms form', () => {
+    const result: ReaderOperationDispatch = {
+      operationId: 'op-1',
+      result: {
+        __typename: 'ReaderOperationConflict',
+        kind: 'CONFLICT',
+        entityId: 'hl-1',
+        serverRevision: 5,
+        serverValue: { __typename: 'HighlightRecord' as const, id: 'hl-1', revision: 5 },
+        conflictCopy: {
+          id: 'cc-1',
+          operationId: 'op-1',
+          sourceEntityId: 'hl-1',
+          bookId: BOOK,
+          contentVersion: 1,
+          page: 2,
+          text: 'offline edit',
+          note: null,
+          color: null,
+          revision: 3,
+          reason: 'STALE_REVISION',
+          createdAt: '2026-10-01T00:00:00.000Z',
+        },
+      },
+    } as unknown as ReaderOperationDispatch;
+
+    const outcome = toOutcome(result);
+    expect(outcome).toMatchObject({
+      kind: 'CONFLICT',
+      conflictCopyId: 'cc-1',
+      conflictCopy: {
+        id: 'cc-1',
+        operationId: 'op-1',
+        sourceEntityId: 'hl-1',
+        // The operation-result selection omits `anchor`; it is nulled.
+        anchor: null,
+        createdAt: Date.parse('2026-10-01T00:00:00.000Z'),
+      },
+    });
+  });
+
+  it('throws on an unknown reader operation result', () => {
+    expect(() =>
+      toOutcome({
+        operationId: 'op-1',
+        result: { __typename: 'SomethingElse' },
+      } as unknown as ReaderOperationDispatch),
+    ).toThrow('Unknown reader operation result');
   });
 });
 
@@ -654,5 +745,160 @@ describe('sync-service production seam wiring', () => {
     );
     expect(row?.syncedAt ?? null).toBeNull();
     expect(await createLocalOnlyCounter(database)(OWNER.subject)).toBe(1);
+  });
+
+  it('projects bookmark payloads (page/label/color/anchor) into durable readerRecords', async () => {
+    const database = new OfflineDatabase();
+    const store = createSnapshotStore(database);
+
+    await store.applyMerge(OWNER, mergeResult({
+      annotations: [
+        {
+          id: 'server-bm-1',
+          kind: 'BOOKMARK',
+          clientEntityId: 'client-bm-1',
+          revision: 2,
+          deletedAt: null,
+          data: {
+            contentVersion: 1,
+            page: 9,
+            label: 'Chapter Two',
+            color: '#ff0',
+            anchor: { page: 9 },
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        },
+      ],
+    }));
+
+    const rows = await database.getAllByIndex<{ id: string; page: number; label: string | null }>(
+      'readerRecords',
+      'subjectBook',
+      [OWNER.subject, BOOK],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ page: 9, label: 'Chapter Two' });
+    expect(rows[0].id).toBe(qualifyKey(OWNER.subject, 'bookmark', 'client-bm-1'));
+  });
+
+  it('falls back to a valid contentVersion and bookId page when a merged row omits them', async () => {
+    const database = new OfflineDatabase();
+    const store = createSnapshotStore(database);
+
+    await store.applyMerge(OWNER, mergeResult({
+      annotations: [
+        {
+          id: 'client-hl-9',
+          kind: 'ANNOTATION',
+          clientEntityId: null,
+          revision: 1,
+          deletedAt: null,
+          data: { page: Number.NaN, text: 'no version' },
+        },
+      ],
+    }));
+
+    const row = await database.get<{ contentVersion: number; page: number; text: string; syncedAt: number | null }>(
+      'readerRecords',
+      qualifyKey(OWNER.subject, 'highlight', 'client-hl-9'),
+    );
+    expect(row).toMatchObject({ contentVersion: 1, page: 1, text: 'no version' });
+  });
+
+  it('reads local annotations back into the merge view with server identity', async () => {
+    const database = new OfflineDatabase();
+    await database.putAccountRecord(OWNER.subject, OWNER.epoch, 'readerRecords', {
+      id: qualifyKey(OWNER.subject, 'highlight', 'server-1'),
+      subject: OWNER.subject,
+      clientEntityId: 'client-1',
+      serverEntityId: 'server-1',
+      bookId: BOOK,
+      contentVersion: 1,
+      page: 1,
+      text: 'merged',
+      note: null,
+      color: null,
+      anchor: null,
+      revision: 4,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+      syncedAt: 1,
+    });
+
+    const reader = createLocalAnnotationReader(database);
+    const annotations = await reader(OWNER.subject, BOOK);
+    expect(annotations).toHaveLength(1);
+    // A row whose server identity differs from its client id keeps the client id
+    // for dependency matching and reports the server id as the stable identity.
+    expect(annotations[0]).toMatchObject({
+      id: 'server-1',
+      kind: 'ANNOTATION',
+      clientEntityId: 'client-1',
+      revision: 4,
+    });
+  });
+
+  it('resolves the content version from projected server records when no active download exists', async () => {
+    const database = new OfflineDatabase();
+    await database.putAccountRecord(OWNER.subject, OWNER.epoch, 'readerRecords', {
+      id: qualifyKey(OWNER.subject, 'highlight', 'server-1'),
+      subject: OWNER.subject,
+      clientEntityId: 'client-1',
+      serverEntityId: 'server-1',
+      bookId: BOOK,
+      contentVersion: 6,
+      page: 1,
+      text: 'projected',
+      note: null,
+      color: null,
+      anchor: null,
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+      syncedAt: 1,
+    });
+
+    const resolver = createContentVersionResolver(database);
+    const resolved = await resolver(OWNER, outboxOp({ id: 'edit', seq: 1 }));
+    expect(resolved).toBe(6);
+  });
+
+  it('leaves the stored version untouched when every source is unknown', async () => {
+    const database = new OfflineDatabase();
+    const resolver = createContentVersionResolver(database);
+    expect(await resolver(OWNER, outboxOp({ id: 'edit', seq: 1 }))).toBeNull();
+  });
+
+  it('resolves a version from the authoritative snapshot when local sources are silent', async () => {
+    const database = new OfflineDatabase();
+    const snapshot = jest.fn(async () => ({
+      bookId: BOOK,
+      snapshotRevision: 1,
+      annotations: [
+        {
+          id: 'server-1',
+          kind: 'ANNOTATION' as const,
+          clientEntityId: null,
+          revision: 1,
+          deletedAt: null,
+          data: { contentVersion: 4 },
+        },
+      ],
+      tombstones: [],
+      conflictCopies: [],
+    }));
+
+    const resolver = createContentVersionResolver(database, snapshot);
+    expect(await resolver(OWNER, outboxOp({ id: 'edit', seq: 1 }))).toBe(4);
+  });
+
+  it('falls through to null when the snapshot lookup faults', async () => {
+    const database = new OfflineDatabase();
+    const snapshot = jest.fn().mockRejectedValue(new Error('offline'));
+    const resolver = createContentVersionResolver(database, snapshot);
+    expect(await resolver(OWNER, outboxOp({ id: 'edit', seq: 1 }))).toBeNull();
   });
 });
