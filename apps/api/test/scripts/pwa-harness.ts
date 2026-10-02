@@ -512,7 +512,13 @@ async function test(): Promise<void> {
     run('pnpm', ['exec', 'playwright', 'test', '-c', 'playwright.pwa.config.ts'], join(root, 'apps/web'), testEnv);
   } catch (error) {
     if (await isSupervisorAlive(owner)) throw error;
-    throw new Error(`supervisor died during test: ${owner.failure ?? 'no recorded failure'}`, { cause: error });
+    // The in-memory owner was read before the run; a supervisor crash rewrites
+    // metadata with the real reason (e.g. an uncaught proxy exception). Re-read
+    // it so a dead supervisor is never reported as "no recorded failure".
+    let recordedFailure = owner.failure;
+    try { recordedFailure = (await readMetadata()).failure ?? recordedFailure; }
+    catch (metadataError) { console.error(`PWA supervisor metadata unreadable after crash: ${String(metadataError)}`); }
+    throw new Error(`supervisor died during test: ${recordedFailure ?? 'no recorded failure'}`, { cause: error });
   }
 }
 

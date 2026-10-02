@@ -1,6 +1,6 @@
 import { createServer as createHttpsServer } from 'node:https';
 import { readFileSync } from 'node:fs';
-import { pipeline } from 'node:stream';
+import { pipeline, type Readable, type Writable } from 'node:stream';
 import { request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
 
@@ -17,6 +17,25 @@ function isLoopbackPeer(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
 }
 
+/**
+ * Pipes one request-half into the other without ever letting a raced client
+ * disconnect crash the supervisor. Node's `pipeline()` throws synchronously with
+ * `ERR_STREAM_UNABLE_TO_PIPE` when the destination was already destroyed (a
+ * browser aborting a fetch while the upstream is still opening), and that
+ * synchronous throw bypasses the callback. Treat that race as a normal
+ * disconnect: abort the source and move on instead of surfacing an
+ * `uncaughtException`.
+ */
+export function pipeSafely(source: Readable, destination: Writable): void {
+  try {
+    pipeline(source, destination, (error) => {
+      if (error && !destination.destroyed) destination.destroy(error);
+    });
+  } catch {
+    if (!source.destroyed) source.destroy();
+  }
+}
+
 export function createPwaProxy(options: { keyPath: string; certPath: string; apiPort: number; webPort: number }) {
   const server = createHttpsServer({ key: readFileSync(options.keyPath), cert: readFileSync(options.certPath) }, (request, response) => {
     const path = stripApiPrefix(request.url ?? '/');
@@ -25,14 +44,14 @@ export function createPwaProxy(options: { keyPath: string; certPath: string; api
     const canWrite = (): boolean => !response.destroyed && !response.writableEnded;
     const upstream = httpRequest({ hostname: '127.0.0.1', port: targetPort, method: request.method, path: path ?? request.url, headers }, (upstreamResponse) => {
       if (canWrite()) response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.statusMessage, { ...upstreamResponse.headers, 'cache-control': 'no-store' });
-      pipeline(upstreamResponse, response, (error) => { if (error) response.destroy(error); });
+      pipeSafely(upstreamResponse, response);
     });
     upstream.on('error', (error) => {
       if (!canWrite()) return;
       if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
       response.end(error.message);
     });
-    pipeline(request, upstream, (error) => { if (error) upstream.destroy(error); });
+    pipeSafely(request, upstream);
   });
   server.on('connection', (socket) => { if (!isLoopbackPeer(socket.remoteAddress)) socket.destroy(); });
   server.on('clientError', (_error, socket) => { socket.destroy(); });

@@ -9,9 +9,10 @@ import { join } from 'node:path';
 import { request as httpsRequest } from 'node:https';
 import { createServer } from 'node:http';
 import { createConnection } from 'node:net';
+import { PassThrough } from 'node:stream';
 import { once } from 'node:events';
 import { WebSocket, WebSocketServer } from 'ws';
-import { createPwaProxy, stripApiPrefix } from './pwa-proxy.js';
+import { createPwaProxy, stripApiPrefix, pipeSafely } from './pwa-proxy.js';
 import { assertOwnedMetadata, assertPortAvailable, assertSupervisorNonce, assertSupervisorSocketIdentity, cleanupOwnedResources, cleanupAfterStartupFailure, assertOwnedArtifactPath, assertOwnedPublicAssetRoot, isContainerReadableAssetMode, parsePwaHarnessArgs, waitForHarnessReady, waitForSupervisorExit, listenPwaSupervisorControl, requestPwaSupervisorControl } from './pwa-process.js';
 import { assertTask1AOwnedDatabaseUrl } from './pwa-db.js';
 import { createPwaFixturePlan, createPwaFramePayload, createPwaTextPayload } from '../helpers/pwa-fixtures.js';
@@ -282,6 +283,17 @@ describe('PWA harness safety contract', () => {
 });
 
 describe('same-origin HTTPS proxy', () => {
+  it('treats a destroy-before-pipe race as a disconnect instead of an uncaught crash', () => {
+    // Regression: a browser aborting a fetch while the upstream is still opening
+    // leaves the destination destroyed. Node's `pipeline()` throws synchronously
+    // with ERR_STREAM_UNABLE_TO_PIPE, which previously escaped to the
+    // supervisor's uncaughtException handler and killed the harness mid-run.
+    const source = new PassThrough();
+    const destination = new PassThrough();
+    destination.destroy();
+    assert.doesNotThrow(() => pipeSafely(source, destination));
+  });
+
   it('streams API responses without fallback, preserving status, MIME, CSP, cookies and WS upgrades', async () => {
     const temp = await mkdtemp(join(tmpdir(), 'pwa-proxy-test-'));
     const keyPath = join(temp, 'key.pem');
