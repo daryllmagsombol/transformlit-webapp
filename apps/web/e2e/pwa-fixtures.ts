@@ -1,4 +1,5 @@
 import { chromium, test as base, expect, type BrowserContext, type Page } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -8,6 +9,8 @@ type PwaTitles = { readableBook: string; restrictedBook: string };
 type PwaFixture = {
   origin: 'https://localhost:3443';
   context: BrowserContext;
+  /** Unique child of the harness-owned profile root for this test scenario. */
+  profilePath: string;
   ids: PwaIds;
   /**
    * Fixture book titles. The "save offline" control exposes its accessible name
@@ -26,29 +29,34 @@ type PwaFixture = {
   loginAs(index: number): Promise<string>;
 };
 
-/** Signs in an independent device without inheriting persisted display auth. */
-export async function loginPwaPage(page: Page, index: number): Promise<string> {
+/** Signs in a fresh device through the real form; never bypasses recovery barriers. */
+export async function loginPwaPage(page: Page, index: number, origin = 'https://localhost:3443'): Promise<string> {
   const credentials = JSON.parse(process.env.PWA_FIXTURE_CREDENTIALS ?? '[]') as PwaCredential[];
   const credential = credentials[index];
   if (!credential) throw new Error('PWA fixture credential is missing');
 
-  // Stop the old page's bootstrap before clearing its cookie. Preserve private
-  // IndexedDB data: account ownership and downloads are not display auth.
-  await page.goto('about:blank');
-  await page.context().clearCookies({ name: 'transformlit_refresh' });
-  await page.goto('https://localhost:3443/offline');
-  await page.evaluate(() => localStorage.removeItem('auth-storage'));
-  await page.goto('https://localhost:3443/login');
+  await page.goto(`${origin}/login`);
+  const recoveryDialog = page.getByTestId('account-exit-dialog');
+  if (await recoveryDialog.isVisible().catch(() => false)) {
+    throw new Error('PWA login is blocked by an account-exit barrier/recovery dialog; refusing to dismiss it');
+  }
   await page.getByLabel('Email Address').fill(credential.email);
   await page.getByLabel('Password', { exact: true }).fill(credential.password);
-  // Do not call /api/auth/refresh separately: the login UI installs the access
-  // token itself, and another cookie rotation would race its bootstrap.
-  const [response] = await Promise.all([
-    page.waitForResponse((candidate) =>
-      new URL(candidate.url()).pathname === '/api/auth/login' && candidate.request().method() === 'POST',
-    ),
-    page.getByRole('button', { name: /log in/i }).click(),
-  ]);
+  let response: Awaited<ReturnType<Page['waitForResponse']>>;
+  try {
+    [response] = await Promise.all([
+      page.waitForResponse((candidate) =>
+        new URL(candidate.url()).pathname === '/api/auth/login' && candidate.request().method() === 'POST',
+        { timeout: 15_000 },
+      ),
+      page.getByRole('button', { name: /log in/i }).click({ timeout: 15_000 }),
+    ]);
+  } catch (error) {
+    if (await recoveryDialog.isVisible().catch(() => false)) {
+      throw new Error('PWA login submit was blocked by an account-exit barrier/recovery dialog', { cause: error });
+    }
+    throw new Error('PWA login form did not submit within 15 seconds', { cause: error });
+  }
   if (!response.ok()) throw new Error(`Fixture login failed with HTTP ${response.status()}`);
   const login = await response.json() as { accessToken?: string };
   if (!login.accessToken) throw new Error('Fixture login returned no access token');
@@ -64,12 +72,17 @@ export const test = base.extend<PwaFixture>({
     if (!secure) throw new Error('PWA origin is not a secure browser context');
     await use(baseURL);
   },
-  context: async ({}, use) => {
-    const profile = process.env.PWA_BROWSER_PROFILE;
-    const fingerprint = process.env.PWA_TLS_SPKI;
-    if (!profile || !fingerprint) throw new Error('Owned PWA browser profile and TLS SPKI pin are required');
-    const profilePath = resolve(profile);
+  profilePath: async ({}, use, testInfo) => {
+    const profileRoot = process.env.PWA_BROWSER_PROFILE;
+    if (!profileRoot) throw new Error('Owned PWA browser profile root is required');
+    const testIdentity = `${testInfo.testId}-${randomUUID()}`.replaceAll(/[^a-zA-Z0-9._-]/g, '_');
+    const profilePath = resolve(profileRoot, 'test-profiles', testIdentity);
     await mkdir(profilePath, { recursive: true, mode: 0o700 });
+    await use(profilePath);
+  },
+  context: async ({ profilePath }, use) => {
+    const fingerprint = process.env.PWA_TLS_SPKI;
+    if (!fingerprint) throw new Error('Owned PWA TLS SPKI pin is required');
     const context = await chromium.launchPersistentContext(profilePath, {
       headless: true,
       ignoreHTTPSErrors: false,

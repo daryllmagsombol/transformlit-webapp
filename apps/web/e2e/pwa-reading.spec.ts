@@ -33,6 +33,7 @@ test.describe('repository-backed offline reading', () => {
     loginAs,
     ids,
     titles,
+    profilePath,
   }) => {
     await loginAs(0);
 
@@ -49,10 +50,9 @@ test.describe('repository-backed offline reading', () => {
     expect(readyVersion).toBeGreaterThan(0);
 
     // 2. Close the whole browser process and relaunch from the same profile.
-    const profile = process.env.PWA_BROWSER_PROFILE as string;
     const fingerprint = process.env.PWA_TLS_SPKI as string;
     await page.context().close();
-    const relaunched = await chromium.launchPersistentContext(profile, {
+    const relaunched = await chromium.launchPersistentContext(profilePath, {
       headless: true,
       ignoreHTTPSErrors: false,
       args: [`--ignore-certificate-errors-spki-list=${fingerprint}`],

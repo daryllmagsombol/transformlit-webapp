@@ -853,3 +853,20 @@ flags.every(Boolean);
   ❌ Raw REST login → route wait; `getByText('Saved offline')`; immediate receipt read.
   ✅ Capture the form login response; `getByText('Saved offline', { exact: true })`;
   `expect.poll(readReceipt, { timeout: 15_000 })` asserting `APPLIED`.
+- **Persistent browser isolation (no Sonar rule ID):** the harness-owned browser
+  profile is a parent cleanup boundary, not a profile shared by independent test
+  scenarios. A preceding account recovery test can leave an intentional deferred
+  logout barrier in IndexedDB. Reusing the same profile can make the next
+  scenario mistake that barrier for its own login failure. Give every Playwright
+  test a unique child profile beneath the owned root; never dismiss/reset a
+  barrier to make fixture login pass. Within one scenario, reuse that child for
+  tabs and cold restarts.
+  ❌ All tests launch persistent Chromium against `PWA_BROWSER_PROFILE` directly.
+  ✅ `resolve(PWA_BROWSER_PROFILE, 'test-profiles', testInfo.testId + uniqueId)`;
+  retain the child path in a fixture for cold restart.
+- **Epoch-fenced E2E writes (no Sonar rule ID):** synthetic outbox records must
+  use the active persisted owner epoch and the next account sequence, not a
+  hard-coded epoch/sequence. First assert lifecycle state is ACTIVE and its
+  subject matches the fixture; do not bypass an account-exit barrier.
+  ❌ `epoch: 1, seq: 1` without reading durable ownership/queue state.
+  ✅ Read ACTIVE owner and queue sequence, then seed with its epoch and next seq.

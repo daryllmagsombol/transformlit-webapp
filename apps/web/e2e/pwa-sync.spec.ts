@@ -42,7 +42,7 @@ test.describe('ordered foreground synchronization', () => {
 
     // Drive the local-first outbox directly (the module is not page-importable),
     // then trigger a foreground drain through the app.
-    const operationId = await page.evaluate(async ({ subject, bookId }) => {
+    const operation = await page.evaluate(async ({ subject, bookId }) => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open('transformlit-offline');
         request.onsuccess = () => resolve(request.result);
@@ -50,6 +50,23 @@ test.describe('ordered foreground synchronization', () => {
       });
       const id = crypto.randomUUID();
       const clientEntityId = crypto.randomUUID();
+      const lifecycle = await new Promise<{ state: string; subject: string; epoch: number } | null>((resolve, reject) => {
+        const tx = db.transaction('lifecycle', 'readonly');
+        const request = tx.objectStore('lifecycle').get('lifecycle');
+        request.onsuccess = () => resolve((request.result as { state: string; subject: string; epoch: number } | undefined) ?? null);
+        request.onerror = () => reject(request.error);
+      });
+      if (lifecycle?.state !== 'ACTIVE' || lifecycle.subject !== subject) {
+        db.close();
+        throw new Error('Active lifecycle owner does not match the sync fixture subject');
+      }
+      const existingOperations = await new Promise<Array<{ seq: number }>>((resolve, reject) => {
+        const tx = db.transaction('outbox', 'readonly');
+        const request = tx.objectStore('outbox').index('subject').getAll(subject);
+        request.onsuccess = () => resolve(request.result as Array<{ seq: number }>);
+        request.onerror = () => reject(request.error);
+      });
+      const seq = Math.max(0, ...existingOperations.map((row) => row.seq)) + 1;
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(['readerRecords', 'outbox'], 'readwrite');
         tx.oncomplete = () => resolve();
@@ -73,13 +90,13 @@ test.describe('ordered foreground synchronization', () => {
         tx.objectStore('outbox').put({
           id: `${subject}\u0000outbox\u0000${id}`,
           subject,
-          epoch: 1,
+          epoch: lifecycle.epoch,
           operationId: id,
           entityKey: `${subject}\u0000highlight\u0000${clientEntityId}`,
           bookId,
           contentVersion: 1,
           kind: 'ANNOTATION_CREATE',
-          seq: 1,
+          seq,
           dependsOn: null,
           baseRevision: null,
           dispatchState: 'PENDING',
@@ -91,6 +108,7 @@ test.describe('ordered foreground synchronization', () => {
       db.close();
       return id;
     }, { subject: ids.readerId, bookId: ids.readableBookId });
+    const operationId = operation;
 
     // Foreground sync is triggered on focus; dispatch the queued operation.
     await page.evaluate(() => globalThis.window.dispatchEvent(new Event('focus')));
