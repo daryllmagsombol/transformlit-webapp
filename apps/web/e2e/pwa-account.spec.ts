@@ -308,7 +308,10 @@ test.describe('account lifecycle barriers', () => {
         new URL(response.url()).pathname === '/api/auth/refresh' && response.request().method() === 'POST' && response.ok(),
         { timeout: 15_000 },
       );
-      const feedResponsePromise = page.waitForResponse((response) => {
+      // Read the feed body as soon as the response resolves: the reload that
+      // triggers it evicts the buffered body, so a later `response.json()`
+      // fails with `Network.getResponseBody: No resource with given identifier`.
+      const feedResultPromise = page.waitForResponse((response) => {
         if (new URL(response.url()).pathname !== '/api/graphql' || response.request().method() !== 'POST') return false;
         try {
           const body = response.request().postDataJSON() as { operationName?: string; query?: string };
@@ -318,17 +321,20 @@ test.describe('account lifecycle barriers', () => {
         } catch {
           return false;
         }
-      }, { timeout: 15_000 });
+      }, { timeout: 15_000 }).then(async (response) => ({
+        ok: response.ok(),
+        payload: await response.json() as {
+          errors?: unknown[];
+          data?: { announcements?: unknown[]; verseOfDay?: unknown | null };
+        },
+      }));
       await page.reload();
       await expect(page).toHaveURL(/\/feed(?:\?|$)/, { timeout: 15_000 });
       const refreshResponse = await refreshResponsePromise;
       expect(refreshResponse.ok()).toBe(true);
-      const feedResponse = await feedResponsePromise;
-      expect(feedResponse.ok()).toBe(true);
-      const feedPayload = await feedResponse.json() as {
-        errors?: unknown[];
-        data?: { announcements?: unknown[]; verseOfDay?: unknown | null };
-      };
+      const feedResult = await feedResultPromise;
+      expect(feedResult.ok).toBe(true);
+      const feedPayload = feedResult.payload;
       expect(feedPayload.errors ?? []).toEqual([]);
       expect(feedPayload.data?.announcements).toBeInstanceOf(Array);
       expect(feedPayload.data).toHaveProperty('verseOfDay');

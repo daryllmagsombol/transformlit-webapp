@@ -22,12 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 65
     steps:
-      - name: Validate source SHA and fetch exact commit
+      - name: Validate requested source SHA
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          SOURCE_DIR: ${{ runner.temp }}/release-source
         shell: bash
         run: |
           set -euo pipefail
@@ -36,16 +33,27 @@ jobs:
             exit 1
           fi
 
-          mkdir -p "$SOURCE_DIR"
-          git -C "$SOURCE_DIR" init --quiet
-          git -C "$SOURCE_DIR" -c "http.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64)" \
-            fetch --quiet --no-tags --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$SOURCE_SHA"
-          fetched_sha="$(git -C "$SOURCE_DIR" rev-parse FETCH_HEAD)"
-          if [[ "$fetched_sha" != "$SOURCE_SHA" ]]; then
-            printf 'Fetched commit %s does not match requested SHA %s\n' "$fetched_sha" "$SOURCE_SHA" >&2
+      # Checkout the exact commit with the repository's pinned actions/checkout,
+      # which authenticates with the workspace token. Fetching the SHA by hand
+      # bypassed that auth and failed on the runner.
+      - name: Checkout exact commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Confirm checked-out commit matches request
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [[ "$checked_out_sha" != "$SOURCE_SHA" ]]; then
+            printf 'Checked-out commit %s does not match requested SHA %s\n' "$checked_out_sha" "$SOURCE_SHA" >&2
             exit 1
           fi
-          git -C "$SOURCE_DIR" checkout --quiet --detach "$fetched_sha"
 
       - name: Build API image for linux/amd64
         env:
