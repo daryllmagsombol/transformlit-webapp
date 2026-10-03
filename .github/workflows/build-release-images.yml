@@ -58,7 +58,6 @@ jobs:
       - name: Build API image for linux/amd64
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
-          SOURCE_DIR: ${{ runner.temp }}/release-source
         shell: bash
         timeout-minutes: 30
         run: |
@@ -66,12 +65,11 @@ jobs:
           docker build --platform linux/amd64 \
             --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
             --tag "transformlit-api:${SOURCE_SHA}" \
-            --file "$SOURCE_DIR/apps/api/Dockerfile" "$SOURCE_DIR"
+            --file apps/api/Dockerfile .
 
       - name: Build web image for linux/amd64
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
-          SOURCE_DIR: ${{ runner.temp }}/release-source
         shell: bash
         timeout-minutes: 30
         run: |
@@ -81,7 +79,7 @@ jobs:
             --build-arg NEXT_PUBLIC_API_URL=/api/graphql \
             --build-arg NEXT_PUBLIC_WS_URL=/api/graphql \
             --tag "transformlit-web:${SOURCE_SHA}" \
-            --file "$SOURCE_DIR/apps/web/Dockerfile" "$SOURCE_DIR"
+            --file apps/web/Dockerfile .
 
       - name: Export archives and image metadata
         env:
