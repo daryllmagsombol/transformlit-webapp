@@ -570,6 +570,39 @@ These appeared en masse on legacy files. Each is mechanical; fix in the same sty
 Tests: `screen.getByRole('progressbar')` still works; assert `toHaveAttribute('value', '50')`
 and `max` instead of `aria-valuenow`.
 
+### S6825 — Remove redundant ARIA role on a semantic element
+**Fix:** Drop the explicit role when the native element already exposes it.
+`<section aria-label="…">` has an implicit `role="region"`; writing
+`role="region"` as well is redundant. `getByRole('region', { name })` still
+works after removal because the accessible name keeps the implicit region role.
+
+```tsx
+// ❌ Bad — redundant role on <section>
+<section aria-label="Conflicts needing resolution" role="region">…</section>
+
+// ✅ Good — implicit region role from <section> + aria-label
+<section aria-label="Conflicts needing resolution">…</section>
+```
+
+### S6845 / S6847 — No keyboard listener on a non-interactive element
+**Fix:** Put keyboard handling on a real interactive element, or attach it at the
+document/window level for global shortcuts (e.g. Escape) instead of an
+`onKeyDown` handler on a non-interactive JSX element.
+
+```tsx
+// ❌ Bad — keyboard listener on a non-interactive element
+<dialog onKeyDown={handleKeyDown}>…</dialog>
+
+// ✅ Good — document-level listener for a global shortcut
+useEffect(() => {
+  const handler = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') onCancel();
+  };
+  document.addEventListener('keydown', handler);
+  return () => document.removeEventListener('keydown', handler);
+}, [onCancel]);
+```
+
 ### S6701 — Interactive elements need keyboard support
 **Fix:** Add `onKeyDown` or `onKeyUp` to non-interactive elements with `onClick`.
 

@@ -235,7 +235,7 @@ function ConflictCard({
         <p className="font-small text-small text-on-surface-variant">{reasonLabel(conflict)}</p>
       </div>
       {isProgress ? <ProgressComparison conflict={conflict} /> : <AnnotationComparison conflict={conflict} />}
-      {!isProgress ? <ConflictCopyNote conflict={conflict} /> : null}
+      {isProgress ? null : <ConflictCopyNote conflict={conflict} />}
       {isProgress ? (
         <ProgressActions conflict={conflict} busy={busy} onResolveProgress={onResolveProgress} />
       ) : (
@@ -280,7 +280,6 @@ export function ConflictPanel({
       ref={sectionRef}
       tabIndex={-1}
       aria-label="Conflicts needing resolution"
-      role="region"
       data-testid="conflict-panel"
       className="flex flex-col gap-3 rounded-xl border border-outline-variant bg-surface-container-low p-4"
     >
