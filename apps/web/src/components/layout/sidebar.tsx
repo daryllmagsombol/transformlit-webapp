@@ -75,7 +75,7 @@ function useYearlyProgress(): ProgressState {
     let cancelled = false;
 
     apolloClient
-      .query<MyProgressQuery, MyProgressQueryVariables>({
+      .query({
         query: MyProgressDocument,
         variables: { year },
       })
@@ -113,19 +113,12 @@ function ProgressSkeleton() {
 /** Accessible goal track; width is the completion ratio. */
 function ProgressBar({ percent }: { readonly percent: number }) {
   return (
-    <div
-      role="progressbar"
+    <progress
+      className="h-2 w-full appearance-none overflow-hidden rounded-full bg-surface-container-highest [&::-webkit-progress-bar]:bg-surface-container-highest [&::-webkit-progress-value]:bg-brand-orange-dark [&::-moz-progress-bar]:bg-brand-orange-dark"
       aria-label="Yearly reading goal progress"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={percent}
-      className="w-full bg-surface-container-highest h-2 rounded-full overflow-hidden"
-    >
-      <div
-        className="bg-brand-orange-dark h-full rounded-full transition-all"
-        style={{ width: `${percent}%` }}
-      />
-    </div>
+      value={percent}
+      max={100}
+    />
   );
 }
 

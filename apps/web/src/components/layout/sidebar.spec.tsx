@@ -195,8 +195,8 @@ describe('Sidebar', () => {
       render(<Sidebar />);
       await screen.findByText('12/24');
       const bar = screen.getByRole('progressbar');
-      expect(bar).toHaveAttribute('aria-valuenow', '50');
-      expect(bar.firstElementChild).toHaveStyle({ width: '50%' });
+      expect(bar).toHaveAttribute('value', '50');
+      expect(bar).toHaveAttribute('max', '100');
     });
 
     it('caps the progress bar width at 100%', async () => {
@@ -205,7 +205,7 @@ describe('Sidebar', () => {
       });
       render(<Sidebar />);
       await screen.findByText('40/24');
-      expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+      expect(screen.getByRole('progressbar')).toHaveAttribute('value', '100');
     });
 
     it('guards against a zero target without dividing by zero', async () => {
@@ -215,11 +215,10 @@ describe('Sidebar', () => {
       render(<Sidebar />);
       await screen.findByText('12/0');
       const bar = screen.getByRole('progressbar');
-      expect(bar).toHaveAttribute('aria-valuenow', '0');
-      expect(bar.firstElementChild).toHaveStyle({ width: '0%' });
+      expect(bar).toHaveAttribute('value', '0');
       // A divide-by-zero must never leak NaN/Infinity into the rendered card.
       expect(document.body.textContent).not.toMatch(/NaN|Infinity/);
-      expect(bar.firstElementChild?.getAttribute('style')).not.toMatch(/NaN|Infinity/);
+      expect(bar.getAttribute('value')).not.toMatch(/NaN|Infinity/);
     });
 
     it('renders the current streak chip', async () => {

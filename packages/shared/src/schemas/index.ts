@@ -152,9 +152,7 @@ export type CursorPaginationInput = z.infer<typeof cursorPaginationSchema>;
 
 // ── Progress ───────────────────────────────────────────────────────────────
 
-const UUID_PATTERN = new RegExp(
-  String.raw`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
-);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export const recordActivitySchema = z.object({
   type: z.enum(['BOOK_READ', 'BIBLE_READ', 'FEED_READ', 'GROUP_POST']),

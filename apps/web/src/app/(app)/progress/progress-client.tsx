@@ -62,7 +62,7 @@ function firstWeekdayOfYear(year: number): number {
  */
 function calendarPosition(dayKey: string, year: number): { column: number; row: number } {
   const parsed = parseDayKey(dayKey);
-  if (!parsed || parsed.year !== year) return { column: 1, row: 1 };
+  if (parsed?.year !== year) return { column: 1, row: 1 };
   const startOfYear = Date.UTC(year, 0, 1);
   const current = Date.UTC(parsed.year, parsed.month - 1, parsed.day);
   const dayOfYear = Math.round((current - startOfYear) / 86_400_000);
@@ -342,7 +342,7 @@ function GoalEditor({ year, goal, onSaved }: GoalEditorProps) {
   }, [goal]);
 
   const handleSubmit = useCallback(
-    async (event: React.FormEvent<HTMLFormElement>) => {
+    async (event: React.SyntheticEvent<HTMLFormElement>) => {
       event.preventDefault();
       const parsed = Number.parseInt(value, 10);
       const validation = validateGoal(kind, parsed);
@@ -592,8 +592,10 @@ export default function ProgressClient() {
             onClick={handleCheckIn}
             className="self-start inline-flex items-center gap-2 rounded-lg border-2 border-primary px-6 py-3 font-display text-small font-bold text-primary transition-colors hover:bg-primary hover:text-on-primary"
           >
-            <span className="material-symbols-outlined text-[18px]">local_fire_department</span>
-            Log today&apos;s reading
+            <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+              local_fire_department
+            </span>
+            <span>Log today&apos;s reading</span>
           </button>
         </section>
       </div>

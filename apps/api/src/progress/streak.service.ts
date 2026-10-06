@@ -30,7 +30,7 @@ export function currentStreakFromDays(days: string[], todayDayKey: string): numb
 export function longestStreakFromDays(days: string[]): number {
   if (days.length === 0) return 0;
 
-  const sorted = [...new Set(days)].sort();
+  const sorted = [...new Set(days)].sort((a, b) => a.localeCompare(b));
   let longest = 1;
   let run = 1;
   for (let index = 1; index < sorted.length; index += 1) {
@@ -39,7 +39,7 @@ export function longestStreakFromDays(days: string[]): number {
     } else {
       run = 1;
     }
-    if (run > longest) longest = run;
+    longest = Math.max(longest, run);
   }
   return longest;
 }
