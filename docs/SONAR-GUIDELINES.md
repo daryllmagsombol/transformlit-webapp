@@ -459,11 +459,21 @@ These were all surfaced by the scan. Prefer code that does not create them; wher
 |---|---|---|---|
 | `S2245` | Weak crypto | `Math.random()` in `apps/web/scripts/test-utils/pwa-fixture.ts` (temp-dir name) | Fine for a non-security fixture — mark **Safe**, or use a counter. Never use `Math.random()` for tokens/ids. |
 | `S1523` | Code injection (RCE) | `runInNewContext(workerSource, sandbox)` in test-utils | It is a test sandbox for a known, repo-owned worker script — mark **Safe**. Never `runInNewContext` on untrusted input. |
-| `S5693` | DoS | Multer `FileInterceptor` with no explicit `limits.fileSize` in `apps/api/src/uploads/uploads.controller.ts` | Set `limits: { fileSize: MAX_FILE_SIZE_BYTES }` (already a shared constant). |
-| `S5852` | DoS (ReDoS) | `.replace(/\/+$/, '')` in `download-manager.ts` | Use a linear pattern (e.g. a `while (endsWith('/'))` trim) or mark **Safe** after review — `/\/+$/` is not catastrophic. |
+| `S5693` | DoS | Multer `FileInterceptor` missing `limits.fileSize` | **already mitigated** — `uploads.controller.ts` sets `limits: { fileSize: 10 MB }`. Leave it; mark **Safe**. Do not raise the cap to the 50 MB PDF constant (behavior change). |
+| `S5852` | DoS (ReDoS) | `.replace(/\/+$/, '')` trailing-slash trim | **fixed** — replaced with a linear `trimTrailingSlashes` helper in `download-manager.ts`. Prefer a linear trim over a regex for this shape. |
 | `S6504` | Permission | `COPY --chown=node:node` in `apps/web/Dockerfile` | Intentional: the runtime user is non-root. Mark **Safe**. |
-| `S6470` | Permission | `COPY . .` in both Dockerfiles | Covered by a `.dockerignore`; confirm it excludes `.env*`, `.git`, `node_modules`. Mark **Safe**. |
+| `S6470` | Permission | `COPY . .` in both Dockerfiles | **mitigated** — root `.dockerignore` now excludes `.env*`, `**/.git`, `**/node_modules`, `**/dist`, `**/.next`, `**/.turbo`, `coverage`, `*.tfstate`. Mark **Safe**. Use nested globs (`**/x`), not bare `x` — a bare pattern only matches the context root. |
+| `S2819` | RCE / cross-origin | `message` listener without an origin check (`apps/web/scripts/sw-template.js`) | **fixed** — reject any `event.origin` that is not `self.location.origin`. Never act on a cross-origin message. |
 | `S1313` | Hardcoded IP | literal loopback IPs in tests | See the `S1313` rule above — derive from parts. |
+
+### Additional reliability rules (from the same backlog)
+
+| Rule | Message | Fix |
+|---|---|---|
+| `S2259` | "TypeError … might be null or undefined" | Guard the nullable value before dereferencing; never assume an injected/build-time payload exists. |
+| `S7764` | "Prefer `globalThis` over `self`" | In a service worker, `globalThis.self` is the same object as `self`; use `globalThis.self.<member>`. |
+| `S2871` | "Provide a compare function" (sort) | Always pass an explicit comparator, even when the default happens to match. |
+| `S6825` | "implicit role … defining it explicitly is redundant" | Remove the explicit `role` that duplicates the element's implicit role (e.g. `role="region"` on `<section>`). |
 
 **Required review step:** after a scan, open **Security Hotspots → To review** and assess every entry. "Safe" with a one-line rationale is a legitimate outcome; leaving one **To review** fails the gate.
 
