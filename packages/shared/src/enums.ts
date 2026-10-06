@@ -100,6 +100,11 @@ export enum GoalKind {
   PAGES = 'PAGES',
 }
 
+export enum ReadingPlanStatus {
+  ACTIVE = 'ACTIVE',
+  ARCHIVED = 'ARCHIVED',
+}
+
 // ── Constants ──────────────────────────────────────────────────────────────
 
 export const JWT_ACCESS_EXPIRY = '15m';

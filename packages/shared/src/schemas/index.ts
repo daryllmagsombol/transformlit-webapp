@@ -173,3 +173,26 @@ export const setReadingGoalSchema = z
 
 export type RecordActivityInput = z.infer<typeof recordActivitySchema>;
 export type SetReadingGoalInput = z.infer<typeof setReadingGoalSchema>;
+
+// ── Group Features ─────────────────────────────────────────────────────────
+
+export const createGroupReadingPlanSchema = z
+  .object({
+    groupId: z.string().regex(UUID_PATTERN, 'groupId must be a UUID'),
+    bookId: z.string().regex(UUID_PATTERN, 'bookId must be a UUID'),
+    title: z.string().max(200).optional(),
+    startDate: z.iso.date(),
+    targetDate: z.iso.date(),
+  })
+  .refine((v) => v.targetDate > v.startDate, {
+    message: 'targetDate must be after startDate',
+    path: ['targetDate'],
+  });
+
+export const shareHighlightSchema = z.object({
+  groupId: z.string().regex(UUID_PATTERN, 'groupId must be a UUID'),
+  highlightId: z.string().regex(UUID_PATTERN, 'highlightId must be a UUID'),
+});
+
+export type CreateGroupReadingPlanInput = z.infer<typeof createGroupReadingPlanSchema>;
+export type ShareHighlightInput = z.infer<typeof shareHighlightSchema>;
