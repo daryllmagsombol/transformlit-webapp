@@ -160,6 +160,39 @@ describe('ProgressService', () => {
       expect(upsert.update.activityCount).toBeUndefined();
     });
 
+    it('counts the day but adds no pages on an operationId replay [gate independence]', async () => {
+      // Receipt gate fires (replay) while the type gate SUCCEEDS: the two gates
+      // are independent, so the day still counts even though pages are skipped.
+      prisma.activityEventReceipt.create.mockRejectedValueOnce(p2002());
+      const result = await service.recordActivity('u1', {
+        type: ActivityType.BOOK_READ,
+        pagesDelta: 1,
+        operationId: 'op-1',
+      });
+      expect(result.counted).toBe(true);
+      const upsert = prisma.dailyActivity.upsert.mock.calls[0][0];
+      expect(upsert.update.pagesRead.increment).toBe(0);
+      expect(upsert.update.activityCount).toEqual({ increment: 1 });
+      expect(upsert.create).toEqual(
+        expect.objectContaining({ pagesRead: 0, activityCount: 1 }),
+      );
+    });
+
+    it('adds pages but does not count a repeat type with a positive delta [gate independence]', async () => {
+      // Type gate rejects (already counted) while there is no replay: pages must
+      // still accumulate while activityCount stays flat.
+      prisma.dailyActivityType.create.mockRejectedValueOnce(p2002());
+      const result = await service.recordActivity('u1', {
+        type: ActivityType.BOOK_READ,
+        pagesDelta: 1,
+      });
+      expect(result.counted).toBe(false);
+      expect(prisma.activityEventReceipt.create).not.toHaveBeenCalled();
+      const upsert = prisma.dailyActivity.upsert.mock.calls[0][0];
+      expect(upsert.update.pagesRead.increment).toBe(1);
+      expect(upsert.update.activityCount).toBeUndefined();
+    });
+
     it('rethrows a non-unique receipt error', async () => {
       prisma.activityEventReceipt.create.mockRejectedValueOnce(new Error('boom'));
       await expect(
