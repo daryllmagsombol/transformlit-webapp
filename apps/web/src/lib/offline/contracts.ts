@@ -242,7 +242,7 @@ export interface BookPageRecord {
   textLayerAssetId: string;
   image: Blob | null;
   text: string | null;
-  textItems: unknown | null;
+  textItems: unknown;
   verified: boolean;
 }
 
@@ -307,7 +307,7 @@ export interface BookmarkRecord {
   page: number;
   label: string | null;
   color: string | null;
-  anchor: unknown | null;
+  anchor: unknown;
   revision: number;
   createdAt: number;
   updatedAt: number;

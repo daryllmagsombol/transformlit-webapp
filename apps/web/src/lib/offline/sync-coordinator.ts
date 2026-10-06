@@ -148,9 +148,7 @@ export interface ReceiptStore {
   recordRetained(subject: string, epoch: number, receipt: OutboxReceiptRecord): Promise<void>;
 }
 
-export interface SnapshotSource {
-  (bookId: string): Promise<AuthoritativeSnapshot>;
-}
+export type SnapshotSource = (bookId: string) => Promise<AuthoritativeSnapshot>;
 
 /** One book's merge result plus the book it belongs to. */
 export interface BookMergeResult extends MergeSnapshotResult {
@@ -585,33 +583,52 @@ export class SyncCoordinator {
     for (const operation of ordered) {
       const current = working.get(operation.id);
       if (!current) continue;
-      // Terminal outcomes are re-evaluated only when user/account/content state
-      // changes; a drain never re-dispatches them.
-      if (current.dispatchState === 'TERMINAL') continue;
-      // Durable backoff: an operation still inside its `nextAttemptAt` window is
-      // not ready, so consecutive drains cannot immediately re-dispatch it.
-      if (!isReadyForDispatch(current, this.now())) continue;
-      if (pausedEntities.has(current.entityKey)) continue;
-      if (isBlockedSuccessor(current, new Set(working.keys()))) continue;
+      if (this.isSkippable(current, working, pausedEntities)) continue;
       if (this.ownerChanged(owner)) break;
 
       const effect = await this.dispatch(owner, current, summary, lease);
-      if (effect.removed) working.delete(operation.id);
-      if (effect.paused) pausedEntities.add(current.entityKey);
+      this.applyEffect(operation, effect, working, pausedEntities);
       if (effect.blocked) {
         // A genuine auth rejection pauses the ENTIRE run: stop dispatching the
         // remaining queue so valid credentials are not hammered.
         return true;
       }
-      if (effect.ackRevision !== null) {
-        for (const [id, candidate] of working) {
-          if (candidate.dependsOn === operation.id) {
-            working.set(id, { ...candidate, baseRevision: effect.ackRevision });
-          }
+    }
+    return false;
+  }
+
+  /**
+   * True when an operation must not be dispatched on this pass: retained
+   * `TERMINAL`, still inside its durable backoff window, paused behind an
+   * earlier conflict on the same entity, or a blocked successor.
+   */
+  private isSkippable(
+    operation: OutboxOperationRecord,
+    working: ReadonlyMap<string, OutboxOperationRecord>,
+    pausedEntities: ReadonlySet<string>,
+  ): boolean {
+    if (operation.dispatchState === 'TERMINAL') return true;
+    if (!isReadyForDispatch(operation, this.now())) return true;
+    if (pausedEntities.has(operation.entityKey)) return true;
+    return isBlockedSuccessor(operation, new Set(working.keys()));
+  }
+
+  /** Applies one dispatch's reconciliation effect to the in-memory run state. */
+  private applyEffect(
+    operation: OutboxOperationRecord,
+    effect: DispatchEffect,
+    working: Map<string, OutboxOperationRecord>,
+    pausedEntities: Set<string>,
+  ): void {
+    if (effect.removed) working.delete(operation.id);
+    if (effect.paused) pausedEntities.add(operation.entityKey);
+    if (effect.ackRevision !== null) {
+      for (const [id, candidate] of working) {
+        if (candidate.dependsOn === operation.id) {
+          working.set(id, { ...candidate, baseRevision: effect.ackRevision });
         }
       }
     }
-    return false;
   }
 
   /** Returns the reconciliation effect on the current run. */
@@ -892,7 +909,7 @@ export class SyncCoordinator {
 
   private ownerChanged(owner: AccountOwner): boolean {
     const current = this.deps.lifecycle.getOwner();
-    return !current || current.subject !== owner.subject || current.epoch !== owner.epoch;
+    return current?.subject !== owner.subject || current.epoch !== owner.epoch;
   }
 
   private blocked(reason: 'NO_OWNER' | 'LEASE_HELD' | 'AUTH_REQUIRED', summary: DrainSummary): DrainResult {
