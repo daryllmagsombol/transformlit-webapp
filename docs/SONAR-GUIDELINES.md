@@ -912,6 +912,19 @@ it('renders children', () => {
   subject matches the fixture; do not bypass an account-exit barrier.
   ❌ `epoch: 1, seq: 1` without reading durable ownership/queue state.
   ✅ Read ACTIVE owner and queue sequence, then seed with its epoch and next seq.
+- **Cold deep-link synchronization (no Sonar rule ID):** a hash-routed client
+  view must not open persisted, account-owned resources before asynchronous
+  ownership restoration resolves. Mounting the reader from the URL hash while
+  the persisted owner is still null rejects the local open and leaves a
+  permanent "unavailable" error, because the child effect does not re-run after
+  hydration. Gate reader mounting on the existing hydration state and fail
+  closed when restoration ends signed out or rejects.
+  ❌ Render `OfflineBookReader`/`OfflineBibleReader` unconditionally from
+  `view.kind === 'book' | 'bible'` while restoration is still pending.
+  ✅ Gate the reader branches until hydration resolves to a restored owner; show
+  an accessible `role="status"` loading state while pending and a signed-out
+  message when no owner exists. Cover it with a deferred-hydration regression
+  test for both the initial hash and an immediate `hashchange`.
 
 ## Oracle deployment review findings — AI review IDs (not Sonar rules)
 

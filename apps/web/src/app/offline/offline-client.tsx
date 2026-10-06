@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { BookRepository, type FrameHandle, type OpenedBook } from '../../lib/reader/repository';
 import { BibleRepository, type OpenedChapter } from '../../lib/bible/repository';
 import { OfflineDatabase } from '../../lib/offline/database';
@@ -248,6 +248,43 @@ function OfflineBibleReader({ translation, book, chapter, verse }: {
   );
 }
 
+/**
+ * Mounts a saved reader only after account ownership has been restored. A cold
+ * deep-link renders the book/Bible view from the URL hash immediately, but the
+ * persisted owner resolves asynchronously. Opening the local repository before
+ * that resolution rejects and leaves a permanent "download unavailable" error,
+ * so readers stay gated on the existing hydration state and fail closed when
+ * restoration ends signed out or rejects.
+ */
+function OfflineReaderGate({
+  restoration,
+  children,
+}: {
+  readonly restoration: 'pending' | 'ready' | 'signed-out' | 'failed';
+  readonly children: ReactNode;
+}) {
+  if (restoration === 'ready') return children;
+  if (restoration === 'pending') {
+    return (
+      <main className="min-h-dvh bg-paper">
+        <div role="status" aria-live="polite">
+          <LoadingSpinner />
+          <span className="sr-only">Loading saved reading</span>
+        </div>
+      </main>
+    );
+  }
+  return (
+    <main className="min-h-dvh bg-paper">
+      <div className="mx-auto flex min-h-dvh w-full max-w-5xl items-center justify-center px-5 py-8 sm:px-8">
+        <p className="max-w-sm rounded-xl border border-outline-variant bg-surface-container-low px-4 py-3 text-center font-body text-body text-on-surface-variant">
+          Sign in while online to save reading for offline use.
+        </p>
+      </div>
+    </main>
+  );
+}
+
 /** Chooses between the loading, saved-library, and signed-out states. */
 function OfflineLibrarySection({
   loading,
@@ -311,6 +348,7 @@ export default function OfflineClient() {
   const [owner, setOwner] = useState<string | null>(null);
   const [downloads, setDownloads] = useState<DownloadManifestRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [restoration, setRestoration] = useState<'pending' | 'ready' | 'signed-out' | 'failed'>('pending');
 
   useEffect(() => {
     const browser = globalThis.window;
@@ -352,6 +390,7 @@ export default function OfflineClient() {
           if (!cancelled) {
             setOwner(null);
             setDownloads([]);
+            setRestoration('signed-out');
           }
           return;
         }
@@ -363,8 +402,12 @@ export default function OfflineClient() {
             .filter((record) => record.status === 'READY' && record.activeVersion !== null)
             .sort((a, b) => a.contentId.localeCompare(b.contentId)),
         );
+        setRestoration('ready');
       } catch {
-        if (!cancelled) setDownloads([]);
+        if (!cancelled) {
+          setDownloads([]);
+          setRestoration('failed');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -388,23 +431,27 @@ export default function OfflineClient() {
 
   if (view.kind === 'book') {
     return (
-      <main className="min-h-dvh bg-paper">
-        <OfflineBookReader
-          bookId={view.bookId}
-          page={view.page}
-          onPageChange={(page) => {
-            globalThis.window.location.hash = bookHref(view.bookId, page);
-          }}
-        />
-      </main>
+      <OfflineReaderGate restoration={restoration}>
+        <main className="min-h-dvh bg-paper">
+          <OfflineBookReader
+            bookId={view.bookId}
+            page={view.page}
+            onPageChange={(page) => {
+              globalThis.window.location.hash = bookHref(view.bookId, page);
+            }}
+          />
+        </main>
+      </OfflineReaderGate>
     );
   }
 
   if (view.kind === 'bible') {
     return (
-      <main className="min-h-dvh bg-paper">
-        <OfflineBibleReader translation={view.translation} book={view.book} chapter={view.chapter} verse={view.verse} />
-      </main>
+      <OfflineReaderGate restoration={restoration}>
+        <main className="min-h-dvh bg-paper">
+          <OfflineBibleReader translation={view.translation} book={view.book} chapter={view.chapter} verse={view.verse} />
+        </main>
+      </OfflineReaderGate>
     );
   }
 

@@ -1,0 +1,114 @@
+name: Build release image archives
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full 40-character commit SHA to build
+        required: true
+        default: 7fefa4920a27a05ad2d603098b61d5a2eb905008
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-image-archives-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build native amd64 images
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - name: Validate requested source SHA
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            printf 'source_sha must be a full lowercase 40-character SHA\n' >&2
+            exit 1
+          fi
+
+      # Checkout the exact commit with the repository's pinned actions/checkout,
+      # which authenticates with the workspace token. Fetching the SHA by hand
+      # bypassed that auth and failed on the runner.
+      - name: Checkout exact commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Confirm checked-out commit matches request
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [[ "$checked_out_sha" != "$SOURCE_SHA" ]]; then
+            printf 'Checked-out commit %s does not match requested SHA %s\n' "$checked_out_sha" "$SOURCE_SHA" >&2
+            exit 1
+          fi
+
+      - name: Build API image for linux/amd64
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+            --tag "transformlit-api:${SOURCE_SHA}" \
+            --file apps/api/Dockerfile .
+
+      - name: Build web image for linux/amd64
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+            --build-arg NEXT_PUBLIC_API_URL=/api/graphql \
+            --build-arg NEXT_PUBLIC_WS_URL=/api/graphql \
+            --tag "transformlit-web:${SOURCE_SHA}" \
+            --file apps/web/Dockerfile .
+
+      - name: Export archives and image metadata
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          OUTPUT_DIR: ${{ runner.temp }}/release-images
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUTPUT_DIR"
+
+          for image in api web; do
+            tag="transformlit-${image}:${SOURCE_SHA}"
+            docker save "$tag" | gzip -n > "$OUTPUT_DIR/transformlit-${image}-${SOURCE_SHA}-linux-amd64.tar.gz"
+            docker image inspect "$tag" | jq --arg image "$tag" --arg revision "$SOURCE_SHA" \
+              '.[0] | {
+                image: $image,
+                id: .Id,
+                architecture: .Architecture,
+                revision: $revision,
+                sizeBytes: .Size
+              }' > "$OUTPUT_DIR/transformlit-${image}-${SOURCE_SHA}-metadata.json"
+          done
+
+          (cd "$OUTPUT_DIR" && shasum -a 256 ./*.tar.gz > SHA256SUMS)
+
+      - name: Upload image archives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: transformlit-images-${{ inputs.source_sha }}-linux-amd64
+          path: ${{ runner.temp }}/release-images/*
+          if-no-files-found: error
+          retention-days: 3
