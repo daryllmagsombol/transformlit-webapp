@@ -127,10 +127,10 @@ export class GroupFeaturesResolver {
     @Args('input') input: ShareHighlightInput,
   ) {
     const share = await this.sharedHighlights.share(user.id, input);
-    // `share()` returns the bare join row (no `highlight`/`sharedBy` include),
-    // so only the scalar fields are populated here; nested relations are
-    // available via the `groupHighlights` query. See task-6-report concern.
-    return share as unknown as GroupHighlight;
+    // `share()` includes `highlight.book.title` + `sharedBy`; flatten it to the
+    // GraphQL shape exactly like `groupHighlights` does, so the non-null nested
+    // fields resolve on the mutation result too.
+    return this.toGroupHighlight(share as unknown as SharedHighlightRow);
   }
 
   @Mutation(() => Boolean, { name: 'unshareHighlight' })
