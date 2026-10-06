@@ -29,32 +29,41 @@ export interface ActivityMutationClient {
 /**
  * Fire-and-forget activity recorder bound to an injected Apollo-like client.
  *
- * Never throws and never surfaces the mutation result: a dropped activity record
- * must not interrupt reading. A fresh `operationId` is generated per call so the
- * server can deduplicate retries.
+ * Never throws synchronously: a dropped activity record must not interrupt
+ * reading. Both the `operationId` generation and the `mutate` call are guarded,
+ * and the returned promise resolves to `void` so callers that want to await the
+ * write can, while fire-and-forget callers can ignore it. A fresh `operationId`
+ * is generated per call so the server can deduplicate retries.
  */
 export function recordActivityWith(
   client: ActivityMutationClient,
   input: RecordActivityInput,
-): void {
-  client
-    .mutate({
-      mutation: RecordActivityDocument,
-      variables: {
-        input: {
-          type: input.type,
-          pagesDelta: input.pagesDelta ?? 0,
-          operationId: input.operationId ?? globalThis.crypto.randomUUID(),
+): Promise<void> {
+  try {
+    return client
+      .mutate({
+        mutation: RecordActivityDocument,
+        variables: {
+          input: {
+            type: input.type,
+            pagesDelta: input.pagesDelta ?? 0,
+            operationId: input.operationId ?? globalThis.crypto.randomUUID(),
+          },
         },
-      },
-    })
-    .catch(() => {
-      // Fire-and-forget: an offline or failed activity record is intentionally
-      // dropped rather than surfaced to the reader.
-    });
+      })
+      .then(
+        () => undefined,
+        () => undefined,
+      );
+  } catch {
+    // A synchronous throw (e.g. `crypto.randomUUID` unavailable, or a `mutate`
+    // that throws instead of rejecting) must not escape: this recorder is
+    // fire-and-forget and must never break the caller's control flow.
+    return Promise.resolve();
+  }
 }
 
 /** Records a reading activity through the app's shared Apollo client. */
-export function recordActivity(input: RecordActivityInput): void {
-  recordActivityWith(apolloClient, input);
+export function recordActivity(input: RecordActivityInput): Promise<void> {
+  return recordActivityWith(apolloClient, input);
 }

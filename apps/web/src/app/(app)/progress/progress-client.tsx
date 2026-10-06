@@ -516,8 +516,11 @@ export default function ProgressClient() {
   const handleCheckIn = useCallback(() => {
     // Type-only import of the shared enum keeps this module parseable under the
     // web jest config (the shared package's ESM `dist` is not transformed).
-    recordActivity({ type: 'BOOK_READ' as ActivityType, pagesDelta: 1 });
-    loadData(year);
+    // Await the write before re-querying so the refreshed streak/calendar
+    // includes today rather than racing the mutation.
+    void recordActivity({ type: 'BOOK_READ' as ActivityType, pagesDelta: 1 }).then(() =>
+      loadData(year),
+    );
   }, [loadData, year]);
 
   if (!isReady) {

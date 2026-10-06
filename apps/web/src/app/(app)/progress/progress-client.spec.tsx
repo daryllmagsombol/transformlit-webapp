@@ -36,7 +36,8 @@ jest.mock('../../../lib/apollo-client', () => ({
 const mockRecordActivity = jest.fn();
 
 jest.mock('../../../lib/progress/record-activity', () => ({
-  recordActivity: (...args: unknown[]) => mockRecordActivity(...args),
+  recordActivity: (...args: unknown[]) =>
+    Promise.resolve(mockRecordActivity(...args)).catch(() => undefined),
 }));
 
 const mockAddToast = jest.fn();

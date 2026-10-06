@@ -18,6 +18,32 @@ describe('recordActivityWith', () => {
     expect(() => recordActivityWith(client, { type: 'FEED_READ' })).not.toThrow();
   });
 
+  it('never throws when mutate throws synchronously', () => {
+    const client = {
+      mutate: jest.fn(() => {
+        throw new Error('sync boom');
+      }),
+    };
+    expect(() => recordActivityWith(client, { type: 'FEED_READ' })).not.toThrow();
+  });
+
+  it('never throws when crypto.randomUUID is unavailable', () => {
+    const original = globalThis.crypto;
+    // Simulate a non-secure context / old browser where randomUUID is missing.
+    Object.defineProperty(globalThis, 'crypto', { value: {}, configurable: true });
+    try {
+      const client = { mutate: jest.fn().mockResolvedValue({ data: {} }) };
+      expect(() => recordActivityWith(client, { type: 'FEED_READ' })).not.toThrow();
+    } finally {
+      Object.defineProperty(globalThis, 'crypto', { value: original, configurable: true });
+    }
+  });
+
+  it('resolves even when the mutation rejects, so callers can await safely', async () => {
+    const client = { mutate: jest.fn().mockRejectedValue(new Error('offline')) };
+    await expect(recordActivityWith(client, { type: 'FEED_READ' })).resolves.toBeUndefined();
+  });
+
   it('swallows the rejection (no unhandled promise)', async () => {
     const client = { mutate: jest.fn().mockRejectedValue(new Error('offline')) };
     recordActivityWith(client, { type: 'FEED_READ' });

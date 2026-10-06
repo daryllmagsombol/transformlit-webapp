@@ -221,8 +221,7 @@ describe('GroupPosts', () => {
     expect(mockRecordActivity).not.toHaveBeenCalled();
   });
 
-  it('does not surface an error when the recorded call rejects', async () => {
-    mockRecordActivity.mockImplementation(() => {
+  it('does not surface an error when the recorded call rejects', async () => {    mockRecordActivity.mockImplementation(() => {
       Promise.reject(new Error('offline')).catch(() => undefined);
     });
     mockQuery.mockResolvedValue({ data: { groupPosts: [] } });

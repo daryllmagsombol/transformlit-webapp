@@ -43,17 +43,23 @@ export function PostComposer({ groupId, onPosted }: PostComposerProps) {
       const trimmed = body.trim();
       if (!trimmed && !imageKey) return;
       setSubmitting(true);
+      let created = false;
       try {
         await createGroupPost(groupId, trimmed, imageKey ?? undefined);
-        recordActivity({ type: 'GROUP_POST' as ActivityType, pagesDelta: 0 });
-        setBody('');
-        setImageKey(null);
-        onPosted();
+        created = true;
       } catch {
         addToast('Failed to post. Please try again.', 'error');
       } finally {
         setSubmitting(false);
       }
+      if (!created) return;
+      // Record outside the create try/catch: the activity recorder is
+      // fire-and-forget, so a failure in it must never be reported as a failed
+      // post or skip the success handlers below.
+      recordActivity({ type: 'GROUP_POST' as ActivityType, pagesDelta: 0 });
+      setBody('');
+      setImageKey(null);
+      onPosted();
     },
     [body, imageKey, groupId, onPosted, addToast],
   );
