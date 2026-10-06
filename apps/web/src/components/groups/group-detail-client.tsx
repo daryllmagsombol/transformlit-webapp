@@ -7,6 +7,8 @@ import { LoadingSpinner } from '../ui';
 import { fetchGroupBySlug } from '../../lib/groups';
 import { GroupHeader } from './group-header';
 import { GroupPosts } from './group-posts';
+import { GroupReadingPlan } from './group-reading-plan';
+import { GroupHighlights } from './group-highlights';
 import { GroupMembers } from './group-members';
 import { GroupSettings } from './group-settings';
 
@@ -14,7 +16,7 @@ export function GroupDetailClient({ slug }: { readonly slug: string }) {
   const { isReady } = useRequireAuth();
   const [group, setGroup] = useState<GraphQLGroup | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'posts' | 'members' | 'settings'>('posts');
+  const [tab, setTab] = useState<'posts' | 'plan' | 'highlights' | 'members' | 'settings'>('posts');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -58,6 +60,12 @@ export function GroupDetailClient({ slug }: { readonly slug: string }) {
             </p>
           </div>
         ))}
+      {tab === 'plan' && isActiveMember && (
+        <GroupReadingPlan groupId={group.id} canModerate={canModerate} />
+      )}
+      {tab === 'highlights' && isActiveMember && (
+        <GroupHighlights groupId={group.id} canModerate={canModerate} />
+      )}
       {tab === 'members' && isActiveMember && (
         <GroupMembers groupId={group.id} canModerate={canModerate} isOwner={isOwner} />
       )}
