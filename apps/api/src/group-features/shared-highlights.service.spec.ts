@@ -24,6 +24,12 @@ const mockShare = {
   deletedAt: null,
 };
 
+/** Mirrors the service's GROUP_HIGHLIGHT_INCLUDE so write/read args are asserted. */
+const EXPECTED_INCLUDE = {
+  highlight: { include: { book: { select: { title: true } } } },
+  sharedBy: { select: { id: true, displayName: true, avatarUrl: true } },
+};
+
 describe('SharedHighlightsService', () => {
   let service: SharedHighlightsService;
   let prisma: any;
@@ -116,6 +122,7 @@ describe('SharedHighlightsService', () => {
           highlightId: 'hl-1',
           sharedById: 'user-1',
         },
+        include: EXPECTED_INCLUDE,
       });
       expect(result).toEqual(mockShare);
     });
@@ -146,6 +153,7 @@ describe('SharedHighlightsService', () => {
       expect(prisma.groupHighlight.update).toHaveBeenCalledWith({
         where: { id: 'share-1' },
         data: { deletedAt: null },
+        include: EXPECTED_INCLUDE,
       });
       expect(result).toEqual(revived);
     });
@@ -156,6 +164,7 @@ describe('SharedHighlightsService', () => {
         where: {
           groupId_highlightId: { groupId: 'group-1', highlightId: 'hl-1' },
         },
+        include: EXPECTED_INCLUDE,
       });
     });
   });

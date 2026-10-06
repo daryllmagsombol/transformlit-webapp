@@ -16,6 +16,15 @@ const MAX_PAGE_OFFSET = 10_000;
 const MAX_PAGE_LIMIT = 50;
 
 /**
+ * Shape returned by every read/write so the GraphQL `GroupHighlight` type's
+ * non-null `highlight`/`sharedBy` fields always have a backing value.
+ */
+const GROUP_HIGHLIGHT_INCLUDE = {
+  highlight: { include: { book: { select: { title: true } } } },
+  sharedBy: { select: { id: true, displayName: true, avatarUrl: true } },
+} as const;
+
+/**
  * Group-scoped sharing of a reader's own highlights. Reads the shared
  * `Highlight`/`Book` tables via Prisma; only membership/role checks are
  * delegated to `GroupsService`.
@@ -48,6 +57,7 @@ export class SharedHighlightsService {
           highlightId: input.highlightId,
         },
       },
+      include: GROUP_HIGHLIGHT_INCLUDE,
     });
     if (existing?.deletedAt === null) {
       return existing;
@@ -56,6 +66,7 @@ export class SharedHighlightsService {
       return this.prisma.groupHighlight.update({
         where: { id: existing.id },
         data: { deletedAt: null },
+        include: GROUP_HIGHLIGHT_INCLUDE,
       });
     }
     return this.prisma.groupHighlight.create({
@@ -64,6 +75,7 @@ export class SharedHighlightsService {
         highlightId: input.highlightId,
         sharedById: userId,
       },
+      include: GROUP_HIGHLIGHT_INCLUDE,
     });
   }
 
@@ -92,12 +104,7 @@ export class SharedHighlightsService {
     const safeTake = Math.min(Math.max(limit, 1), MAX_PAGE_LIMIT);
     return this.prisma.groupHighlight.findMany({
       where: { groupId, deletedAt: null },
-      include: {
-        highlight: { include: { book: { select: { title: true } } } },
-        sharedBy: {
-          select: { id: true, displayName: true, avatarUrl: true },
-        },
-      },
+      include: GROUP_HIGHLIGHT_INCLUDE,
       orderBy: { createdAt: 'desc' },
       skip: safeOffset,
       take: safeTake,
