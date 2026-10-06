@@ -145,6 +145,7 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
     BooksModule,
     FeedModule,
     NotificationsModule,
+    ProgressModule,
     HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ContextThrottlerGuard }],

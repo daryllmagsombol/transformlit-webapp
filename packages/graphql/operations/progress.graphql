@@ -1,0 +1,47 @@
+# Reading-streaks goal tracking (Task 7).
+#
+# `myProgress` aggregates the caller's reading activity for a calendar year:
+# the configured goal (if any) plus rollup counters. `myActivityCalendar`
+# returns the per-day activity rows for the year, used to render the calendar
+# heatmap.
+
+query MyProgress($year: Int!) {
+  myProgress(year: $year) {
+    year
+    goal {
+      year
+      targetKind
+      targetValue
+    }
+    daysRead
+    pagesRead
+    currentStreak
+    longestStreak
+    lastActiveDayKey
+  }
+}
+
+query MyActivityCalendar($year: Int!) {
+  myActivityCalendar(year: $year) {
+    dayKey
+    activityCount
+    pagesRead
+  }
+}
+
+# Record a reading activity for a given day. The server deduplicates and
+# returns whether the activity counted toward the rollup.
+mutation RecordActivity($input: RecordActivityInput!) {
+  recordActivity(input: $input) {
+    dayKey
+    counted
+  }
+}
+
+mutation SetReadingGoal($input: SetReadingGoalInput!) {
+  setReadingGoal(input: $input) {
+    year
+    targetKind
+    targetValue
+  }
+}
