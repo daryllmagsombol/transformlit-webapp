@@ -1,7 +1,9 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
+import type { ActivityType } from '@transformlit/shared';
 import { uploadImage, createGroupPost, resolveImageUrl } from '../../lib/groups';
+import { recordActivity } from '../../lib/progress/record-activity';
 import { useToast } from '../ui';
 
 interface PostComposerProps {
@@ -43,6 +45,7 @@ export function PostComposer({ groupId, onPosted }: PostComposerProps) {
       setSubmitting(true);
       try {
         await createGroupPost(groupId, trimmed, imageKey ?? undefined);
+        recordActivity({ type: 'GROUP_POST' as ActivityType, pagesDelta: 0 });
         setBody('');
         setImageKey(null);
         onPosted();

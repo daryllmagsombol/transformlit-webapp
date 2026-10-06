@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { ActivityType } from '@transformlit/shared';
 import { useChapter } from '../../../../../../lib/hooks/use-chapter';
 import { useBibleBooks } from '../../../../../../lib/hooks/use-bible-books';
 import { useRequireAuth } from '../../../../../../lib/hooks/use-require-auth';
@@ -13,6 +14,7 @@ import { canDownloadTranslationOffline, requiredAttribution } from '../../../../
 import type { BibleCapabilities } from '../../../../../../lib/bible/repository';
 import { offlineDownloadManager } from '../../../../../../lib/hooks/use-download';
 import { useWritePermit } from '../../../../../../lib/hooks/use-write-permit';
+import { recordActivity } from '../../../../../../lib/progress/record-activity';
 import { formatRef } from '../../../../../../lib/bible/refs';
 
 interface ReaderProps {
@@ -135,10 +137,20 @@ export default function BibleReaderClient({ translation, book, chapter }: Reader
   const { chapter: data, words, loading, error } = useChapter(translation, book, chapter);
   const { books } = useBibleBooks(translation);
   const setLastPosition = useBibleStore((s) => s.setLastPosition);
+  const recordedChapterRef = useRef<string | null>(null);
 
   useEffect(() => {
     setLastPosition(translation, { book, chapter });
   }, [translation, book, chapter, setLastPosition]);
+
+  // Fire-and-forget BIBLE_READ once per successfully opened chapter.
+  useEffect(() => {
+    if (!isReady || loading || error || !data) return;
+    const chapterKey = `${translation}/${book}/${chapter}`;
+    if (recordedChapterRef.current === chapterKey) return;
+    recordedChapterRef.current = chapterKey;
+    recordActivity({ type: 'BIBLE_READ' as ActivityType, pagesDelta: 1 });
+  }, [translation, book, chapter, isReady, loading, error, data]);
 
   const navigate = useCallback((href: string) => {
     router.replace(href);

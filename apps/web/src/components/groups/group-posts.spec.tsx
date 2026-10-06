@@ -36,6 +36,12 @@ jest.mock('../ui', () => ({
   ),
 }));
 
+const mockRecordActivity = jest.fn();
+
+jest.mock('../../lib/progress/record-activity', () => ({
+  recordActivity: (...args: unknown[]) => mockRecordActivity(...args),
+}));
+
 import { GroupPosts } from './group-posts';
 
 const baseGroup = {
@@ -71,6 +77,7 @@ describe('GroupPosts', () => {
     mockAddToast.mockClear();
     mockQuery.mockReset();
     mockMutate.mockReset();
+    mockRecordActivity.mockReset();
     mockAuthState = {
       user: { id: 'u1', displayName: 'Test User', avatarUrl: null },
       isHydrated: true,
@@ -167,5 +174,81 @@ describe('GroupPosts', () => {
         }),
       );
     });
+  });
+
+  it('records a GROUP_POST after a successful post create', async () => {
+    mockQuery.mockResolvedValue({ data: { groupPosts: [] } });
+    mockMutate.mockResolvedValueOnce({
+      data: {
+        createGroupPost: {
+          id: 'p2',
+          body: 'New post',
+          imageKey: null,
+          createdAt: '2025-01-02T00:00:00Z',
+          likeCount: 0,
+          commentCount: 0,
+          likedByMe: false,
+          author: { id: 'u1', displayName: 'Test User', avatarUrl: null },
+        },
+      },
+    });
+
+    render(<GroupPosts group={baseGroup} onChanged={jest.fn()} />);
+
+    const textarea = await screen.findByPlaceholderText("What's on your mind?");
+    fireEvent.change(textarea, { target: { value: 'New post' } });
+    fireEvent.submit(textarea.closest('form')!);
+
+    await waitFor(() =>
+      expect(mockRecordActivity).toHaveBeenCalledWith({ type: 'GROUP_POST', pagesDelta: 0 }),
+    );
+    expect(mockRecordActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not record a GROUP_POST when the create fails', async () => {
+    mockQuery.mockResolvedValue({ data: { groupPosts: [] } });
+    mockMutate.mockRejectedValueOnce(new Error('offline'));
+
+    render(<GroupPosts group={baseGroup} onChanged={jest.fn()} />);
+
+    const textarea = await screen.findByPlaceholderText("What's on your mind?");
+    fireEvent.change(textarea, { target: { value: 'New post' } });
+    fireEvent.submit(textarea.closest('form')!);
+
+    await waitFor(() =>
+      expect(mockAddToast).toHaveBeenCalledWith('Failed to post. Please try again.', 'error'),
+    );
+    expect(mockRecordActivity).not.toHaveBeenCalled();
+  });
+
+  it('does not surface an error when the recorded call rejects', async () => {
+    mockRecordActivity.mockImplementation(() => {
+      Promise.reject(new Error('offline')).catch(() => undefined);
+    });
+    mockQuery.mockResolvedValue({ data: { groupPosts: [] } });
+    mockMutate.mockResolvedValueOnce({
+      data: {
+        createGroupPost: {
+          id: 'p2',
+          body: 'New post',
+          imageKey: null,
+          createdAt: '2025-01-02T00:00:00Z',
+          likeCount: 0,
+          commentCount: 0,
+          likedByMe: false,
+          author: { id: 'u1', displayName: 'Test User', avatarUrl: null },
+        },
+      },
+    });
+
+    render(<GroupPosts group={baseGroup} onChanged={jest.fn()} />);
+
+    const textarea = await screen.findByPlaceholderText("What's on your mind?");
+    fireEvent.change(textarea, { target: { value: 'New post' } });
+    fireEvent.submit(textarea.closest('form')!);
+
+    // The post succeeds despite the swallowed activity failure.
+    await waitFor(() => expect(mockRecordActivity).toHaveBeenCalledTimes(1));
+    expect(mockAddToast).not.toHaveBeenCalledWith('Failed to post. Please try again.', 'error');
   });
 });

@@ -37,6 +37,12 @@ jest.mock('../../../lib/apollo-client', () => ({
 
 const mockAddToast = jest.fn();
 
+const mockRecordActivity = jest.fn();
+
+jest.mock('../../../lib/progress/record-activity', () => ({
+  recordActivity: (...args: unknown[]) => mockRecordActivity(...args),
+}));
+
 jest.mock('../../../components/layout/sidebar', () => ({
   Sidebar: () => <div data-testid="sidebar" />,
 }));
@@ -86,13 +92,15 @@ jest.mock('../../../lib/constants', () => ({
   ],
 }));
 
-import FeedClient from './feed-client';
+import FeedClient, { resetFeedReadGuardForTests } from './feed-client';
 
 describe('FeedClient', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPush.mockClear();
     mockAddToast.mockClear();
+    mockRecordActivity.mockClear();
+    resetFeedReadGuardForTests();
     mockQuery.mockReset();
     mockAuthState = {
       user: { id: '1', displayName: 'Test User', avatarUrl: null },
@@ -231,6 +239,58 @@ describe('FeedClient', () => {
       await waitFor(() => {
         expect(mockAddToast).toHaveBeenCalledWith('Failed to load feed. Please try again.', 'error');
       });
+    });
+  });
+
+  describe('activity recording', () => {
+    it('records one FEED_READ on load', async () => {
+      mockQuery
+        .mockResolvedValueOnce({ data: { announcements: [], verseOfDay: null } })
+        .mockResolvedValueOnce({ data: { groups: [] } });
+
+      render(<FeedClient />);
+
+      await waitFor(() =>
+        expect(mockRecordActivity).toHaveBeenCalledWith({ type: 'FEED_READ', pagesDelta: 0 }),
+      );
+      expect(mockRecordActivity).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips a second FEED_READ already fired today', async () => {
+      mockQuery.mockResolvedValue({ data: { announcements: [], verseOfDay: null, groups: [] } });
+
+      const first = render(<FeedClient />);
+      await waitFor(() => expect(mockRecordActivity).toHaveBeenCalledTimes(1));
+      first.unmount();
+
+      // A remount within the same day must not fire again.
+      render(<FeedClient />);
+      await waitFor(() => expect(mockQuery).toHaveBeenCalled());
+      expect(mockRecordActivity).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not surface an error when the recorded call rejects', async () => {
+      mockRecordActivity.mockImplementation(() => {
+        Promise.reject(new Error('offline')).catch(() => undefined);
+      });
+      mockQuery
+        .mockResolvedValueOnce({
+          data: {
+            announcements: [
+              { id: '1', title: 'Church Event', body: 'Join us Sunday', status: 'PUBLISHED', category: 'EVENT', publishedAt: '2025-01-01', createdAt: '2025-01-01' },
+            ],
+            verseOfDay: null,
+          },
+        })
+        .mockResolvedValueOnce({ data: { groups: [] } });
+
+      render(<FeedClient />);
+
+      await waitFor(() => expect(screen.getByText('Church Event')).toBeInTheDocument());
+      expect(mockAddToast).not.toHaveBeenCalledWith(
+        expect.stringContaining('record'),
+        'error',
+      );
     });
   });
 

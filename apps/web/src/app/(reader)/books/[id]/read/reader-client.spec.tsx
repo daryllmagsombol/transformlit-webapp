@@ -1,4 +1,10 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+
+const mockRecordActivity = jest.fn();
+
+jest.mock('../../../../../lib/progress/record-activity', () => ({
+  recordActivity: (...args: unknown[]) => mockRecordActivity(...args),
+}));
 
 let mockSearchParams = new URLSearchParams();
 
@@ -54,7 +60,7 @@ jest.mock('../../../../../lib/hooks/use-reader-records', () => ({
   useReaderAnnotations: () => ({ highlights: [], bookmarks: [], refresh: jest.fn() }),
 }));
 
-import { ReaderClient } from './reader-client';
+import { ReaderClient, resetBookReadGuardForTests } from './reader-client';
 
 const fetchPageTextMock = mockFetchText;
 const openReadingSessionMock = mockOpenSession;
@@ -69,6 +75,8 @@ describe('ReaderClient', () => {
     mockSaveProgress.mockClear();
     mockGetProgress.mockReset();
     mockGetProgress.mockResolvedValue(null);
+    mockRecordActivity.mockReset();
+    resetBookReadGuardForTests();
     mockQuery.mockResolvedValue({
       data: { book: { id: 'book-1', title: 'Test Book', format: 'PDF', pageCount: 3, conversionStatus: 'READY', toc: [] } },
     });
@@ -118,6 +126,35 @@ describe('ReaderClient', () => {
     expect(mockSaveProgress).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 'book-1', currentPage: 2 }),
     );
+  });
+
+  it('records one BOOK_READ per session on the first page advance', async () => {
+    render(<ReaderClient bookId="book-1" initialPage={1} />);
+    await screen.findByText('Page 1 of 3');
+    expect(mockRecordActivity).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await screen.findByText('Page 2 of 3');
+    expect(mockRecordActivity).toHaveBeenCalledWith({ type: 'BOOK_READ', pagesDelta: 1 });
+
+    // Debounced: a second advance must not fire another ping this session.
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await screen.findByText('Page 3 of 3');
+    expect(mockRecordActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not surface an error when the recorded call rejects', async () => {
+    // The real helper is fire-and-forget: a rejected mutation is swallowed and
+    // never reaches the reader. Model that contract at the call-site boundary.
+    mockRecordActivity.mockImplementation(() => {
+      Promise.reject(new Error('offline')).catch(() => undefined);
+    });
+    render(<ReaderClient bookId="book-1" initialPage={1} />);
+    await screen.findByText('Page 1 of 3');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('Page 2 of 3')).toBeInTheDocument();
+    expect(screen.queryByTestId('reader-page-error')).not.toBeInTheDocument();
   });
 
   it('shows the access-denied state when the manifest query fails', async () => {

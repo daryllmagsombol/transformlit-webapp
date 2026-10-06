@@ -28,9 +28,11 @@ import {
 } from '../../../../../lib/offline/conflicts';
 import type { BookVersionRecord } from '../../../../../lib/offline/contracts';
 import { readerRecords, useReaderAnnotations } from '../../../../../lib/hooks/use-reader-records';
+import type { ActivityType } from '@transformlit/shared';
 import { BookReaderView } from '../../../../../components/reader/book-reader-view';
 import { AnnotationPanel } from '../../../../../components/reader/annotation-panel';
 import { ConflictPanel } from '../../../../../components/reader/conflict-panel';
+import { recordActivity } from '../../../../../lib/progress/record-activity';
 import { useReaderStore } from '../../../../../store';
 
 const BOOK_MANIFEST_QUERY: TypedDocumentNode<{ book: Manifest }, { id: string }> = gql`
@@ -60,6 +62,18 @@ interface Manifest {
   pageCount?: number;
   conversionStatus: BookConversionStatus;
   toc: Array<{ id: string; title: string; page: number; depth: number }>;
+}
+
+/**
+ * Per-session BOOK_READ write guard. Page advances are frequent, so at most one
+ * ping is sent per reader session to bound write volume (the server dedups
+ * `activityCount` anyway). Module-level state resets on reload — accepted for v1.
+ */
+let bookReadRecorded = false;
+
+/** Clears the per-session BOOK_READ guard. Exposed for tests only. */
+export function resetBookReadGuardForTests(): void {
+  bookReadRecorded = false;
 }
 
 /**
@@ -378,6 +392,10 @@ export function ReaderClient({ bookId, initialPage }: { readonly bookId: string;
       const clamped = Math.min(Math.max(next, 1), pageCount || 1);
       setPage(clamped);
       persistProgress(clamped, opened?.contentVersion ?? CURRENT_CONTENT_VERSION);
+      if (!bookReadRecorded) {
+        bookReadRecorded = true;
+        recordActivity({ type: 'BOOK_READ' as ActivityType, pagesDelta: 1 });
+      }
       const params = new URLSearchParams(searchParams.toString());
       params.set('page', String(clamped));
       router.replace(`/books/${bookId}/read?${params.toString()}`);
