@@ -41,16 +41,6 @@ export interface MyProgressShape {
   lastActiveDayKey: string | null;
 }
 
-/** Duck-typed unique-constraint check: accepts real Prisma errors and mocks. */
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code?: unknown }).code === 'P2002'
-  );
-}
-
 /** Normalizes a client-supplied page delta to a stored `Int` in `[0, 1]`. */
 function clampPagesDelta(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -97,8 +87,11 @@ export class ProgressService {
 
   /**
    * Secret-free idempotency: inserting the `(userId, operationId)` receipt is
-   * the replay gate. A unique violation means the operation already applied, so
-   * its `pagesDelta` must not be added again.
+   * the replay gate. `createMany` + `skipDuplicates` compiles to
+   * `INSERT ... ON CONFLICT DO NOTHING`; a zero count means the row already
+   * existed (replay), so its `pagesDelta` must not be added again. Unlike a
+   * throwing `create`, a conflict here does NOT abort the surrounding
+   * PostgreSQL transaction.
    */
   private async claimReceipt(
     userId: string,
@@ -106,18 +99,18 @@ export class ProgressService {
     tx: Prisma.TransactionClient,
   ): Promise<boolean> {
     if (!operationId) return false;
-    try {
-      await tx.activityEventReceipt.create({ data: { userId, operationId } });
-      return false;
-    } catch (error) {
-      if (isUniqueViolation(error)) return true;
-      throw error;
-    }
+    const receipt = await tx.activityEventReceipt.createMany({
+      data: [{ userId, operationId }],
+      skipDuplicates: true,
+    });
+    return receipt.count === 0;
   }
 
   /**
-   * Race-free daily dedup: a successful `(userId, dayKey, type)` insert means
-   * this type counts today; a unique violation means it was already counted.
+   * Race-free daily dedup: a zero `createMany` count means the
+   * `(userId, dayKey, type)` row already existed, so this type was already
+   * counted today. `skipDuplicates` avoids the transaction aborts that a
+   * throwing unique violation would cause.
    */
   private async claimActivityType(
     userId: string,
@@ -125,13 +118,11 @@ export class ProgressService {
     type: ActivityType,
     tx: Prisma.TransactionClient,
   ): Promise<boolean> {
-    try {
-      await tx.dailyActivityType.create({ data: { userId, dayKey, type } });
-      return true;
-    } catch (error) {
-      if (isUniqueViolation(error)) return false;
-      throw error;
-    }
+    const claim = await tx.dailyActivityType.createMany({
+      data: [{ userId, dayKey, type }],
+      skipDuplicates: true,
+    });
+    return claim.count === 1;
   }
 
   private async applyDailyRollup(

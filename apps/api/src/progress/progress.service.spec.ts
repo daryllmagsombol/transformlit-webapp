@@ -4,10 +4,6 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { ProgressService } from './progress.service.js';
 import { StreakService } from './streak.service.js';
 
-function p2002(): Error & { code: string } {
-  return Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
-}
-
 describe('ProgressService', () => {
   let service: ProgressService;
   let prisma: any;
@@ -20,8 +16,8 @@ describe('ProgressService', () => {
   beforeEach(async () => {
     const mockPrisma = {
       activityEvent: { create: jest.fn().mockResolvedValue({}) },
-      activityEventReceipt: { create: jest.fn().mockResolvedValue({}) },
-      dailyActivityType: { create: jest.fn().mockResolvedValue({}) },
+      activityEventReceipt: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      dailyActivityType: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
       dailyActivity: {
         upsert: jest.fn().mockResolvedValue({}),
         findMany: jest.fn().mockResolvedValue([]),
@@ -54,8 +50,8 @@ describe('ProgressService', () => {
     jest.clearAllMocks();
 
     prisma.activityEvent.create.mockResolvedValue({});
-    prisma.activityEventReceipt.create.mockResolvedValue({});
-    prisma.dailyActivityType.create.mockResolvedValue({});
+    prisma.activityEventReceipt.createMany.mockResolvedValue({ count: 1 });
+    prisma.dailyActivityType.createMany.mockResolvedValue({ count: 1 });
     prisma.dailyActivity.upsert.mockResolvedValue({});
     prisma.dailyActivity.findMany.mockResolvedValue([]);
     prisma.readingGoal.findUnique.mockResolvedValue(null);
@@ -119,7 +115,7 @@ describe('ProgressService', () => {
     });
 
     it('returns counted:false when the type was already counted today', async () => {
-      prisma.dailyActivityType.create.mockRejectedValueOnce(p2002());
+      prisma.dailyActivityType.createMany.mockResolvedValueOnce({ count: 0 });
       await expect(
         service.recordActivity('u1', { type: ActivityType.FEED_READ, pagesDelta: 0 }),
       ).resolves.toEqual({
@@ -136,19 +132,20 @@ describe('ProgressService', () => {
         pagesDelta: 1,
         operationId: 'op-1',
       });
-      expect(prisma.activityEventReceipt.create).toHaveBeenCalledWith({
-        data: { userId: 'u1', operationId: 'op-1' },
+      expect(prisma.activityEventReceipt.createMany).toHaveBeenCalledWith({
+        data: [{ userId: 'u1', operationId: 'op-1' }],
+        skipDuplicates: true,
       });
     });
 
     it('does not insert a receipt when no operationId is supplied', async () => {
       await service.recordActivity('u1', { type: ActivityType.BOOK_READ, pagesDelta: 1 });
-      expect(prisma.activityEventReceipt.create).not.toHaveBeenCalled();
+      expect(prisma.activityEventReceipt.createMany).not.toHaveBeenCalled();
     });
 
-    it('treats a receipt P2002 as a replay and skips the pagesRead increment', async () => {
-      prisma.activityEventReceipt.create.mockRejectedValueOnce(p2002());
-      prisma.dailyActivityType.create.mockRejectedValueOnce(p2002());
+    it('treats a skipped receipt insert as a replay and skips the pagesRead increment', async () => {
+      prisma.activityEventReceipt.createMany.mockResolvedValueOnce({ count: 0 });
+      prisma.dailyActivityType.createMany.mockResolvedValueOnce({ count: 0 });
       const result = await service.recordActivity('u1', {
         type: ActivityType.BOOK_READ,
         pagesDelta: 1,
@@ -163,7 +160,7 @@ describe('ProgressService', () => {
     it('counts the day but adds no pages on an operationId replay [gate independence]', async () => {
       // Receipt gate fires (replay) while the type gate SUCCEEDS: the two gates
       // are independent, so the day still counts even though pages are skipped.
-      prisma.activityEventReceipt.create.mockRejectedValueOnce(p2002());
+      prisma.activityEventReceipt.createMany.mockResolvedValueOnce({ count: 0 });
       const result = await service.recordActivity('u1', {
         type: ActivityType.BOOK_READ,
         pagesDelta: 1,
@@ -179,22 +176,22 @@ describe('ProgressService', () => {
     });
 
     it('adds pages but does not count a repeat type with a positive delta [gate independence]', async () => {
-      // Type gate rejects (already counted) while there is no replay: pages must
+      // Type gate skips (already counted) while there is no replay: pages must
       // still accumulate while activityCount stays flat.
-      prisma.dailyActivityType.create.mockRejectedValueOnce(p2002());
+      prisma.dailyActivityType.createMany.mockResolvedValueOnce({ count: 0 });
       const result = await service.recordActivity('u1', {
         type: ActivityType.BOOK_READ,
         pagesDelta: 1,
       });
       expect(result.counted).toBe(false);
-      expect(prisma.activityEventReceipt.create).not.toHaveBeenCalled();
+      expect(prisma.activityEventReceipt.createMany).not.toHaveBeenCalled();
       const upsert = prisma.dailyActivity.upsert.mock.calls[0][0];
       expect(upsert.update.pagesRead.increment).toBe(1);
       expect(upsert.update.activityCount).toBeUndefined();
     });
 
-    it('rethrows a non-unique receipt error', async () => {
-      prisma.activityEventReceipt.create.mockRejectedValueOnce(new Error('boom'));
+    it('propagates a receipt write failure', async () => {
+      prisma.activityEventReceipt.createMany.mockRejectedValueOnce(new Error('boom'));
       await expect(
         service.recordActivity('u1', {
           type: ActivityType.BOOK_READ,
@@ -204,8 +201,8 @@ describe('ProgressService', () => {
       ).rejects.toThrow('boom');
     });
 
-    it('rethrows a non-unique daily type error', async () => {
-      prisma.dailyActivityType.create.mockRejectedValueOnce(new Error('boom'));
+    it('propagates a daily type write failure', async () => {
+      prisma.dailyActivityType.createMany.mockRejectedValueOnce(new Error('boom'));
       await expect(
         service.recordActivity('u1', { type: ActivityType.FEED_READ, pagesDelta: 0 }),
       ).rejects.toThrow('boom');
