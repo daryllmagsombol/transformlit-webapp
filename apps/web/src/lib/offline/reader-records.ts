@@ -271,7 +271,7 @@ export class ReaderRecords {
     if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
     const entityKey = input.entityId;
     const existing = await this.database.get<BookmarkRecord>('readerRecords', entityKey);
-    if (!existing || existing.subject !== owner.subject) {
+    if (existing?.subject !== owner.subject) {
       return { status: 'FAILED', operationId: null, error: 'Bookmark not found on this device' };
     }
     const contentVersion = await this.resolveContentVersion(owner, input.bookId, input.contentVersion);
@@ -344,7 +344,7 @@ export class ReaderRecords {
     if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
     const entityKey = input.entityId;
     const existing = await this.database.get<HighlightRecord>('readerRecords', entityKey);
-    if (!existing || existing.subject !== owner.subject) {
+    if (existing?.subject !== owner.subject) {
       return { status: 'FAILED', operationId: null, error: 'Annotation not found on this device' };
     }
     const contentVersion = await this.resolveContentVersion(owner, input.bookId, input.contentVersion);
@@ -387,7 +387,7 @@ export class ReaderRecords {
     if (!owner) return this.failed(new OfflineStorageError('No established account owns this device'));
     const entityKey = input.entityId;
     const existing = await this.database.get<HighlightRecord>('readerRecords', entityKey);
-    if (!existing || existing.subject !== owner.subject) {
+    if (existing?.subject !== owner.subject) {
       return { status: 'FAILED', operationId: null, error: 'Annotation not found on this device' };
     }
     const contentVersion = await this.resolveContentVersion(owner, input.bookId, input.contentVersion);
@@ -469,7 +469,7 @@ export class ReaderRecords {
     const queued = queuedOperationsFor(existing, entityKey);
     const predecessor = queued.length === 0
       ? null
-      : queued.reduce((latest, current) => (current.seq > latest.seq ? current : latest));
+      : queued.reduce((latest, current) => (current.seq > latest.seq ? current : latest), queued[0]);
     return {
       id: qualifyKey(owner.subject, 'outbox', operationId),
       subject: owner.subject,

@@ -105,7 +105,7 @@ async function performInvalidateSession(): Promise<boolean> {
 /** Destructive local cleanup for the exited subject; runs after the barrier. */
 async function clearLocalData(subject: string): Promise<void> {
   try {
-    if (typeof globalThis.indexedDB !== 'undefined') {
+    if (globalThis.indexedDB !== undefined) {
       await new OfflineDatabase().clearSubject(subject);
     }
   } catch {

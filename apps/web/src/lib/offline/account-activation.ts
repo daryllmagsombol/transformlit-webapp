@@ -24,7 +24,7 @@ import { createIndexedDbLifecyclePersistence, createMemoryLifecyclePersistence }
  */
 function createLifecycle(): AccountLifecycle {
   const persistence: LifecyclePersistence =
-    typeof globalThis.indexedDB === 'undefined'
+    globalThis.indexedDB === undefined
       ? createMemoryLifecyclePersistence()
       : createIndexedDbLifecyclePersistence();
   return new AccountLifecycle(new AccountContext(persistence), persistence);
@@ -181,4 +181,4 @@ export function completeExit(): Promise<ExitDecision> {
   return lifecycle.completeExit();
 }
 
-export type { EpochTaggedResult, IdentityVerification, InstallOutcome };
+export type { EpochTaggedResult, IdentityVerification, InstallOutcome } from './account-lifecycle';
