@@ -54,6 +54,12 @@ model User {
   groupsCreated      Group[]            @relation("GroupCreatedBy")
   booksCreated       Book[]             @relation("BookCreatedBy")
   auditLogs         AuditLog[]
+  activityEvents        ActivityEvent[]
+  activityEventReceipts ActivityEventReceipt[]
+  dailyActivityTypes    DailyActivityType[]
+  dailyActivity         DailyActivity[]
+  readingGoals          ReadingGoal[]
+  streak                UserStreak?
 
   @@index([emailNormalized])
   @@index([role, status])
@@ -768,4 +774,103 @@ model AuditLog {
   @@index([userId, createdAt(sort: Desc)])
   @@index([action, createdAt(sort: Desc)])
   @@map("audit_logs")
+}
+
+// ── Progress: activity, rollup, goals, streaks ──────────────────────────────
+
+enum ActivityType {
+  BOOK_READ
+  BIBLE_READ
+  FEED_READ
+  GROUP_POST
+}
+
+enum GoalKind {
+  DAYS
+  PAGES
+}
+
+/// Append-only activity log. Source of truth.
+model ActivityEvent {
+  id         String       @id @default(uuid())
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       ActivityType
+  /// Calendar day in UTC+8, server-computed. Never client-supplied.
+  dayKey     String
+  /// Normalized pages contributed (0 for feed/group). Clamped server-side to [0, 1].
+  pagesDelta Int          @default(0)
+  createdAt  DateTime     @default(now())
+
+  @@index([userId, dayKey, type])
+  @@map("activity_events")
+}
+
+/// Replay-dedup receipt for operationId-carrying events. Insert failure (P2002)
+/// means this operation was already applied; its pagesDelta is not added again.
+model ActivityEventReceipt {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  operationId String
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, operationId])
+  @@map("activity_event_receipts")
+}
+
+/// Dedup gate: one row per (user, day, type). Insert failure (P2002) = type already counted.
+model DailyActivityType {
+  id        String       @id @default(uuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dayKey    String
+  type      ActivityType
+  createdAt DateTime     @default(now())
+
+  @@unique([userId, dayKey, type])
+  @@map("daily_activity_types")
+}
+
+/// Per-day rollup. Read path for streak + heatmap; rebuildable from ActivityEvent.
+model DailyActivity {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dayKey        String
+  /// Distinct activity types touched that day (0..4). Heatmap intensity metric.
+  activityCount Int      @default(0)
+  /// Sum of pagesDelta for the day.
+  pagesRead     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, dayKey])
+  @@map("daily_activity")
+}
+
+model ReadingGoal {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  year        Int
+  targetKind  GoalKind @default(DAYS)
+  targetValue Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, year])
+  @@map("reading_goals")
+}
+
+/// Streak cache. Rebuildable from DailyActivity; safe to drop.
+model UserStreak {
+  userId          String   @id
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentStreak   Int      @default(0)
+  longestStreak   Int      @default(0)
+  lastActiveDayKey String?
+  updatedAt       DateTime @updatedAt
+
+  @@map("user_streaks")
 }
