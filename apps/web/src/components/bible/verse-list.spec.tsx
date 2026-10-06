@@ -17,6 +17,25 @@ const footnotes: ChapterFootnote[] = [
 ];
 
 describe('VerseList', () => {
+  it('renders multiple line breaks without duplicate React keys', () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const withBreaks: ChapterContent[] = [
+      { type: 'verse', number: 1, content: ['First line'] },
+      { type: 'line_break' },
+      { type: 'verse', number: 2, content: ['Second line'] },
+      { type: 'line_break' },
+      { type: 'verse', number: 3, content: ['Third line'] },
+    ];
+    render(
+      <VerseList content={withBreaks} footnotes={[]} words={undefined} />,
+    );
+    const duplicateKeyWarning = consoleError.mock.calls.find((call: unknown[]) =>
+      String(call[0]).includes('Encountered two children with the same key'),
+    );
+    expect(duplicateKeyWarning).toBeUndefined();
+    consoleError.mockRestore();
+  });
+
   it('renders headings and verses with inline footnote markers', () => {
     render(
       <VerseList

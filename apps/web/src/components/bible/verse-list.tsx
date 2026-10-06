@@ -152,7 +152,7 @@ export function VerseList({
 
   return (
     <div className="font-body text-body leading-relaxed text-on-surface space-y-4">
-      {content.map((item) => {
+      {content.map((item, itemIndex) => {
         if (item.type === 'heading') {
           return (
             <h2 key={`heading-${item.content.join(' ')}`} className="font-display text-headline-h3 font-bold text-on-surface pt-4 text-center">
@@ -160,7 +160,7 @@ export function VerseList({
             </h2>
           );
         }
-        if (item.type === 'line_break') return <div key={`lb-${item.type}`} className="h-3" />;
+        if (item.type === 'line_break') return <div key={`lb-${itemIndex}`} className="h-3" />;
         if (item.type === 'hebrew_subtitle') {
           const subtitleText = item.content
             .map((piece) => {
