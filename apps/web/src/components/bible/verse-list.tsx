@@ -150,6 +150,11 @@ export function VerseList({
     return note.caller;
   };
 
+  // `line_break` items are structurally identical and carry no content-derived
+  // identity, so they are keyed by a running ordinal for this render — unique
+  // and stable without using the array index (S6479).
+  let lineBreakOrdinal = 0;
+
   return (
     <div className="font-body text-body leading-relaxed text-on-surface space-y-4">
       {content.map((item) => {
@@ -160,7 +165,10 @@ export function VerseList({
             </h2>
           );
         }
-        if (item.type === 'line_break') return <div key={`lb-${item.type}`} className="h-3" />;
+        if (item.type === 'line_break') {
+          lineBreakOrdinal += 1;
+          return <div key={`lb-${lineBreakOrdinal}`} className="h-3" />;
+        }
         if (item.type === 'hebrew_subtitle') {
           const subtitleText = item.content
             .map((piece) => {

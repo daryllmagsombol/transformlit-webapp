@@ -356,7 +356,7 @@ export class ReaderMutationsService {
     input: NormalizedOperation,
     receiptId: string,
   ): Promise<OperationResultPayload> {
-    const baseRevision = input.baseRevision as number;
+    const baseRevision = input.baseRevision;
     const existing = await tx.bookProgress.findUnique({
       where: { userId_bookId: { userId: subject, bookId: input.bookId } },
     });
@@ -368,7 +368,7 @@ export class ReaderMutationsService {
       // Conditional create: a concurrent create loses the (userId, bookId)
       // unique constraint and is reconciled through the receipt replay path.
       const created = await tx.bookProgress.create({
-        data: { userId: subject, bookId: input.bookId, currentPage: input.currentPage as number, scrollY: input.scrollY, revision: 1 },
+        data: { userId: subject, bookId: input.bookId, currentPage: input.currentPage, scrollY: input.scrollY, revision: 1 },
       });
       return { kind: 'APPLIED', entityId: created.id, revision: created.revision, receiptId };
     }
@@ -380,7 +380,7 @@ export class ReaderMutationsService {
     // DB-conditional write: only advances if the revision is still baseRevision.
     const result = await tx.bookProgress.updateMany({
       where: { id: existing.id, userId: subject, revision: baseRevision },
-      data: { currentPage: input.currentPage as number, scrollY: input.scrollY, lastReadAt: new Date(), revision: { increment: 1 } },
+      data: { currentPage: input.currentPage, scrollY: input.scrollY, lastReadAt: new Date(), revision: { increment: 1 } },
     });
     if (result.count === 0) return this.staleProgressConflict(tx, subject, input);
 
@@ -404,7 +404,7 @@ export class ReaderMutationsService {
     input: NormalizedOperation,
     receiptId: string,
   ): Promise<OperationResultPayload> {
-    const clientEntityId = input.clientEntityId as string;
+    const clientEntityId = input.clientEntityId;
     const existing = await tx.bookmark.findUnique({
       where: { userId_clientEntityId: { userId: subject, clientEntityId } },
     });
@@ -426,7 +426,7 @@ export class ReaderMutationsService {
         userId: subject,
         bookId: input.bookId,
         clientEntityId,
-        page: input.page as number,
+        page: input.page,
         label: input.label,
         color: input.color,
         anchor: toJsonOrDbNull(input.anchor),
@@ -443,7 +443,7 @@ export class ReaderMutationsService {
     input: NormalizedOperation,
     receiptId: string,
   ): Promise<OperationResultPayload> {
-    const entityId = input.entityId as string;
+    const entityId = input.entityId;
     // Scope to the declared book so a stale/cross-book op cannot touch it.
     const existing = await tx.bookmark.findFirst({ where: { id: entityId, userId: subject, bookId: input.bookId } });
     if (!existing) {
@@ -452,7 +452,7 @@ export class ReaderMutationsService {
     if (existing.deletedAt) {
       return { kind: 'APPLIED', entityId: existing.id, revision: existing.revision, receiptId };
     }
-    const baseRevision = input.baseRevision as number;
+    const baseRevision = input.baseRevision;
     if (existing.revision !== baseRevision) {
       return this.conflict(input.bookId, existing.revision, this.bookmarkValue(existing), null);
     }
@@ -475,7 +475,7 @@ export class ReaderMutationsService {
     input: NormalizedOperation,
     receiptId: string,
   ): Promise<OperationResultPayload> {
-    const clientEntityId = input.clientEntityId as string;
+    const clientEntityId = input.clientEntityId;
     const existing = await tx.highlight.findUnique({
       where: { userId_clientEntityId: { userId: subject, clientEntityId } },
     });
@@ -494,8 +494,8 @@ export class ReaderMutationsService {
         userId: subject,
         bookId: input.bookId,
         clientEntityId,
-        page: input.page as number,
-        text: input.text as string,
+        page: input.page,
+        text: input.text,
         note: input.note,
         color: input.color,
         anchor: toJsonOrDbNull(input.anchor),
@@ -515,12 +515,12 @@ export class ReaderMutationsService {
     if (input.targetKind === OperationTargetKind.CONFLICT_COPY) {
       return this.updateConflictCopy(tx, subject, input, receiptId);
     }
-    const entityId = input.entityId as string;
+    const entityId = input.entityId;
     const existing = await tx.highlight.findFirst({ where: { id: entityId, userId: subject, bookId: input.bookId } });
     if (!existing) {
       return { kind: 'ACCESS_DENIED', resourceId: entityId, reason: 'Annotation not found for this account and book' };
     }
-    const baseRevision = input.baseRevision as number;
+    const baseRevision = input.baseRevision;
 
     if (existing.deletedAt) {
       // Edit-after-delete: keep deletion history AND the attempted edit.
@@ -535,8 +535,8 @@ export class ReaderMutationsService {
     const result = await tx.highlight.updateMany({
       where: { id: existing.id, userId: subject, bookId: input.bookId, revision: baseRevision },
       data: {
-        page: input.page as number,
-        text: input.text as string,
+        page: input.page,
+        text: input.text,
         note: input.note,
         color: input.color,
         anchor: toJsonOrDbNull(input.anchor),
@@ -554,12 +554,12 @@ export class ReaderMutationsService {
     input: NormalizedOperation,
     receiptId: string,
   ): Promise<OperationResultPayload> {
-    const entityId = input.entityId as string;
+    const entityId = input.entityId;
     const existing = await tx.conflictCopy.findFirst({ where: { id: entityId, subject, bookId: input.bookId } });
     if (!existing) {
       return { kind: 'ACCESS_DENIED', resourceId: entityId, reason: 'Conflict copy not found for this account and book' };
     }
-    const baseRevision = input.baseRevision as number;
+    const baseRevision = input.baseRevision;
     const sourceEntityId = existing.sourceEntityId ?? existing.id;
     if (existing.revision !== baseRevision) {
       const copy = await this.createConflictCopy(tx, subject, input, sourceEntityId, existing.bookId, ConflictReason.STALE_REVISION, this.editFields(input));
@@ -569,8 +569,8 @@ export class ReaderMutationsService {
     const result = await tx.conflictCopy.updateMany({
       where: { id: existing.id, subject, bookId: existing.bookId, revision: baseRevision },
       data: {
-        page: input.page as number,
-        text: input.text as string,
+        page: input.page,
+        text: input.text,
         note: input.note,
         color: input.color,
         anchor: toJsonOrDbNull(input.anchor),
@@ -599,12 +599,12 @@ export class ReaderMutationsService {
     input: NormalizedOperation,
     receiptId: string,
   ): Promise<OperationResultPayload> {
-    const entityId = input.entityId as string;
+    const entityId = input.entityId;
     const existing = await tx.highlight.findFirst({ where: { id: entityId, userId: subject, bookId: input.bookId } });
     if (!existing) {
       return { kind: 'ACCESS_DENIED', resourceId: entityId, reason: 'Annotation not found for this account and book' };
     }
-    const baseRevision = input.baseRevision as number;
+    const baseRevision = input.baseRevision;
     if (existing.deletedAt) {
       return { kind: 'APPLIED', entityId: existing.id, revision: existing.revision, receiptId };
     }
@@ -698,8 +698,8 @@ export class ReaderMutationsService {
         sourceEntityId,
         bookId,
         contentVersion: input.contentVersion,
-        page: (fields.page ?? 1) as number,
-        text: (fields.text ?? '') as string,
+        page: fields.page ?? 1,
+        text: fields.text ?? '',
         note: fields.note,
         color: fields.color,
         anchor: toJsonOrDbNull(fields.anchor),
@@ -718,11 +718,19 @@ export class ReaderMutationsService {
   ): OperationResultPayload {
     return {
       kind: 'CONFLICT',
-      entityId: String(serverValue.id ?? serverValue.bookId ?? ''),
+      entityId: this.firstString(serverValue.id, serverValue.bookId),
       serverRevision,
       serverValue,
       conflictCopy,
     };
+  }
+
+  /** First argument that is actually a string, else `''`; never stringifies objects. */
+  private firstString(...values: unknown[]): string {
+    for (const value of values) {
+      if (typeof value === 'string') return value;
+    }
+    return '';
   }
 
   private progressValue(row: { bookId: string; currentPage: number; scrollY: number | null; revision: number; lastReadAt: Date }): Record<string, unknown> {
@@ -850,7 +858,7 @@ export class ReaderMutationsService {
     if (typeof raw.bookId !== 'string' || raw.bookId.length === 0) {
       throw new BadRequestException('bookId is required');
     }
-    if (!Number.isInteger(raw.contentVersion) || (raw.contentVersion as number) < 1) {
+    if (!Number.isInteger(raw.contentVersion) || raw.contentVersion < 1) {
       throw new BadRequestException('contentVersion must be a positive integer');
     }
     if (!Object.values(OperationKind).includes(raw.kind)) {
@@ -858,25 +866,14 @@ export class ReaderMutationsService {
     }
 
     const kind = raw.kind;
-    const allowed = new Set(KIND_FIELDS[kind]);
     const rawRecord = raw as unknown as Record<string, unknown>;
-    for (const field of ENVELOPE_FIELDS) {
-      const value = rawRecord[field];
-      const present = value !== undefined && value !== null;
-      if (present && !allowed.has(field)) {
-        throw new BadRequestException(`Field "${field}" is not allowed for kind ${kind}`);
-      }
-    }
-    for (const field of REQUIRED_FIELDS[kind]) {
-      if (!(field in raw) || rawRecord[field] === undefined || rawRecord[field] === null) {
-        throw new BadRequestException(`Field "${field}" is required for kind ${kind}`);
-      }
-    }
+    this.assertFieldsAllowed(kind, rawRecord);
+    this.assertRequiredFieldsPresent(kind, raw, rawRecord);
 
     const normalized: NormalizedOperation = {
       operationId: raw.operationId,
       bookId: raw.bookId,
-      contentVersion: raw.contentVersion as number,
+      contentVersion: raw.contentVersion,
       kind,
       entityId: raw.entityId ?? null,
       clientEntityId: raw.clientEntityId ?? null,
@@ -892,46 +889,92 @@ export class ReaderMutationsService {
       note: raw.note ?? null,
     };
 
+    this.assertKindFields(normalized, kind);
+    return normalized;
+  }
+
+  /** Every envelope field not listed for the kind must be absent. */
+  private assertFieldsAllowed(kind: OperationKind, rawRecord: Record<string, unknown>): void {
+    const allowed = new Set(KIND_FIELDS[kind]);
+    for (const field of ENVELOPE_FIELDS) {
+      const value = rawRecord[field];
+      const present = value !== undefined && value !== null;
+      if (present && !allowed.has(field)) {
+        throw new BadRequestException(`Field "${field}" is not allowed for kind ${kind}`);
+      }
+    }
+  }
+
+  /** Every required field for the kind must be present and non-null. */
+  private assertRequiredFieldsPresent(
+    kind: OperationKind,
+    raw: ReaderOperationInput,
+    rawRecord: Record<string, unknown>,
+  ): void {
+    for (const field of REQUIRED_FIELDS[kind]) {
+      if (!(field in raw) || rawRecord[field] === undefined || rawRecord[field] === null) {
+        throw new BadRequestException(`Field "${field}" is required for kind ${kind}`);
+      }
+    }
+  }
+
+  /** Per-kind field format checks beyond the presence rules. */
+  private assertKindFields(normalized: NormalizedOperation, kind: OperationKind): void {
     switch (kind) {
       case OperationKind.PROGRESS_SET:
-        this.requireInteger(normalized.baseRevision, 'baseRevision', 0);
-        this.requireInteger(normalized.currentPage, 'currentPage', 1);
-        if (normalized.scrollY !== null && (!Number.isFinite(normalized.scrollY) || normalized.scrollY < 0)) {
-          throw new BadRequestException('scrollY must be a finite nonnegative number');
-        }
-        break;
+        this.validateProgressFields(normalized);
+        return;
       case OperationKind.BOOKMARK_ADD:
-      case OperationKind.ANNOTATION_CREATE: {
-        this.requireUuid(normalized.clientEntityId, 'clientEntityId');
-        this.requireInteger(normalized.page, 'page', 1);
-        if (kind === OperationKind.ANNOTATION_CREATE) {
-          this.requireNonEmpty(normalized.text, 'text');
-          if (normalized.anchor === null) throw new BadRequestException('anchor is required for ANNOTATION_CREATE');
-        } else if (normalized.anchor) {
-          this.validateAnchor(normalized.anchor, normalized.page);
-        }
-        break;
-      }
+      case OperationKind.ANNOTATION_CREATE:
+        this.validateCreateFields(normalized, kind);
+        return;
       case OperationKind.BOOKMARK_REMOVE:
       case OperationKind.ANNOTATION_DELETE:
-        this.requireId(normalized.entityId, 'entityId');
-        this.requireInteger(normalized.baseRevision, 'baseRevision', 1);
-        break;
+        this.validateDeleteFields(normalized);
+        return;
       case OperationKind.ANNOTATION_UPDATE:
-        this.requireId(normalized.entityId, 'entityId');
-        if (normalized.targetKind !== OperationTargetKind.ANNOTATION && normalized.targetKind !== OperationTargetKind.CONFLICT_COPY) {
-          throw new BadRequestException('targetKind must be ANNOTATION or CONFLICT_COPY for ANNOTATION_UPDATE');
-        }
-        this.requireInteger(normalized.baseRevision, 'baseRevision', 1);
-        this.requireInteger(normalized.page, 'page', 1);
-        this.requireNonEmpty(normalized.text, 'text');
-        if (normalized.anchor === null) throw new BadRequestException('anchor is required for ANNOTATION_UPDATE');
-        break;
+        this.validateAnnotationUpdateFields(normalized);
+        return;
       default:
         throw new BadRequestException('Unsupported operation kind');
     }
+  }
 
-    return normalized;
+  private validateProgressFields(normalized: NormalizedOperation): void {
+    this.requireInteger(normalized.baseRevision, 'baseRevision', 0);
+    this.requireInteger(normalized.currentPage, 'currentPage', 1);
+    if (normalized.scrollY !== null && (!Number.isFinite(normalized.scrollY) || normalized.scrollY < 0)) {
+      throw new BadRequestException('scrollY must be a finite nonnegative number');
+    }
+  }
+
+  private validateCreateFields(normalized: NormalizedOperation, kind: OperationKind): void {
+    this.requireUuid(normalized.clientEntityId, 'clientEntityId');
+    this.requireInteger(normalized.page, 'page', 1);
+    if (kind === OperationKind.ANNOTATION_CREATE) {
+      this.requireNonEmpty(normalized.text, 'text');
+      if (normalized.anchor === null) throw new BadRequestException('anchor is required for ANNOTATION_CREATE');
+      return;
+    }
+    if (normalized.anchor) {
+      this.validateAnchor(normalized.anchor, normalized.page);
+    }
+  }
+
+  private validateDeleteFields(normalized: NormalizedOperation): void {
+    this.requireId(normalized.entityId, 'entityId');
+    this.requireInteger(normalized.baseRevision, 'baseRevision', 1);
+  }
+
+  private validateAnnotationUpdateFields(normalized: NormalizedOperation): void {
+    this.requireId(normalized.entityId, 'entityId');
+    if (normalized.targetKind !== OperationTargetKind.ANNOTATION && normalized.targetKind !== OperationTargetKind.CONFLICT_COPY) {
+      throw new BadRequestException('targetKind must be ANNOTATION or CONFLICT_COPY for ANNOTATION_UPDATE');
+    }
+    this.requireInteger(normalized.baseRevision, 'baseRevision', 1);
+    this.requireInteger(normalized.page, 'page', 1);
+    this.requireNonEmpty(normalized.text, 'text');
+    if (normalized.anchor === null) throw new BadRequestException('anchor is required for ANNOTATION_UPDATE');
   }
 
   private validateAnchor(anchor: { version: number; page: number; startOffset: number; endOffset: number }, page: number | null): NormalizedAnchor {

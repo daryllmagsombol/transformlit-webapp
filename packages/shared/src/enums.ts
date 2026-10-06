@@ -88,6 +88,18 @@ export enum NotificationType {
   SYSTEM = 'SYSTEM',
 }
 
+export enum ActivityType {
+  BOOK_READ = 'BOOK_READ',
+  BIBLE_READ = 'BIBLE_READ',
+  FEED_READ = 'FEED_READ',
+  GROUP_POST = 'GROUP_POST',
+}
+
+export enum GoalKind {
+  DAYS = 'DAYS',
+  PAGES = 'PAGES',
+}
+
 // ── Constants ──────────────────────────────────────────────────────────────
 
 export const JWT_ACCESS_EXPIRY = '15m';

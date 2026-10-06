@@ -23,7 +23,8 @@ describe('DownloadControls', () => {
   it('exposes progress with an accessible progressbar while staging', () => {
     render(<DownloadControls {...baseProps} state="STAGING" completedItems={2} itemCount={4} />);
     const bar = screen.getByRole('progressbar', { name: /Book One download progress/i });
-    expect(bar).toHaveAttribute('aria-valuenow', '50');
+    expect(bar).toHaveAttribute('value', '50');
+    expect(bar).toHaveAttribute('max', '100');
     expect(screen.getByText(/2 of 4/)).toBeInTheDocument();
   });
 

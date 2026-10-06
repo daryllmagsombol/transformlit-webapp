@@ -173,28 +173,30 @@ export class BookDownloadService {
         imageAssetId: frameAssetId(page.id),
         textLayerAssetId: textAssetId(page.id),
       });
-      assets.push({
-        assetId: frameAssetId(page.id),
-        kind: 'PAGE_IMAGE',
-        pageNumber: page.index,
-        mediaType: page.mimeType ?? 'image/png',
-        byteLength: page.frameByteLength as number,
-        sha256: page.frameSha256 as string,
-        width: page.width,
-        height: page.height,
-        url: assetUrl(frameAssetId(page.id)),
-      });
-      assets.push({
-        assetId: textAssetId(page.id),
-        kind: 'TEXT_LAYER',
-        pageNumber: page.index,
-        mediaType: TEXT_MEDIA_TYPE,
-        byteLength: page.textByteLength as number,
-        sha256: page.textSha256 as string,
-        width: null,
-        height: null,
-        url: assetUrl(textAssetId(page.id)),
-      });
+      assets.push(
+        {
+          assetId: frameAssetId(page.id),
+          kind: 'PAGE_IMAGE',
+          pageNumber: page.index,
+          mediaType: page.mimeType ?? 'image/png',
+          byteLength: page.frameByteLength,
+          sha256: page.frameSha256,
+          width: page.width,
+          height: page.height,
+          url: assetUrl(frameAssetId(page.id)),
+        },
+        {
+          assetId: textAssetId(page.id),
+          kind: 'TEXT_LAYER',
+          pageNumber: page.index,
+          mediaType: TEXT_MEDIA_TYPE,
+          byteLength: page.textByteLength,
+          sha256: page.textSha256,
+          width: null,
+          height: null,
+          url: assetUrl(textAssetId(page.id)),
+        },
+      );
     }
 
     return {
@@ -407,7 +409,7 @@ export class BookDownloadService {
 
       // The keyset strictly advances because (bookId, contentVersion) is unique,
       // so this terminates even when every row in the batch is skipped.
-      cursor = batch[batch.length - 1];
+      cursor = batch.at(-1);
       if (batch.length < batchSize) break;
     }
 

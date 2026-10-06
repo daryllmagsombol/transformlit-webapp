@@ -44,33 +44,47 @@ function isAuthRequired(authRequired: boolean | undefined, lastError: string | n
   return authRequired === true || lastError === 'AUTH_REQUIRED';
 }
 
-function statusLabel(
-  pending: number,
-  conflicts: number,
-  terminal: number,
-  incompatibleVersion: number,
-  accessDenied: number,
-  state: SyncStatusProps['state'],
-  authRequired: boolean,
-  storageFailure: boolean,
-): string {
+interface StatusInput {
+  readonly pending: number;
+  readonly conflicts: number;
+  readonly terminal: number;
+  readonly incompatibleVersion: number;
+  readonly accessDenied: number;
+  readonly state: SyncStatusProps['state'];
+  readonly authRequired: boolean;
+  readonly storageFailure: boolean;
+}
+
+function changeCount(count: number): string {
+  return `${count} change${count === 1 ? '' : 's'}`;
+}
+
+function needVerb(count: number): string {
+  return count === 1 ? 'needs' : 'need';
+}
+
+/** "3 changes need your attention" plus the count-correct verb. */
+function changesNeed(count: number, suffix: string): string {
+  return `${changeCount(count)} ${needVerb(count)} ${suffix}`;
+}
+
+function statusLabel({
+  pending,
+  conflicts,
+  terminal,
+  incompatibleVersion,
+  accessDenied,
+  state,
+  authRequired,
+  storageFailure,
+}: StatusInput): string {
   if (authRequired) return 'Sign in again to sync your changes';
   if (storageFailure) return 'This device could not store your changes';
-  if (conflicts > 0) {
-    return `${conflicts} change${conflicts === 1 ? '' : 's'} need${conflicts === 1 ? 's' : ''} your attention`;
-  }
-  if (incompatibleVersion > 0) {
-    return `${incompatibleVersion} change${incompatibleVersion === 1 ? '' : 's'} need${incompatibleVersion === 1 ? 's' : ''} a newer version of the app to sync`;
-  }
-  if (accessDenied > 0) {
-    return `${accessDenied} change${accessDenied === 1 ? '' : 's'} need${accessDenied === 1 ? 's' : ''} access to sync`;
-  }
-  if (terminal > 0) {
-    return `${terminal} change${terminal === 1 ? '' : 's'} need${terminal === 1 ? 's' : ''} recovery`;
-  }
-  if (pending > 0) {
-    return `${pending} change${pending === 1 ? '' : 's'} waiting to sync`;
-  }
+  if (conflicts > 0) return changesNeed(conflicts, 'your attention');
+  if (incompatibleVersion > 0) return changesNeed(incompatibleVersion, 'a newer version of the app to sync');
+  if (accessDenied > 0) return changesNeed(accessDenied, 'access to sync');
+  if (terminal > 0) return changesNeed(terminal, 'recovery');
+  if (pending > 0) return `${changeCount(pending)} waiting to sync`;
   if (state === 'SYNCING') return 'Checking for updates…';
   return 'Saved on this device';
 }
@@ -92,7 +106,7 @@ export function SyncStatus({
   const authRequired = isAuthRequired(authRequiredProp, lastError);
   const hasWork =
     pending > 0 || conflicts > 0 || terminal > 0 || incompatibleVersion > 0 || accessDenied > 0 || storageFailure;
-  const label = statusLabel(
+  const label = statusLabel({
     pending,
     conflicts,
     terminal,
@@ -101,7 +115,7 @@ export function SyncStatus({
     state,
     authRequired,
     storageFailure,
-  );
+  });
 
   const controls = (
     <div className="flex flex-wrap gap-2">
@@ -185,9 +199,9 @@ function SyncStatusBody({
   }
   return (
     <>
-      <p role="status" className="font-small text-small text-on-surface-variant" data-testid="sync-status-text">
+      <output className="font-small text-small text-on-surface-variant" data-testid="sync-status-text">
         {label}
-      </p>
+      </output>
       {showControls ? controls : null}
     </>
   );

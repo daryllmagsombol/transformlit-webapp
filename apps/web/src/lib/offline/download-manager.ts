@@ -31,7 +31,7 @@ import {
   resolveOfflineRights,
   type TranslationOfflineRights,
 } from '../bible/offline-rights';
-import type { BibleChapter } from '../bible/types';
+import type { BibleChapter, FormattedText, InlineHeading, InlineLineBreak, VerseFootnoteReference } from '../bible/types';
 
 /** Bearer-authenticated transcript failure with its HTTP status. */
 export class DownloadHttpError extends OfflineStorageError {
@@ -99,6 +99,17 @@ interface OfflineBookManifestWire {
 }
 
 const DEFAULT_CONCURRENCY = 4;
+
+/**
+ * Removes every trailing `/`. Implemented as a linear scan (no regex) so the
+ * operation cannot exhibit catastrophic backtracking (Sonar S5852 / ReDoS).
+ */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  return end === value.length ? value : value.slice(0, end);
+}
+
 const API_PREFIX = '/api';
 
 /** Strips a leading `/api` so a base that already includes it never doubles up. */
@@ -114,7 +125,7 @@ export function stripApiPrefix(path: string): string {
  * resolved URL must always be `{apiBase}/books/{bookId}/content/{v}/assets/{id}`.
  */
 export function resolveAssetUrl(apiBase: string, path: string): string {
-  const base = apiBase.replace(/\/+$/, '');
+  const base = trimTrailingSlashes(apiBase);
   const withoutOrigin = path.replace(/^https?:\/\/[^/]+/, '');
   const normalized = withoutOrigin.startsWith('/') ? withoutOrigin : `/${withoutOrigin}`;
   return `${base}${stripApiPrefix(normalized)}`;
@@ -175,7 +186,7 @@ function validateManifest(manifest: OfflineBookManifestWire, requestedBookId: st
     }
   }
   for (const asset of manifest.assets) {
-    if (!Number.isSafeInteger(asset.byteLength) || asset.byteLength < 1 || !new RegExp(String.raw`^[a-f0-9]{64}$`).test(asset.sha256)) {
+    if (!Number.isSafeInteger(asset.byteLength) || asset.byteLength < 1 || !/^[a-f0-9]{64}$/.test(asset.sha256)) {
       throw new DownloadIntegrityError(`Offline manifest asset ${asset.assetId} has invalid integrity metadata`);
     }
   }
@@ -255,8 +266,8 @@ export class DownloadManager {
   constructor(deps: DownloadManagerDeps) {
     this.database = deps.database;
     this.lifecycle = deps.lifecycle;
-    this.apiBase = (deps.apiBase ?? API_BASE).replace(/\/+$/, '');
-    this.bibleApiBase = (deps.bibleApiBase ?? BIBLE_API_BASE).replace(/\/+$/, '');
+    this.apiBase = trimTrailingSlashes(deps.apiBase ?? API_BASE);
+    this.bibleApiBase = trimTrailingSlashes(deps.bibleApiBase ?? BIBLE_API_BASE);
     this.fetchImpl = deps.fetchImpl ?? ((input, init) => fetch(input, init));
     this.sha256 = deps.sha256 ?? defaultSha256;
     this.now = deps.now ?? (() => Date.now());
@@ -735,7 +746,7 @@ export class DownloadManager {
     book: string,
     chapter: number,
   ): void {
-    if (!stored || stored.translation !== translation || stored.book !== book || stored.chapter !== chapter) {
+    if (stored?.translation !== translation || stored.book !== book || stored.chapter !== chapter) {
       throw new DownloadIntegrityError('Stored Bible chapter failed verification');
     }
     this.validateBibleChapter(stored.payload as BibleChapter, translation, book, chapter);
@@ -955,22 +966,26 @@ function parseBibleContentId(contentId: string): { translation: string; book: st
   return { translation, book, chapter };
 }
 
+function pushTextPieces(
+  pieces: string[],
+  content: readonly (string | FormattedText | InlineHeading | InlineLineBreak | VerseFootnoteReference)[],
+): void {
+  for (const item of content) {
+    if (typeof item === 'string') pieces.push(item);
+    else if ('text' in item && typeof item.text === 'string') pieces.push(item.text);
+    else if ('heading' in item && typeof item.heading === 'string') pieces.push(item.heading);
+  }
+}
+
 function chapterText(payload: BibleChapter): string {
   const pieces: string[] = [];
   for (const section of payload.chapter.content) {
     if (section.type === 'verse') {
-      for (const item of section.content) {
-        if (typeof item === 'string') pieces.push(item);
-        else if ('text' in item && typeof item.text === 'string') pieces.push(item.text);
-        else if ('heading' in item && typeof item.heading === 'string') pieces.push(item.heading);
-      }
+      pushTextPieces(pieces, section.content);
     } else if (section.type === 'heading') {
       pieces.push(...section.content);
     } else if (section.type === 'hebrew_subtitle') {
-      for (const item of section.content) {
-        if (typeof item === 'string') pieces.push(item);
-        else if ('text' in item && typeof item.text === 'string') pieces.push(item.text);
-      }
+      pushTextPieces(pieces, section.content);
     }
   }
   for (const footnote of payload.chapter.footnotes) pieces.push(footnote.text);

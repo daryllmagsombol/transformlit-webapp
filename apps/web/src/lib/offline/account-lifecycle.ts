@@ -21,7 +21,7 @@ export type {
   InstallOutcome,
   ReplayIdentity,
   WritePermit,
-};
+} from './contracts';
 
 /**
  * Durable lifecycle persistence the lifecycle service needs: the owner/epoch

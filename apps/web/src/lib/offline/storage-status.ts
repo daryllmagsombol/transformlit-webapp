@@ -84,7 +84,7 @@ export async function getStorageStatus({ persist = false } = {}): Promise<Storag
 
 /** Throws a typed error when IndexedDB cannot be used in this environment. */
 export function assertIndexedDbAvailable(): void {
-  if (typeof globalThis.indexedDB === 'undefined') {
+  if (globalThis.indexedDB === undefined) {
     throw new StorageUnavailableError();
   }
 }

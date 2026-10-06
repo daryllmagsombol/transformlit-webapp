@@ -3,9 +3,6 @@ import {
   BookReadProgressDocument,
   ApplyBookReaderOperationDocument,
   type BookReaderAnnotationSnapshotQuery,
-  type BookReaderAnnotationSnapshotQueryVariables,
-  type BookReadProgressQuery,
-  type BookReadProgressQueryVariables,
   type ApplyBookReaderOperationMutation,
   type ApplyBookReaderOperationMutationVariables,
 } from '@transformlit/graphql';
@@ -32,7 +29,7 @@ export type {
   BookReadProgressQueryVariables,
   ApplyBookReaderOperationMutation,
   ApplyBookReaderOperationMutationVariables,
-};
+} from '@transformlit/graphql';
 
 export interface PdfTextItem {
   t: string;
@@ -128,7 +125,7 @@ export async function fetchPageText(bookId: string, page: number): Promise<PdfPa
 export async function fetchReadProgress(
   bookId: string,
 ): Promise<{ currentPage: number; revision: number } | null> {
-  const result = await apolloClient.query<BookReadProgressQuery, BookReadProgressQueryVariables>({
+  const result = await apolloClient.query({
     query: BOOK_READ_PROGRESS_QUERY,
     variables: { bookId },
     fetchPolicy: 'no-cache',
@@ -148,10 +145,7 @@ export async function fetchReadProgress(
 export async function fetchAnnotationSnapshot(
   bookId: string,
 ): Promise<BookReaderAnnotationSnapshotQuery['bookReaderAnnotationSnapshot']> {
-  const result = await apolloClient.query<
-    BookReaderAnnotationSnapshotQuery,
-    BookReaderAnnotationSnapshotQueryVariables
-  >({
+  const result = await apolloClient.query({
     query: BOOK_READER_ANNOTATION_SNAPSHOT_QUERY,
     variables: { bookId },
     fetchPolicy: 'no-cache',
@@ -164,10 +158,7 @@ export async function fetchAnnotationSnapshot(
 export async function applyReaderOperation(
   input: ApplyBookReaderOperationMutationVariables['input'],
 ): Promise<ApplyBookReaderOperationMutation['applyBookReaderOperation']> {
-  const result = await apolloClient.mutate<
-    ApplyBookReaderOperationMutation,
-    ApplyBookReaderOperationMutationVariables
-  >({
+  const result = await apolloClient.mutate({
     mutation: APPLY_BOOK_READER_OPERATION_MUTATION,
     variables: { input },
   });

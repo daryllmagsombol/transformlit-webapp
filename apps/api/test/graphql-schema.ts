@@ -13,7 +13,7 @@ async function applyMigrations(databaseUrl: string): Promise<void> {
   const pool = new Pool({ connectionString: databaseUrl });
   const migrations = resolve('prisma/migrations');
   try {
-    for (const directory of readdirSync(migrations).sort()) {
+    for (const directory of readdirSync(migrations).sort((a, b) => a.localeCompare(b))) {
       const migrationPath = join(migrations, directory, 'migration.sql');
       if (existsSync(migrationPath)) await pool.query(readFileSync(migrationPath, 'utf8'));
     }

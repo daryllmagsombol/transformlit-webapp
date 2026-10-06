@@ -4,6 +4,7 @@ import {
   type BibleChapterRecord,
   type BookPageRecord,
   type BookVersionRecord,
+  type ConflictCopyRecord,
   type DownloadManifestRecord,
   type DeferredLogoutRecord,
   type LifecycleBarrierRecord,
@@ -17,7 +18,6 @@ import {
   SubjectMismatchError,
   TransactionAbortedError,
   bibleChapterKey,
-  bookVersionKey,
   qualifyKey,
 } from './contracts';
 import type { LeasePersistence } from './coordination';
@@ -365,7 +365,7 @@ export interface ConflictResolutionCommit {
   epoch: number;
   upserts: readonly unknown[];
   removeIds: readonly string[];
-  conflict: unknown | null;
+  conflict: ConflictCopyRecord | null;
 }
 
 /** Reads the authoritative lifecycle record and aborts if the write is fenced. */
@@ -379,7 +379,7 @@ function guardWrite(
   const request = tx.objectStore('lifecycle').get('lifecycle');
   request.onsuccess = () => {
     const state = request.result as LifecycleStateRecord | undefined;
-    if (!state || state.subject !== subject) {
+    if (state?.subject !== subject) {
       fail(new OfflineStorageError(`Refusing write for unowned subject ${subject}`));
       tx.abort();
       return;
@@ -424,13 +424,16 @@ function assertRecordSubject(subject: string, record: unknown): void {
  * transaction that writes, so a fenced operation rolls back entirely.
  */
 export class OfflineDatabase {
-  private readonly dbPromise: Promise<IDBDatabase>;
+  private dbPromise: Promise<IDBDatabase> | null;
 
   constructor(db?: IDBDatabase) {
-    this.dbPromise = db ? Promise.resolve(db) : openOfflineDatabase();
+    // No asynchronous work in the constructor (Sonar S7059): the database is
+    // opened lazily on first use. A caller-provided connection is used as-is.
+    this.dbPromise = db ? Promise.resolve(db) : null;
   }
 
   private db(): Promise<IDBDatabase> {
+    this.dbPromise ??= openOfflineDatabase();
     return this.dbPromise;
   }
 
@@ -530,8 +533,8 @@ export class OfflineDatabase {
     const db = await this.db();
     await runTransaction<void>(db, ['lifecycle', 'readerRecords', 'outbox'], 'readwrite', (tx, done, fail) => {
       guardWrite(tx, input.subject, input.epoch, fail, () => {
-        tx.objectStore('readerRecords').put(input.record as unknown as IDBValidKey);
-        tx.objectStore('outbox').put(input.operation as unknown as IDBValidKey);
+        tx.objectStore('readerRecords').put(input.record);
+        tx.objectStore('outbox').put(input.operation);
         done(undefined);
       });
     });
@@ -543,7 +546,7 @@ export class OfflineDatabase {
     const db = await this.db();
     await runTransaction<void>(db, ['lifecycle', 'outbox'], 'readwrite', (tx, done, fail) => {
       guardWrite(tx, subject, epoch, fail, () => {
-        tx.objectStore('outbox').put(operation as unknown as IDBValidKey);
+        tx.objectStore('outbox').put(operation);
         done(undefined);
       });
     });
@@ -569,7 +572,7 @@ export class OfflineDatabase {
     const db = await this.db();
     await runTransaction<void>(db, ['lifecycle', 'outbox', 'receipts'], 'readwrite', (tx, done, fail) => {
       guardWrite(tx, subject, epoch, fail, () => {
-        tx.objectStore('receipts').put(receipt as unknown as IDBValidKey);
+        tx.objectStore('receipts').put(receipt);
         const outbox = tx.objectStore('outbox');
         for (const successor of successors) outbox.put(successor);
         outbox.delete(outboxId);
@@ -612,7 +615,7 @@ export class OfflineDatabase {
     const db = await this.db();
     await runTransaction<void>(db, ['lifecycle', 'receipts'], 'readwrite', (tx, done, fail) => {
       guardWrite(tx, subject, epoch, fail, () => {
-        tx.objectStore('receipts').put(receipt as unknown as IDBValidKey);
+        tx.objectStore('receipts').put(receipt);
         done(undefined);
       });
     });
@@ -625,14 +628,7 @@ export class OfflineDatabase {
    * publish is a separate, atomic multi-store transaction.
    */
   async putDownloadRecord<T>(subject: string, epoch: number, store: string, value: T): Promise<void> {
-    assertRecordSubject(subject, value);
-    const db = await this.db();
-    await runTransaction<void>(db, ['lifecycle', store], 'readwrite', (tx, done, fail) => {
-      guardWrite(tx, subject, epoch, fail, () => {
-        tx.objectStore(store).put(value as unknown as IDBValidKey);
-        done(undefined);
-      });
-    });
+    await this.putAccountRecord(subject, epoch, store, value);
   }
 
   /**
@@ -780,7 +776,7 @@ export class OfflineDatabase {
       guardWrite(tx, input.subject, input.epoch, fail, () => {
         const outbox = tx.objectStore('outbox');
         // Upserts FIRST (new operations / rebased successors), then removals.
-        for (const operation of input.upserts) outbox.put(operation as unknown as IDBValidKey);
+        for (const operation of input.upserts) outbox.put(operation);
         for (const id of input.removeIds) outbox.delete(id);
         if (input.conflict !== null) {
           tx.objectStore('conflicts').put(input.conflict as unknown as IDBValidKey);

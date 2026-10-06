@@ -444,6 +444,40 @@ async function isSupervisorAlive(metadata: PwaMetadata): Promise<boolean> {
   }
 }
 
+async function waitForSupervisorReady(boot: PwaMetadata, child: ReturnType<typeof spawn>): Promise<void> {
+  let spawnFailure: Error | undefined;
+  let supervisorExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  child.once('error', (error) => { spawnFailure = error; });
+  child.once('exit', (code, signal) => { supervisorExit = { code, signal }; });
+  child.unref();
+  for (let attempt = 0; attempt < 2400; attempt += 1) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+    if (spawnFailure) {
+      boot.state = 'failed';
+      boot.failure = `Unable to launch supervisor: ${spawnFailure.message}`;
+      await writeMetadata(boot);
+      throw new Error(boot.failure);
+    }
+    try { await access(metadataPath); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error('Supervisor startup failed and cleaned its owned resources');
+      }
+      throw error;
+    }
+    const metadata = await readMetadata();
+    if (metadata.state === 'ready') { console.log('PWA harness ready at https://localhost:3443'); return; }
+    if (metadata.state === 'failed') throw new Error(`PWA startup failed: ${metadata.failure ?? 'unknown failure'}`);
+    if (supervisorExit) {
+      metadata.state = 'failed';
+      metadata.failure = `Supervisor exited during startup (code ${supervisorExit.code ?? 'null'}, signal ${supervisorExit.signal ?? 'none'})`;
+      await writeMetadata(metadata);
+      throw new Error(metadata.failure);
+    }
+  }
+  throw new Error('PWA supervisor did not reach readiness; inspect failed owner metadata before cleanup');
+}
+
 async function up(): Promise<void> {
   try { run('docker', ['info', '--format', '{{.ServerVersion}}']); } catch { throw new Error('Docker runtime is unavailable; refusing PWA harness startup'); }
   try { await access(metadataPath); throw new Error('Existing PWA owner metadata found; run down first'); }
@@ -478,37 +512,7 @@ async function up(): Promise<void> {
   await writeMetadata(boot);
   const child = spawn(process.execPath, ['--import', 'tsx', scriptPath, 'supervise', id, nonce], { cwd: join(root, 'apps/api'), detached: true, stdio: ['ignore', supervisorLog, supervisorLog] });
   closeSync(supervisorLog);
-  let spawnFailure: Error | undefined;
-  let supervisorExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
-  child.once('error', (error) => { spawnFailure = error; });
-  child.once('exit', (code, signal) => { supervisorExit = { code, signal }; });
-  child.unref();
-  for (let attempt = 0; attempt < 2400; attempt += 1) {
-    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
-    if (spawnFailure) {
-      boot.state = 'failed';
-      boot.failure = `Unable to launch supervisor: ${spawnFailure.message}`;
-      await writeMetadata(boot);
-      throw new Error(boot.failure);
-    }
-    try { await access(metadataPath); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new Error('Supervisor startup failed and cleaned its owned resources');
-      }
-      throw error;
-    }
-    const metadata = await readMetadata();
-    if (metadata.state === 'ready') { console.log('PWA harness ready at https://localhost:3443'); return; }
-    if (metadata.state === 'failed') throw new Error(`PWA startup failed: ${metadata.failure ?? 'unknown failure'}`);
-    if (supervisorExit) {
-      metadata.state = 'failed';
-      metadata.failure = `Supervisor exited during startup (code ${supervisorExit.code ?? 'null'}, signal ${supervisorExit.signal ?? 'none'})`;
-      await writeMetadata(metadata);
-      throw new Error(metadata.failure);
-    }
-  }
-  throw new Error('PWA supervisor did not reach readiness; inspect failed owner metadata before cleanup');
+  await waitForSupervisorReady(boot, child);
 }
 
 async function test(): Promise<void> {
@@ -631,7 +635,6 @@ async function main(): Promise<void> {
     if (metadata.state !== 'ready' || metadata.fixtureIds?.readableBookId !== args.bookId) throw new Error('publish-v2 requires this invocation\'s ready owner and readable fixture ID');
     const response = await sendSupervisor(metadata, 'publish-v2', args.bookId) as { ok?: boolean };
     if (!response.ok) throw new Error('Supervisor refused publish-v2 fixture transition');
-    return;
   }
 }
 

@@ -1,6 +1,6 @@
 import { startOwnedDisposableDatabase, assertOwnedDisposableDatabaseUrl } from '../helpers/pwa-disposable-db.js';
 
-export { assertOwnedDisposableDatabaseUrl };
+export { assertOwnedDisposableDatabaseUrl } from '../helpers/pwa-disposable-db.js';
 export function assertTask1AOwnedDatabaseUrl(
   databaseUrl: string | undefined,
   container: import('@testcontainers/postgresql').StartedPostgreSqlContainer | null | undefined,

@@ -1,7 +1,11 @@
 import 'reflect-metadata';
 import { Injectable } from '@nestjs/common';
 
-class ProbeDependency {}
+// Non-empty so SonarQube S2094 does not flag it; the class must stay a runtime
+// value for `emitDecoratorMetadata` to record it in `design:paramtypes`.
+class ProbeDependency {
+  readonly marker = 'probe-dependency';
+}
 
 @Injectable()
 class ProbeService {

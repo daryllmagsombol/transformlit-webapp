@@ -17,7 +17,7 @@ import { createReadStream } from 'node:fs';
 import type { Response } from 'express';
 import { UploadsService } from './uploads.service.js';
 
-const ALLOWED_MIMETYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const ALLOWED_MIMETYPES = new Set<string>(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const CONTENT_TYPE_BY_EXT: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -40,7 +40,7 @@ export class UploadsController {
   )
   async upload(@UploadedFile() file?: Express.Multer.File) {
     if (!file) throw new BadRequestException('file field is required');
-    if (!ALLOWED_MIMETYPES.includes(file.mimetype)) {
+    if (!ALLOWED_MIMETYPES.has(file.mimetype)) {
       throw new BadRequestException('Only jpeg, png, webp and gif images are allowed');
     }
     const key = await this.uploads.saveImage(file.buffer, file.mimetype);
@@ -62,6 +62,6 @@ export class UploadsController {
     // Keys are UUID-addressed and content-addressed in practice, so the files
     // are immutable and safe to cache for a year in shared/public caches.
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    createReadStream(this.uploads.resolveLocalPath(key)!).pipe(res);
+    createReadStream(this.uploads.resolveLocalPath(key)).pipe(res);
   }
 }

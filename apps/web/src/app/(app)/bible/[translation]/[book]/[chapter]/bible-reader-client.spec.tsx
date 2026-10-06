@@ -10,6 +10,12 @@ import type {
   TranslationBook,
 } from '../../../../../../lib/bible/types';
 
+const mockRecordActivity = jest.fn();
+
+jest.mock('../../../../../../lib/progress/record-activity', () => ({
+  recordActivity: (...args: unknown[]) => mockRecordActivity(...args),
+}));
+
 function renderWithProviders(ui: React.ReactElement) {
   return render(<ToastProvider>{ui}</ToastProvider>);
 }
@@ -96,6 +102,7 @@ describe('BibleReaderClient', () => {
 
   beforeEach(() => {
     mockHooks();
+    mockRecordActivity.mockReset();
     window.location.hash = '';
     mockRouterReplace.mockClear();
     mockCrossRefs.byVerse = {};
@@ -105,6 +112,24 @@ describe('BibleReaderClient', () => {
   it('renders the toolbar and verse text', async () => {
     renderWithProviders(<BibleReaderClient translation="BSB" book="ROM" chapter={12} />);
     await waitFor(() => expect(screen.getByText('Romans 12')).toBeInTheDocument());
+    expect(screen.getByText(/Therefore I urge you/)).toBeInTheDocument();
+  });
+
+  it('records a BIBLE_READ once when the chapter opens', async () => {
+    renderWithProviders(<BibleReaderClient translation="BSB" book="ROM" chapter={12} />);
+    await waitFor(() =>
+      expect(mockRecordActivity).toHaveBeenCalledWith({ type: 'BIBLE_READ', pagesDelta: 1 }),
+    );
+    expect(mockRecordActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not surface an error when the recorded call rejects', async () => {
+    mockRecordActivity.mockImplementation(() => {
+      Promise.reject(new Error('offline')).catch(() => undefined);
+    });
+    renderWithProviders(<BibleReaderClient translation="BSB" book="ROM" chapter={12} />);
+    await waitFor(() => expect(screen.getByText('Romans 12')).toBeInTheDocument());
+    // The failure is swallowed; the chapter still renders.
     expect(screen.getByText(/Therefore I urge you/)).toBeInTheDocument();
   });
 

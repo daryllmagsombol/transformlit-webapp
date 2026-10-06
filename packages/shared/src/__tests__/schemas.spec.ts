@@ -16,6 +16,8 @@ import {
   publishAnnouncementSchema,
   updateAnnouncementSchema,
   cursorPaginationSchema,
+  recordActivitySchema,
+  setReadingGoalSchema,
 } from '../schemas/index.js';
 
 describe('registerLocalSchema', () => {
@@ -778,5 +780,34 @@ describe('cursorPaginationSchema', () => {
     if (result.success) {
       expect(result.data.limit).toBe(25);
     }
+  });
+});
+
+describe('recordActivitySchema', () => {
+  it('accepts a minimal valid payload', () => {
+    expect(recordActivitySchema.parse({ type: 'BOOK_READ' })).toEqual({
+      type: 'BOOK_READ',
+      pagesDelta: 0,
+    });
+  });
+
+  it('rejects an unknown activity type', () => {
+    expect(() => recordActivitySchema.parse({ type: 'NOPE' })).toThrow();
+  });
+});
+
+describe('setReadingGoalSchema', () => {
+  it('accepts a valid DAYS goal', () => {
+    expect(setReadingGoalSchema.parse({ year: 2026, targetKind: 'DAYS', targetValue: 24 })).toEqual({
+      year: 2026,
+      targetKind: 'DAYS',
+      targetValue: 24,
+    });
+  });
+
+  it('rejects a DAYS goal above 366', () => {
+    expect(() =>
+      setReadingGoalSchema.parse({ year: 2026, targetKind: 'DAYS', targetValue: 400 }),
+    ).toThrow();
   });
 });

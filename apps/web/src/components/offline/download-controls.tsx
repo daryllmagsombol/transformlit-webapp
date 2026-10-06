@@ -90,19 +90,12 @@ export function DownloadControls({
     const value = percent(completedItems, itemCount);
     return (
       <div className="w-full" data-testid="download-progress">
-        <div
-          role="progressbar"
+        <progress
           aria-label={`${label} download progress`}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={value}
+          value={value}
+          max={100}
           className="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-high"
-        >
-          <div
-            className="h-full rounded-full bg-accent-teal-dark dark:bg-accent-teal-light transition-[width] duration-300"
-            style={{ width: `${value}%` }}
-          />
-        </div>
+        />
         <p className="mt-1 font-micro text-micro text-on-surface-variant">
           {statusLabel(state)}
           {itemCount > 0 ? ` — ${completedItems} of ${itemCount}` : ''}

@@ -339,7 +339,7 @@ import { randomUUID } from 'node:crypto';
 ```
 
 ### S6479 — No array index in React keys
-**Fix:** Use stable unique IDs instead of array index.
+**Fix:** Use stable unique IDs instead of array index. When list items are structurally identical (same type, no id, no content), key by a **per-render ordinal** counted as you map — never the array index.
 
 ```ts
 // ❌ Bad
@@ -347,6 +347,36 @@ import { randomUUID } from 'node:crypto';
 
 // ✅ Good
 {items.map((item) => <div key={item.id}>{item}</div>)}
+
+// ✅ Also good — items have no id/content identity (e.g. Bible `line_break`)
+let lineBreakOrdinal = 0;
+{content.map((item) => {
+  if (item.type === 'line_break') {
+    lineBreakOrdinal += 1;
+    return <div key={`lb-${lineBreakOrdinal}`} />;
+  }
+  return <Verse key={`verse-${item.number}`} />;
+})}
+```
+
+### S6353 / S6582 / S1854 — Sort comparators, optional chains, redundant assignments
+**Fix:** Three related "reliability" findings that appear as High on new code:
+
+```ts
+// ❌ Bad — no comparator: sort is alphabetical/type-dependent
+[...days].sort();
+// ✅ Good — explicit comparator (dayKeys are ISO strings)
+[...days].sort((a, b) => a.localeCompare(b));
+
+// ❌ Bad — explicit null check where an optional chain reads cleaner (S6582)
+if (!parsed || parsed.year !== year) return fallback;
+// ✅ Good
+if (parsed?.year !== year) return fallback;
+
+// ❌ Bad — `run` already holds the value on every path (S1854)
+if (run > longest) longest = run;
+// ✅ Good
+longest = Math.max(longest, run);
 ```
 
 ### S6480 — Context provider values must be stable
@@ -421,6 +451,32 @@ function isLoopbackPeer(address?: string): boolean {
 
 If a hotspot genuinely cannot be avoided, it MUST be reviewed in the Sonar UI before merge.
 
+### Hotspot inventory — the gate needs 100% reviewed, so avoid these by construction
+
+These were all surfaced by the scan. Prefer code that does not create them; where a hotspot is intentional test/tooling code, mark it **Safe** in the Sonar UI.
+
+| Rule | Category | What triggers it | Avoid by |
+|---|---|---|---|
+| `S2245` | Weak crypto | `Math.random()` in `apps/web/scripts/test-utils/pwa-fixture.ts` (temp-dir name) | Fine for a non-security fixture — mark **Safe**, or use a counter. Never use `Math.random()` for tokens/ids. |
+| `S1523` | Code injection (RCE) | `runInNewContext(workerSource, sandbox)` in test-utils | It is a test sandbox for a known, repo-owned worker script — mark **Safe**. Never `runInNewContext` on untrusted input. |
+| `S5693` | DoS | Multer `FileInterceptor` missing `limits.fileSize` | **already mitigated** — `uploads.controller.ts` sets `limits: { fileSize: 10 MB }`. Leave it; mark **Safe**. Do not raise the cap to the 50 MB PDF constant (behavior change). |
+| `S5852` | DoS (ReDoS) | `.replace(/\/+$/, '')` trailing-slash trim | **fixed** — replaced with a linear `trimTrailingSlashes` helper in `download-manager.ts`. Prefer a linear trim over a regex for this shape. |
+| `S6504` | Permission | `COPY --chown=node:node` in `apps/web/Dockerfile` | Intentional: the runtime user is non-root. Mark **Safe**. |
+| `S6470` | Permission | `COPY . .` in both Dockerfiles | **mitigated** — root `.dockerignore` now excludes `.env*`, `**/.git`, `**/node_modules`, `**/dist`, `**/.next`, `**/.turbo`, `coverage`, `*.tfstate`. Mark **Safe**. Use nested globs (`**/x`), not bare `x` — a bare pattern only matches the context root. |
+| `S2819` | RCE / cross-origin | `message` listener without an origin check (`apps/web/scripts/sw-template.js`) | **fixed** — reject any `event.origin` that is not `self.location.origin`. Never act on a cross-origin message. |
+| `S1313` | Hardcoded IP | literal loopback IPs in tests | See the `S1313` rule above — derive from parts. |
+
+### Additional reliability rules (from the same backlog)
+
+| Rule | Message | Fix |
+|---|---|---|
+| `S2259` | "TypeError … might be null or undefined" | Guard the nullable value before dereferencing; never assume an injected/build-time payload exists. |
+| `S7764` | "Prefer `globalThis` over `self`" | In a service worker, `globalThis.self` is the same object as `self`; use `globalThis.self.<member>`. |
+| `S2871` | "Provide a compare function" (sort) | Always pass an explicit comparator, even when the default happens to match. |
+| `S6825` | "implicit role … defining it explicitly is redundant" | Remove the explicit `role` that duplicates the element's implicit role (e.g. `role="region"` on `<section>`). |
+
+**Required review step:** after a scan, open **Security Hotspots → To review** and assess every entry. "Safe" with a one-line rationale is a legitimate outcome; leaving one **To review** fails the gate.
+
 ---
 
 ## Data / API Handling Rules (opencode review)
@@ -464,6 +520,35 @@ return { accessToken, refreshToken, user };
 
 ---
 
+## Cleanup / Reliability Rules (from the 2026-10 SonarQube backlog)
+
+These appeared en masse on legacy files. Each is mechanical; fix in the same style everywhere.
+
+| Rule | Message | Fix |
+|---|---|---|
+| `S4325` | "This assertion is unnecessary since it does not change the type" | Remove the redundant `as T` cast. ❌ `input.baseRevision as number` ✅ `input.baseRevision` |
+| `S7778` | "Do not call `Array#push()` multiple times" | Push all items in one call, or push an array. ❌ `a.push(x); a.push(y)` ✅ `a.push(x, y)` |
+| `S7755` | "Prefer `.at(…)` over `[…length - index]`" | ❌ `batch[batch.length - 1]` ✅ `batch.at(-1)`; `arr.slice(0, len-12)` → `arr.slice(0, -12)` |
+| `S6551` | "Object's default stringification format" | Never `String(value)` on a possibly-object value. Narrow to a string first. ❌ `String(a ?? b ?? '')` ✅ `firstString(a, b) ?? ''` |
+| `S3863` | "imported multiple times" | Merge the duplicate import statements from the same module. |
+| `S6571` | "'unknown' overrides all other types in this union" | Remove the redundant `unknown` arm, or narrow the union. |
+| `S6598` | "Interface has only a call signature" | Convert to a function type alias: `type F = (x: T) => R`. |
+| `S2094` | "Unexpected empty class" | Make it a plain type/object, **unless** it is a reflective marker — then add a `readonly marker` field. |
+| `S3776` | Cognitive complexity > 15 | Extract cohesive helpers; preserve exact order/branches/messages. |
+| `S3626` | "Remove this redundant jump" | Drop the trailing `return;`/`continue` that ends the block. |
+| `S4144` | "implementation identical to line N" | Merge/parameterize the duplicate function. |
+| `S7059` | "asynchronous operation outside of the constructor" | Move async init to an explicit `init()`/`open()`; update callers. |
+| `S6811` | ARIA `progressbar`/`status` role | Use `<progress>` / `<output>` (see Accessibility). |
+| `S6704`/`S6845`/`S6847` | Non-interactive element with handlers | Use a real `<button>`, or add `role` + `tabIndex` + keyboard handling per S6701. |
+| `S7735` | "Unexpected negated condition" | Invert to the positive form where it reads better. |
+| `S7718` | catch param naming | Name a used catch param `error_` (or a descriptive name); use bare `catch` when unused. |
+| `S4624` | Nested template literals | Extract the inner literal/expression to a variable. |
+| `S6594`/`S4030` | `Set` for membership | Use `new Set([...])` + `.has()` instead of array `.includes()`. |
+
+**Never "fix" one of these by changing behavior.** If the asserted type, the pushed order, or the constructor's async timing is load-bearing, stop and report it instead.
+
+---
+
 ## Accessibility Rules
 
 ### S6700 — Use semantic HTML
@@ -476,6 +561,57 @@ return { accessToken, refreshToken, user };
 | `<div role="separator">` | `<hr>` |
 | `<div role="button">` | `<button>` |
 | `<div role="button">` | `<input type="button">` |
+| `<div role="progressbar" aria-valuenow=…>` | `<progress value=… max=…>` (S6811) |
+| `<div role="status">` | `<output>` (S6811) |
+
+### S6811 — Prefer native `<progress>` / `<output>` over ARIA roles
+**Fix:** Use the native element. A `<progress>` takes `value`/`max` instead of
+`aria-valuenow`/`aria-valuemax`, so update tests that queried the old attributes.
+
+```tsx
+// ❌ Bad — flagged: custom progressbar role
+<div role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+  <div style={{ width: `${percent}%` }} />
+</div>
+
+// ✅ Good — native element
+<progress value={percent} max={100} aria-label="Yearly reading goal progress" />
+```
+Tests: `screen.getByRole('progressbar')` still works; assert `toHaveAttribute('value', '50')`
+and `max` instead of `aria-valuenow`.
+
+### S6825 — Remove redundant ARIA role on a semantic element
+**Fix:** Drop the explicit role when the native element already exposes it.
+`<section aria-label="…">` has an implicit `role="region"`; writing
+`role="region"` as well is redundant. `getByRole('region', { name })` still
+works after removal because the accessible name keeps the implicit region role.
+
+```tsx
+// ❌ Bad — redundant role on <section>
+<section aria-label="Conflicts needing resolution" role="region">…</section>
+
+// ✅ Good — implicit region role from <section> + aria-label
+<section aria-label="Conflicts needing resolution">…</section>
+```
+
+### S6845 / S6847 — No keyboard listener on a non-interactive element
+**Fix:** Put keyboard handling on a real interactive element, or attach it at the
+document/window level for global shortcuts (e.g. Escape) instead of an
+`onKeyDown` handler on a non-interactive JSX element.
+
+```tsx
+// ❌ Bad — keyboard listener on a non-interactive element
+<dialog onKeyDown={handleKeyDown}>…</dialog>
+
+// ✅ Good — document-level listener for a global shortcut
+useEffect(() => {
+  const handler = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') onCancel();
+  };
+  document.addEventListener('keydown', handler);
+  return () => document.removeEventListener('keydown', handler);
+}, [onCancel]);
+```
 
 ### S6701 — Interactive elements need keyboard support
 **Fix:** Add `onKeyDown` or `onKeyUp` to non-interactive elements with `onClick`.
@@ -584,7 +720,12 @@ do NOT change working code that uses the standalone `split()`.
 ### React deprecations
 | ❌ Deprecated | ✅ Replacement |
 |---------------|----------------|
-| `FormEvent` (bare import) | `React.FormEvent<HTMLFormElement>` for form handlers, or `SubmitEvent`/`ChangeEvent`/`SyntheticEvent` as appropriate |
+| `FormEvent` (bare import) | `React.SyntheticEvent<HTMLFormElement>` for form handlers, or `SubmitEvent`/`ChangeEvent` as appropriate |
+
+**`FormEvent` is deprecated in @types/react 19 — do not use `React.FormEvent` either.** The
+`@deprecated` tag says *"FormEvent doesn't actually exist"*; prefer `React.SyntheticEvent<T>`
+for a generic `onSubmit` handler, or a more specific event type. The existing entry that
+recommended `React.FormEvent<HTMLFormElement>` is superseded by this rule.
 
 ### Testing deprecations
 | ❌ Deprecated | ✅ Replacement |
@@ -770,6 +911,76 @@ flags.every(Boolean);
 
 ---
 
+## Test Isolation Rules (opencode review)
+
+Recurring findings from the AI code review about tests that mount real runtime
+side-effects. These are not Sonar rules but must be enforced in every review.
+
+### Shell/apollo-consuming component tests must mock the shared Apollo client
+**Fix:** Any test that mounts a component tree reaching `apolloClient.query()`
+(for example `AppShell` → `Sidebar` → `ProgressWidget`, or `AuthenticatedLayout`
+→ `AppShell`) must `jest.mock` the shared client module. Without the mock,
+rendering fires a real network request (e.g. to `localhost:3005`) inside jsdom,
+which is slow, flaky, environment-dependent, and can leak `act(...)` warnings
+from late state updates. Default the mocked `query` to a never-resolving promise
+so the consuming effect is inert and the component stays in its loading state.
+Mocking the React provider alone is not enough — the production code uses the
+client singleton, not the provider.
+
+```tsx
+// ❌ Bad — mounts the shell, which fires a real MyProgress fetch in jsdom
+import { render, screen } from '@testing-library/react';
+import { AppShell } from './app-shell';
+
+it('renders children', () => {
+  render(<AppShell><div>Content</div></AppShell>);
+  expect(screen.getByText('Content')).toBeInTheDocument();
+});
+
+// ✅ Good — the shared client is mocked; the query never leaves the process
+jest.mock('../../lib/apollo-client', () => ({
+  apolloClient: { query: jest.fn(() => new Promise(() => {})) },
+}));
+import { render, screen } from '@testing-library/react';
+import { AppShell } from './app-shell';
+
+it('renders children', () => {
+  render(<AppShell><div>Content</div></AppShell>);
+  expect(screen.getByText('Content')).toBeInTheDocument();
+});
+```
+
+---
+
+## Fire-and-forget helpers and side-effect ordering (opencode review)
+
+### FIRE-AND-FORGET-CONTRACT — "Never throws" must guard synchronous throws too
+**Fix:** A helper documented as fire-and-forget / "never throws" must not throw
+synchronously either. A trailing `.catch()` only handles a rejected promise; it
+does nothing for a synchronous throw from argument evaluation or from a `mutate`
+that throws instead of rejecting. Wrap the **entire** body in `try/catch`, and
+return a promise that resolves to `void` so callers may either ignore it or
+`await` it.
+
+❌ `client.mutate({ operationId: globalThis.crypto.randomUUID() /* or mutate throws */ }).catch(() => {})` — the UUID or the `mutate` call can throw before `.catch` is attached.
+✅ `try { return client.mutate({...}).then(() => undefined, () => undefined); } catch { return Promise.resolve(); }`
+
+### SIDE-EFFECT-ORDERING — Await a write before re-reading, and keep unrelated effects out of a failure boundary
+**Fix:** Two related ordering rules. (1) When a UI action writes then immediately
+re-reads (a check-in then `loadData`), `await` the write first — a fire-and-forget
+write races the read and renders stale data. (2) A side effect that must never
+determine the success/failure of a primary operation (recording analytics/activity
+after a create) must sit **outside** the primary operation's `try/catch`, or a
+throw there is misreported as the primary operation failing.
+
+❌ `recordActivity(...); loadData(year);` — reload typically renders before the write lands.
+✅ `void recordActivity(...).then(() => loadData(year));`
+
+❌ `try { await createPost(); recordActivity(...); setBody(''); } catch { toast('Failed to post'); }` — an activity throw reports a succeeded post as failed.
+✅ `await createPost(); /* separate */ recordActivity(...); setBody('');` — keep the recorder out of the create `try/catch`.
+
+---
+
 ## Quick Reference — Common Fixes
 
 | Issue | Fix |
@@ -835,6 +1046,7 @@ flags.every(Boolean);
 | Subject-mismatch fence cleared by `null` | Keep the fence sticky until an affirmative match |
 | SW cache miss offline | Fall back to cached shell, don't reject |
 | Unguarded IndexedDB `createObjectStore` | Guard with `objectStoreNames.contains` (+`oldVersion`) |
+| Shell test mounts real Apollo query | `jest.mock` shared `apollo-client`; default `query` to a pending promise |
 
 ## PWA E2E infrastructure findings — CI run 37032368483
 
@@ -883,3 +1095,161 @@ flags.every(Boolean);
   an accessible `role="status"` loading state while pending and a signed-out
   message when no owner exists. Cover it with a deferred-hydration regression
   test for both the initial hash and an immediate `hashchange`.
+
+## Oracle deployment review findings — AI review IDs (not Sonar rules)
+
+### DEPLOY-EXACT-RELEASE — Deploy only the approved immutable release
+**Fix:** Pin every image and source artifact to the approved SHA; verify the deployed image IDs/OCI labels, and explicitly use Compose `--no-build` so a local build cannot silently replace the approved artifact.
+
+❌ Reuse prepared candidate `7fefa49` when the approved target is `65aa90f`, or let Compose build an image during deployment.
+✅ Verify that all deployed images identify approved SHA `65aa90f`, then run Compose with `--no-build`.
+
+### DEPLOY-WORKER-PARITY — Prepare the independent conversion worker
+**Fix:** Run the worker independently from the API container using the same API image and `node apps/api/dist/worker/main.js`; match the API's database and book-storage mounts.
+
+❌ Deploy API and web only, with no conversion worker.
+✅ Deploy the API, web, and worker from the same approved API image, with matching database and book mounts.
+
+### DEPLOY-READINESS-EVIDENCE — Prove application readiness, not just process health
+**Fix:** A static `health: { status: "ok" }` proves only process response. Verify a DB-backed authenticated operation and worker/storage checks before declaring the release ready.
+
+❌ Treat a successful static health response as proof the database, authentication, worker, and storage work.
+✅ Check an authenticated DB-backed operation and verify worker processing and book-storage access.
+
+### DEPLOY-ARTIFACT-CAPABILITY — Keep signed artifact capabilities out of logs and argv
+**Fix:** Treat signed artifact URLs as temporary bearer secrets: do not log them or pass them in process arguments. Retain permanent GitHub credentials locally; capture redirects in memory and send the signed URL through SSH stdin to a quiet, bounded remote downloader.
+
+❌ Log a signed URL or pass it as a remote command-line argument; copy permanent GitHub credentials to the server.
+✅ Keep credentials local, capture the redirect in memory, and provide the temporary URL over SSH stdin to a quiet downloader with a time/size bound.
+
+### DEPLOY-RUNBOOK-CURRENCY — Separate historical assumptions from verified state
+**Fix:** Label historical ACA and unmerged-branch instructions as historical. Record current VM, routing, merge, and asset-retention state with the verification date and target SHA.
+
+❌ Present old ACA or unmerged-branch assumptions as verified current VM/routing state.
+✅ Record SHA- and date-specific checks for the current VM, routing, merge, and asset retention.
+
+### DEPLOY-MIGRATION-PROOF — Prove migration state before resolving a ledger mismatch
+**Fix:** Resolve a migration-ledger mismatch only after catalog equivalence is established and fresh, quiesced database and book-storage backups are confirmed.
+
+❌ Mark a migration resolved from a ledger entry alone, without checking catalog equivalence or fresh backups.
+✅ Verify catalog equivalence and confirm fresh quiesced DB/book backups before resolving the ledger discrepancy.
+
+### DEPLOY-STATIC-RETENTION — Retain immutable assets across the release union
+**Fix:** Retain the union of old and new hashed Next static assets. Stop on any byte mismatch for the same asset path, and ensure missing assets return 404 rather than an HTML fallback.
+
+❌ Delete old hashed assets at deploy, overwrite a colliding path, or serve the app HTML for a missing asset.
+✅ Keep old and new hashed assets, stop on a byte collision, and return 404 for missing static assets.
+
+### DEPLOY-DIGEST-REPRESENTATION — Verify OCI identity across descriptor types
+**Fix:** OCI config, manifest, and index digests identify different objects. A CI-recorded config ID can differ from Docker 29/containerd's reported manifest ID; verify the config-to-manifest-to-index reference chain, blob hashes, loaded descriptor and runtime config, ordered `rootFS.diffIDs`, OS/architecture, and revision. Do not reject or waive an `.Id` mismatch without verifying this chain.
+
+❌ Fail deployment solely because the runtime `.Id` differs from CI's config ID, or waive the mismatch without checking image contents and metadata.
+✅ Verify each descriptor and referenced blob hash, then compare the loaded descriptor, runtime config, ordered `rootFS.diffIDs`, OS/architecture, and revision with the approved image.
+
+### DEPLOY-IMAGE-STORE-CAPACITY — Budget actual image-store consumption
+**Fix:** Gzip transfer size and `inspect.Size` are not portable measures of required capacity. Budget stored content, unpacked snapshots, temporary files, and a hard disk reserve; estimate padded archive-layer needs conservatively and monitor actual filesystem usage. Load images sequentially within the bounded budget.
+
+❌ Treat gzip size as image-load cost or require `inspect.Size` equality as a portable capacity check.
+✅ Use conservative padded layer estimates, account for stored and unpacked data plus temporary space and reserve, monitor free disk, and load one image at a time.
+
+### DEPLOY-BACKUP-DATABASE-SELECTION — Select the application database explicitly
+**Fix:** On a shared PostgreSQL cluster, `POSTGRES_DB=postgres` may name the maintenance database, not the application database. Dump with explicit `--dbname=transformlit`; require a nonempty dump and `pg_restore --list` output, then restore in isolation and verify application identity, tables, and migration ledger before relying on it.
+
+❌ Dump `$POSTGRES_DB` without confirming it targets the application database, or accept a successful command without checking dump contents.
+✅ Use `pg_dump --dbname=transformlit`, verify the nonempty archive and its `pg_restore --list`, then isolated-restore and check app identity, tables, and migration ledger.
+
+### DEPLOY-COMPOSE-SUBCOMMAND-FLAGS — Verify flags against the installed subcommand
+**Fix:** Compose flags differ by subcommand: `compose run` has no `--no-build`; use a build-free pinned-image configuration with `run --rm --no-deps --pull never`. `compose up` supports `--no-build --no-deps`. Verify the installed CLI's actual options before execution.
+
+❌ Pass `--no-build` to `compose run` or assume `run` and `up` share flags.
+✅ Use pinned images and a build-free config with `compose run --rm --no-deps --pull never`, or use `compose up --no-build --no-deps` when appropriate.
+
+### DEPLOY-MAINTENANCE-DRAIN — Drain writers before taking backups
+**Fix:** An Nginx graceful reload that serves 503 to new requests does not close existing WebSockets or stop API/worker processes and their database or storage writes. Stop the API and worker, then confirm their processes and all DB/storage writers are absent before backing up.
+
+❌ Treat a 503 maintenance page or graceful Nginx reload as proof there are no active writers.
+✅ After maintenance mode, stop API and worker processes and verify no API, worker, DB, or storage writers remain before the backup.
+
+### DEPLOY-CATALOG-EXACTNESS — Compare migration catalogs exactly
+**Fix:** Migration equivalence requires exact `format_type` including timestamp precision, schema and enum ordering, primary/foreign-key definitions, index definitions and valid/ready state, and validated nondeferrable constraints. Matching generic types or object names alone is insufficient.
+
+❌ Declare catalogs equivalent because tables and generic column types or constraint names match.
+✅ Compare exact formatted types/precision, schema and enum order, PK/FK/index definitions and index validity/readiness, plus validation and deferrability of constraints.
+
+### DEPLOY-MAINTENANCE-ACCEPTANCE-ORDER — Validate service in safe reopening order
+**Fix:** While public traffic remains in maintenance, prove internal readiness; run static public checks under maintenance; reload Nginx to reopen traffic while retaining static locations; then immediately run public acceptance checks. Do not require public API success during the 503 window or restore a whole old Nginx file that discards static routes.
+
+❌ Require public API acceptance while maintenance intentionally returns 503, or replace all of Nginx config with an old copy that loses static locations.
+✅ Verify internally during 503, check public static assets under maintenance, reload with static locations retained, then immediately verify public acceptance.
+
+**Bound the activation checks:** a successful reload signal is not proof that the new config is active. Poll reload/activation for a bounded interval and use explicit HTTP connect and request timeouts; verify direct-origin and public responses for every controller/user-approved active hostname.
+
+### DEPLOY-BIND-MOUNT-INODE-CONSISTENCY — Verify the mounted Nginx config inode
+**Fix:** A single-file Docker bind mount remains attached to the original inode. Replacing the host pathname atomically can make the host checksum describe new bytes while the container still reads the old inode. Before edits or reloads, compare host and container-mounted device/inode and intended file hash, and inspect the effective config with `nginx -T`. Repair an existing stale mount narrowly while retaining its original routes; use a read-only mount before cutover. For future updates, preserve the host source inode rather than atomically renaming a replacement over it.
+
+❌ Replace the host config pathname, see the desired host checksum plus a successful `nginx -t`/reload signal, and assume the running container loaded the edit.
+✅ Confirm host and mounted-source device/inode/hash agreement and the intended directives in `nginx -T`; after graceful reload, use bounded polling and timed direct-origin/public checks on every approved active hostname to prove activation.
+
+If the controller explicitly approves a temporary dual-inode workaround, remount only the private config bind read/write, update both the actual mounted file and host source in place, then restore read-only before testing or reloading. Verify the intended hash in both files and `nginx -T`, verify the mount is read-only, and record both inodes. This is a temporary content workaround, not an inode repair; Docker recreation must pass the strict same-inode gate against the current host source. Keep fallback/runtime work marked ongoing until activation and acceptance checks actually pass.
+
+For an explicitly authorized nginx-only recreation, capture the nginx ID/start time before and after, verify the pinned image/config/ports/network/mounts, and compare every unrelated container ID/start time to the pre-recreation baseline. Record the nginx-only baseline exception explicitly; never report “all containers unchanged” when nginx was recreated.
+
+❌ Recreate nginx and compare only its running status, or describe the original eight-container baseline as unchanged.
+✅ Record the authorized old/new nginx identities and prove the other seven containers and shared volumes/images are unchanged; require host/mount inode agreement after recreation.
+
+### DEPLOY-NAMESPACE-PROC-FD-VISIBILITY — Separate open-FD lifetime from procfs visibility
+**Fix:** `/proc/self/fd/N` is resolved through the procfs view and PID namespace visible to the process doing the lookup. An FD can remain open while that pathname is inaccessible after `nsenter` because procfs and PID namespace views do not align. Reading an inherited raw descriptor (`<&3`) proves FD lifetime only; it does not prove procfs pathname visibility or bind-mount correctness. Verify process/PID-namespace and procfs alignment independently, and do not assume Docker accepts a cross-namespace bind mount.
+
+❌ Conclude FD 3 was closed because `/proc/self/fd/3` is inaccessible after `nsenter`, or treat a raw-FD read as proof that a cross-namespace bind works.
+✅ Test inherited-FD readability separately; resolve `/proc/<pid>/fd/N` only from an aligned PID/procfs view, and verify namespace ownership and mount support before relying on a cross-namespace path.
+
+### DEPLOY-ACCEPTANCE-MATRIX-COMPLETENESS — Require every approved host/endpoint/route cell
+**Fix:** Derive the initial-maintenance matrix from the controller/user-approved active-hostname inventory: `N` active hostnames × public DNS/direct origin × app root, auth, GraphQL HTTP, and GraphQL WS = `8N` cells. Every cell must complete transport and return HTTP 503. Retain each cell's command/result, curl exit status, HTTP status, stdout, and stderr (with secrets redacted). Do not stop after the first failure and silently omit remaining cells; timeout or a missing cell fails the phase. Later phases use their own expected statuses; a DNS, TLS, timeout, or connection error is never a successful HTTP 503. The historical two-host example was 16 cells, not a standing requirement to probe a hostname retired from this server's acceptance scope.
+
+❌ Break on the first failed probe, treat a missing result or curl error as the expected maintenance 503, or report only an aggregate green flag.
+✅ Record all `8N` approved-host × endpoint × route observations with command, transport exit, HTTP status, and expected status; fail the gate if any cell is absent or does not match.
+
+### DEPLOY-ACCEPTANCE-PHASE-SCOPE — Separate maintenance, static, and open acceptance
+**Fix:** Keep probes scoped to the actual deployment phase. Initial maintenance runs before the target static service exists, so check only app/auth/GraphQL HTTP and WS 503 on every approved active hostname and both public/direct-origin endpoints. After static service/snippets are installed, separately verify old/new static bytes, immutable cache headers, missing-asset 404, and continued API/auth/WS 503. Only after normal routes are restored, verify app/API/auth, PWA, static, and worker/readiness behavior.
+
+❌ Require target static 200s during initial maintenance before the static service is running, or omit static-under-maintenance verification after publishing it.
+✅ Run three explicit phases: maintenance-only 503; static published while API/auth remain 503; then full open-phase acceptance with static retained.
+
+### DEPLOY-EFFECTIVE-ORIGIN-OWNERSHIP — Prove active hostname routing and writer ownership
+**Fix:** Maintain an explicit controller/user-approved active-hostname inventory for this server. For every active hostname, correlate a unique public response marker with direct-origin probes using correct SNI/certificate, and retain both public and origin results for each acceptance cell. A hostname retired from this server's acceptance scope is not a DNS deletion and does not prove its other origin cannot write the shared database or book storage. Before backups, account for every DB/book-storage writer across all origins and services, including other origins that might still serve a retired hostname. `CF-Cache-Status: DYNAMIC` alone is not proof that public traffic reached this nginx origin; if public and direct-origin results disagree, identify the effective public origin path and stop before stopping writers or taking backups. Do not purge Cloudflare caches or change DNS without authorization. If Cloudflare access is unavailable, request nonsecret route/marker evidence or an explicit scope change; never invent credentials or claim that hostname passed.
+
+For this server's current approved scope, `app.transformlit.com` is active; `transformlit.darjosh.dev` is retired from this server's acceptance inventory only. Leave its DNS/external route unchanged and do not claim it was validated by this server. Still establish that its other origin cannot write shared DB/book-storage, or include those writers in the drain/ownership gate.
+
+❌ Treat `CF-Cache-Status: DYNAMIC` plus direct-origin 503 as proof the public hostname is in maintenance, delete/ignore a retired hostname's DNS, or assume its other origin cannot write shared data.
+✅ Correlate unique markers on public and direct-origin paths for every approved active hostname, preserve per-cell results, leave retired-host DNS untouched, and account for every origin's DB/storage writers before backup.
+
+### DEPLOY-CHECKER-HTML-NORMALIZATION — Normalize HTML signatures consistently
+**Fix:** Normalize both the response body and the signature to the same case before testing for an HTML fallback. A legitimate nginx 404 body may be HTML; reject a missing asset only when it returns the wrong status or an HTML fallback with HTTP 200.
+
+❌ `b'<!DOCTYPE html>' in body.upper()` (mixed-case comparison), or fail a correct 404 because its error body is HTML.
+✅ `b'<!DOCTYPE HTML>' in body.upper()` or `b'<!doctype html>' in body.lower()`; accept an actual 404 and fail an HTML fallback served with HTTP 200.
+
+### DEPLOY-CHECKPOINT-RESUME-GATES — Resume from current durable state
+**Fix:** Every state-changing command invalidates assumptions tied to the previous state. On resume, inspect the latest successful command/result, current migration ledger/schema and DB-write state, running service IDs/start times, and backup/recovery evidence. Reuse still-valid evidence, repeat only checks invalidated by later writes or a required post-quiescence gate, and continue from the next incomplete phase. A busy/waiting task is not progress without new evidence.
+
+❌ After `prisma migrate resolve` succeeds and advances the ledger from the four-entry pre-state to five finished entries, rerun the four-entry catalog gate or call `resolve` again because `test ! -e reader-catalog-transformlit-corrected.txt` failed; report eight migrations before deploy ran.
+✅ Reuse/checksum the approved catalog proof and retain the successful resolve result. At the observed 13:03:48 checkpoint, the ledger had five finished entries and the PWA migrations were still pending: read that current state, run the pending deploy once, and expect eight finished entries only after it succeeds. Put any new observation in a unique evidence file without overwriting the original proof.
+
+### DEPLOY-AUTH-CREDENTIAL-PROVENANCE — Verify authenticated probe credential origin and type
+**Fix:** Before an authenticated production probe, verify the credential belongs to an existing session at the canonical application origin and is an existing application access JWT. The protected GraphQL `me` resolver uses `JwtAuthGuard`/Passport Bearer JWT authentication, validates the configured `JWT_SECRET`, and resolves `sub` to an existing nondeleted database user; application access JWTs expire after 15 minutes. A refresh cookie is not a standalone access JWT; neither a fresh provider/OAuth token nor a token copied from a retired hostname/other deployment proves the deployed app's authenticated path. Pass raw JWT bytes to a helper that adds `Bearer`; never double-prefix or quote the token. Do not print credentials, token claims, user identifiers, or secret material.
+
+❌ Try fresh provider/refresh tokens or copy a token from a retired deployment after `UNAUTHENTICATED`; rotate secrets or restart services, then report a production login regression or a pass without a canonical protected read.
+✅ Verify existing access-JWT provenance/type from the canonical app origin, pass only the raw token to a helper that adds the Bearer header, and perform the approved protected DB-backed read. Record only nonsecret origin/operation/status/error metadata. If no approved existing token is available or the read returns `UNAUTHENTICATED`, report authentication acceptance blocked; do not retry token sources, mutate accounts, rotate secrets, or restart services.
+
+### DEPLOY-MIGRATION-ADDITIVE-SCOPE — Never let `migrate dev` resolve unrelated drift
+
+**Fix:** `prisma migrate dev` auto-generates whatever DDL closes the gap between the live database and the Prisma schema, including pre-existing drift that is intentionally unresolved (a column deliberately retained in the DB while dropped from the schema). Review every generated `migration.sql` before committing it and delete any statement outside the task's schema change. A feature migration must contain only that feature's additive changes; destructive statements (`DROP COLUMN`, `DROP TABLE`, type narrowing) on unrelated tables reverse documented decisions and violate the additive rollback policy. When a column's retention is documented in a prior migration, the drift is the documented state, not something to "fix". After editing an already-applied migration, reconcile `_prisma_migrations.checksum` and the DB state so `prisma migrate status` stays consistent.
+
+❌ Ship a migration named `<feature>_activity` that also contains `ALTER TABLE "book_progress" DROP COLUMN "clientEntityId";`, silently reversing `20261001000300_pwa_contract_cleanup`'s documented decision to retain the column.
+✅ Inspect the generated SQL; remove the out-of-scope DROP (and any drift-resolution DDL); add a NOTE explaining why the documented drift is left untouched; restore the local DB column and update the recorded checksum.
+
+### DEPLOY-CHECKER-FAILURE-EVIDENCE — Preserve probe failures before recovery
+**Fix:** Save each checker command, UTC time, exit status, stdout, and stderr (with credentials/tokens redacted) before parsing output, hashing results, or attempting rollback/recovery. Failure wrappers must be syntax/import checked and exercised with stubs for both the initiating command failure and recovery failure so a wrapper exception cannot erase the original checker result. Distinguish an output-file exists guard from a failed validation command: inspect and reuse existing proof; use a new unique evidence path only for a genuinely new observation, never overwrite or rerun a completed state-changing step to satisfy a filename guard.
+
+❌ Let a missing `hashlib` import in a failure handler discard the maintenance check’s exit status/stdout/stderr, then claim the public gate passed or guess which route failed.
+✅ Persist the raw checker result first; parse it second; if recovery runs, record its separate command/result while preserving the initiating failure evidence.

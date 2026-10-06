@@ -135,13 +135,12 @@ export function BookReaderView({
         annotationsOpen={annotationsOpen}
       />
       {statusNotice ? (
-        <p
+        <output
           data-testid="reader-status-notice"
-          role="status"
           className="border-b border-outline-variant bg-secondary-container/40 px-4 py-2 font-small text-small text-on-secondary-container"
         >
           {statusNotice}
-        </p>
+        </output>
       ) : null}
       <UnavailableFeatures capabilities={capabilities} />
       {conflicts ? (

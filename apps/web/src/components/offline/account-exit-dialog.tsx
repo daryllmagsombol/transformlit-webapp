@@ -103,12 +103,23 @@ export function AccountExitDialog({
     };
   }, [open]);
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDialogElement>) => {
-    if (event.key === 'Escape') {
+  // Escape closes the dialog. The native modal already emits `cancel` in a real
+  // browser; this scoped document-level listener additionally covers
+  // environments (e.g. jsdom) where that event is not synthesized, without
+  // putting a keyboard listener on a non-interactive element. It mirrors the
+  // previous dialog-scoped handler: only keydowns inside the dialog count, and
+  // `preventDefault` suppresses the duplicate native `cancel` event.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (!dialogRef.current?.contains(event.target as Node)) return;
       event.preventDefault();
       onCancel();
-    }
-  };
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [open, onCancel]);
 
   if (!open) return null;
 
@@ -129,7 +140,6 @@ export function AccountExitDialog({
       aria-labelledby={headingId}
       aria-busy={busy}
       onCancel={onCancel}
-      onKeyDown={handleKeyDown}
       data-testid="account-exit-dialog"
       className="w-[calc(100%-2rem)] max-w-md rounded-xl border border-outline-variant bg-surface p-5 text-on-surface shadow-lg backdrop:bg-black/40"
     >
@@ -139,11 +149,11 @@ export function AccountExitDialog({
         </h2>
         <p className="mt-1 font-body text-small text-on-surface-variant">{description}</p>
 
-        {!recovery ? (
+        {recovery ? null : (
           <div className="mt-3 rounded-lg border border-outline-variant bg-surface-container-low p-3">
             <WorkSummary work={work} />
           </div>
-        ) : null}
+        )}
 
         {error ? (
           <p role="alert" className="mt-3 font-small text-small text-error">

@@ -68,11 +68,6 @@ function pendingTargets(pending: MergePendingOperation, annotation: MergeAnnotat
   return pending.entityId !== null && pending.entityId === annotation.id;
 }
 
-/** True when a queued operation targets this tombstoned entity id. */
-function pendingTargetsEntity(pending: MergePendingOperation, entityId: string): boolean {
-  return pending.entityId !== null && pending.entityId === entityId;
-}
-
 function annotationKey(annotation: MergeAnnotation): string {
   return annotation.clientEntityId === null
     ? `entity:${annotation.id}`
@@ -101,7 +96,6 @@ function tombstoneKey(tombstone: MergeTombstone): string {
 export function mergeSnapshot(input: MergeSnapshotInput): MergeSnapshotResult {
   const pending = [...input.pending];
   const pendingFor = (annotation: MergeAnnotation) => pending.some((operation) => pendingTargets(operation, annotation));
-  const pendingForEntity = (entityId: string) => pending.some((operation) => pendingTargetsEntity(operation, entityId));
 
   const snapshotByKey = new Map<string, MergeAnnotation>();
   for (const annotation of input.snapshot.annotations) snapshotByKey.set(annotationKey(annotation), annotation);

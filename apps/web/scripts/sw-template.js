@@ -12,8 +12,17 @@
  */
 const PWA_BUILD = /*__PWA_BUILD__*/ null;
 
+// The build step replaces the placeholder above with the release payload. If the
+// raw template is ever executed (placeholder not substituted), fail loudly
+// instead of dereferencing a null build.
+if (!PWA_BUILD) {
+  throw new Error('The service worker requires an embedded PWA build payload');
+}
+
 const CACHE_PREFIX = 'transformlit-shell-';
-const RELEASE_CACHE = `${CACHE_PREFIX}${PWA_BUILD.releaseId}`;
+const RELEASE_ID = PWA_BUILD.releaseId;
+const INVENTORY_DIGEST = PWA_BUILD.inventoryDigest;
+const RELEASE_CACHE = `${CACHE_PREFIX}${RELEASE_ID}`;
 const INVENTORY_URL = '/pwa-assets.json';
 const OFFLINE_URL = '/offline';
 const SHELL_ASSETS = PWA_BUILD.assets;
@@ -57,8 +66,7 @@ async function verifyAssetInventory() {
     throw new Error('Unable to verify the shell asset inventory');
   }
   const inventory = await response.json();
-  const matches =
-    inventory && inventory.releaseId === PWA_BUILD.releaseId && inventory.inventoryDigest === PWA_BUILD.inventoryDigest;
+  const matches = inventory && inventory.releaseId === RELEASE_ID && inventory.inventoryDigest === INVENTORY_DIGEST;
   if (!matches) {
     throw new Error('Refusing a mixed-release shell installation');
   }
@@ -93,7 +101,7 @@ async function activateRelease() {
       .filter((key) => key.startsWith(CACHE_PREFIX) && key !== RELEASE_CACHE)
       .map((key) => caches.delete(key)),
   );
-  await self.clients.claim();
+  await globalThis.self.clients.claim();
 }
 
 async function respondWithDocumentFallback(request) {
@@ -129,10 +137,13 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(activateRelease());
 });
 
-self.addEventListener('message', (event) => {
+globalThis.self.addEventListener('message', (event) => {
+  // Only same-origin pages may drive the worker (currently just the update
+  // prompt asking it to activate). Reject any cross-origin sender up front.
+  if (event.origin && event.origin !== globalThis.self.location.origin) return;
   const message = event.data ?? {};
   if (message.type === 'SKIP_WAITING') {
-    self.skipWaiting();
+    globalThis.self.skipWaiting();
   }
 });
 

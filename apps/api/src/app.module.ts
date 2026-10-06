@@ -19,6 +19,7 @@ import { ChatModule } from './chat/chat.module.js';
 import { BooksModule } from './books/books.module.js';
 import { FeedModule } from './feed/feed.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
+import { ProgressModule } from './progress/progress.module.js';
 import { AzureModule } from './azure/azure.module.js';
 import { UploadsModule } from './uploads/uploads.module.js';
 import { HealthModule } from './health/health.module.js';
@@ -144,6 +145,7 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
     BooksModule,
     FeedModule,
     NotificationsModule,
+    ProgressModule,
     HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ContextThrottlerGuard }],

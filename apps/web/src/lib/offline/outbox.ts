@@ -185,7 +185,10 @@ export function pendingProgressFor(
     (operation) => operation.entityKey === entityKey && isCoalescable(operation),
   );
   if (matching.length === 0) return null;
-  return matching.reduce((latest, operation) => (operation.seq > latest.seq ? operation : latest));
+  return matching.reduce(
+    (latest, operation) => (operation.seq > latest.seq ? operation : latest),
+    matching[0],
+  );
 }
 
 /** The set of operation ids still queued for an entity (dependency sources). */

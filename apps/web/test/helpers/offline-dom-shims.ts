@@ -14,19 +14,19 @@ import { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from '
 
 // jsdom does not expose the WHATWG encoding globals that the offline download
 // manager (and its specs) rely on. Provide Node's implementations when absent.
-if (typeof globalThis.TextEncoder === 'undefined') {
+if (globalThis.TextEncoder === undefined) {
   Object.defineProperty(globalThis, 'TextEncoder', { writable: true, value: NodeTextEncoder });
 }
-if (typeof globalThis.TextDecoder === 'undefined') {
+if (globalThis.TextDecoder === undefined) {
   Object.defineProperty(globalThis, 'TextDecoder', { writable: true, value: NodeTextDecoder });
 }
 // jsdom's Blob lacks `arrayBuffer()`; the download manager hashes stored page
 // bytes, so expose Node's Blob (which implements it) when missing.
-if (typeof globalThis.Blob === 'undefined' || typeof globalThis.Blob.prototype.arrayBuffer !== 'function') {
+if (globalThis.Blob === undefined || typeof globalThis.Blob.prototype.arrayBuffer !== 'function') {
   Object.defineProperty(globalThis, 'Blob', { writable: true, value: NodeBlob });
 }
 // `crypto.subtle` is used to hash download assets; jsdom has no WebCrypto.
-if (typeof globalThis.crypto === 'undefined' || !globalThis.crypto.subtle) {
+if (globalThis.crypto === undefined || !globalThis.crypto?.subtle) {
   Object.defineProperty(globalThis, 'crypto', { writable: true, value: webcrypto });
 }
 
@@ -70,6 +70,6 @@ export class MinimalResponse {
   }
 }
 
-if (typeof globalThis.Response === 'undefined') {
+if (globalThis.Response === undefined) {
   Object.defineProperty(globalThis, 'Response', { writable: true, value: MinimalResponse });
 }

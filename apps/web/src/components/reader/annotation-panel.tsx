@@ -42,7 +42,7 @@ export interface AnnotationRecords {
     readonly bookId: string;
     readonly contentVersion: number;
     readonly page: number;
-    readonly anchor: unknown | null;
+    readonly anchor: unknown;
   }): Promise<ReaderSaveResult>;
   removeBookmark(input: {
     readonly bookId: string;
@@ -151,7 +151,7 @@ function findHighlightForItem(
   return highlights.find((highlight) => {
     if (contentVersion >= 1 && highlight.contentVersion !== contentVersion) return false;
     const recordAnchor = highlight.anchor as Partial<PageTextAnchor> | null;
-    if (!recordAnchor || recordAnchor.version !== ANCHOR_VERSION) return false;
+    if (recordAnchor?.version !== ANCHOR_VERSION) return false;
     if (recordAnchor.page !== anchor.page) return false;
     return recordAnchor.startOffset === anchor.startOffset && recordAnchor.endOffset === anchor.endOffset;
   });
@@ -182,9 +182,9 @@ function SaveStatusNotice({ status, error }: { readonly status: SaveStatus; read
     );
   }
   return (
-    <p role="status" className="font-small text-small text-on-surface-variant" data-testid="annotation-status">
+    <output className="font-small text-small text-on-surface-variant" data-testid="annotation-status">
       {text}
-    </p>
+    </output>
   );
 }
 
@@ -365,7 +365,7 @@ export function AnnotationPanel({
         </div>
       </div>
 
-      {selectedIndex !== null ? (
+      {selectedIndex === null ? null : (
         <div className="flex flex-col gap-2">
           <label htmlFor="annotation-note" className="font-small text-small font-semibold text-on-surface">
             Note
@@ -395,7 +395,7 @@ export function AnnotationPanel({
             </button>
           </div>
         </div>
-      ) : null}
+      )}
 
       {highlights.length > 0 ? (
         <ul className="flex flex-col gap-2" data-testid="annotation-highlights">

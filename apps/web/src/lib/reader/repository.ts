@@ -1,9 +1,10 @@
-import type { AccountOwner, TocEntry } from '../offline/contracts';
 import {
   OfflineStorageError,
   bookDownloadKey,
+  type AccountOwner,
   type BookPageRecord,
   type BookVersionRecord,
+  type TocEntry,
 } from '../offline/contracts';
 import type { OfflineDatabase } from '../offline/database';
 import { pageFrameUrl, type PdfPageText, type PdfTextItem } from './api';
@@ -259,7 +260,7 @@ export class BookRepository {
     pageNumber: number,
   ): Promise<ReaderPage> {
     const record = byPage.get(pageNumber);
-    if (!record || !record.image) {
+    if (!record?.image) {
       throw new IncompleteBookError(`Page ${pageNumber} is missing its stored image`);
     }
     const url = this.createObjectUrl(record.image);

@@ -1,10 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { readerRecords, resetReaderRecordsForTests } from '../offline/reader-records';
+import { readerRecords } from '../offline/reader-records';
 import type { BookmarkRecord, HighlightRecord } from '../offline/contracts';
 
-export { readerRecords, resetReaderRecordsForTests };
+export { readerRecords, resetReaderRecordsForTests } from '../offline/reader-records';
 
 export interface ReaderAnnotations {
   readonly highlights: HighlightRecord[];

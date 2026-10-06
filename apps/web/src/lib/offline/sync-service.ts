@@ -13,8 +13,7 @@ import {
 import type { StoredConflictCopyRecord } from './conflicts';
 
 export type { StoredConflictCopyRecord } from './conflicts';
-import { dispatchReaderOperation } from '../reader/api';
-import { fetchAnnotationSnapshot } from '../reader/api';
+import { dispatchReaderOperation, fetchAnnotationSnapshot } from '../reader/api';
 import {
   SyncCoordinator,
   type BookMergeResult,
@@ -111,7 +110,7 @@ export function createOutboxStore(database: OfflineDatabase): OutboxStore {
         'readerRecords',
         entityKey,
       );
-      if (!record || record.subject !== subject) return;
+      if (record?.subject !== subject) return;
       await database.putAccountRecord(subject, epoch, 'readerRecords', {
         ...record,
         syncedAt: Date.now(),

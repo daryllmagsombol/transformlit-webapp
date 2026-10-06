@@ -25,7 +25,7 @@ export function assertWriteEligibility(
   subject: string,
   epoch: number,
 ): void {
-  if (owner === null || owner.subject !== subject) {
+  if (owner?.subject !== subject) {
     throw new SubjectMismatchError(
       `Refusing write for subject ${subject}; owner is ${owner?.subject ?? 'none'}`,
     );

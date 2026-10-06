@@ -267,7 +267,7 @@ class MemoryTransaction {
         this.tick();
         return;
       }
-      const [key, value] = rows[index];
+      const [key] = rows[index];
       const cursor = new MemoryCursor(
         () => this.workingStore(storeName).delete(key),
         () => {

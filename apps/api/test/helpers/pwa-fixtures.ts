@@ -64,7 +64,7 @@ export function createPwaFramePayload(version: 1 | 2): Buffer {
   type.copy(chunk, 4);
   text.copy(chunk, 8);
   chunk.writeUInt32BE(checksum(chunkData), text.length + 8);
-  return Buffer.concat([fixturePng.subarray(0, fixturePng.length - 12), chunk, fixturePng.subarray(fixturePng.length - 12)]);
+  return Buffer.concat([fixturePng.subarray(0, -12), chunk, fixturePng.subarray(-12)]);
 }
 
 export function createPwaTextPayload(version: 1 | 2, pageIndex: number, text: string): Buffer {
@@ -197,7 +197,7 @@ export async function publishPwaVersion2(
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
   try {
     const book = await prisma.book.findUnique({ where: { id: bookId }, include: { pages: { orderBy: { index: 'asc' } } } });
-    if (!book || book.title !== `PWA multi-page fixture ${ownerId}` || book.contentVersion !== 1) throw new Error('Book is not this owner\'s active v1 fixture');
+    if (book?.title !== `PWA multi-page fixture ${ownerId}` || book?.contentVersion !== 1) throw new Error('Book is not this owner\'s active v1 fixture');
     const storage = new LocalStorageAdapter(storageDir);
     const frameV2 = createPwaFramePayload(2);
     const versionPages: Array<{ index: number; assetKey: string; textKey: string; charCount: number; frameByteLength: number; frameSha256: string; textByteLength: number; textSha256: string }> = [];

@@ -2,12 +2,33 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { gql, type TypedDocumentNode } from '@apollo/client';
-import type { GraphQLAnnouncement, GraphQLVerseOfDay, GraphQLGroup } from '@transformlit/shared';
+import { type ActivityType, type GraphQLAnnouncement, type GraphQLVerseOfDay, type GraphQLGroup } from '@transformlit/shared';
 import { useToast, SkeletonCard, LoadingSpinner } from '../../../components/ui';
 import { apolloClient } from '../../../lib/apollo-client';
 import { timeAgo } from '../../../lib/time-ago';
 import { useRequireAuth } from '../../../lib/hooks/use-require-auth';
+import { recordActivity } from '../../../lib/progress/record-activity';
 import { getCategoryConfig, getGroupMeta, QUICK_TRACK_CHAPTERS } from '../../../lib/constants';
+
+/**
+ * Client-side guard so a FEED_READ is recorded at most once per calendar day
+ * per session. The server dedups `activityCount` regardless, but skipping the
+ * repeat avoids pointless writes. Module-level state resets on reload.
+ */
+let feedReadDayKey: string | null = null;
+
+/** Returns today's local `YYYY-MM-DD` key for the FEED_READ daily guard. */
+function todayKey(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+/** Clears the FEED_READ daily guard. Exposed for tests only. */
+export function resetFeedReadGuardForTests(): void {
+  feedReadDayKey = null;
+}
 
 // ── GraphQL Queries ──────────────────────────────────────────────────────────
 
@@ -55,7 +76,13 @@ export default function FeedClient() {
   }, [addToast]);
 
   useEffect(() => {
-    if (isReady) loadData();
+    if (!isReady) return;
+    const day = todayKey();
+    if (feedReadDayKey !== day) {
+      feedReadDayKey = day;
+      recordActivity({ type: 'FEED_READ' as ActivityType, pagesDelta: 0 });
+    }
+    loadData();
   }, [isReady, loadData]);
 
   if (!isReady) {
