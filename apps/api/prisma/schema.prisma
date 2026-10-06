@@ -53,6 +53,8 @@ model User {
   announcementsCreated Announcement[]   @relation("AnnouncementCreatedBy")
   groupsCreated      Group[]            @relation("GroupCreatedBy")
   booksCreated       Book[]             @relation("BookCreatedBy")
+  createdPlans       GroupReadingPlan[] @relation("PlanCreatedBy")
+  sharedHighlights   GroupHighlight[]   @relation("HighlightSharedBy")
   auditLogs         AuditLog[]
   activityEvents        ActivityEvent[]
   activityEventReceipts ActivityEventReceipt[]
@@ -139,6 +141,8 @@ model Group {
   members       GroupMember[]
   posts         GroupPost[]
   conversations Conversation[]
+  readingPlans  GroupReadingPlan[]
+  sharedHighlights GroupHighlight[]
 
   @@index([visibility])
   @@index([category])
@@ -212,6 +216,52 @@ model GroupPostComment {
 
   @@index([postId, createdAt])
   @@map("group_post_comments")
+}
+
+// ── Group Features: Reading Plans & Shared Highlights ───────────────────────
+
+enum ReadingPlanStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+/// A group's reading plan: a book plus a start/target window.
+model GroupReadingPlan {
+  id           String            @id @default(uuid())
+  groupId      String
+  group        Group             @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  bookId       String
+  book         Book              @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  title        String?
+  startDate    DateTime          @db.Date
+  targetDate   DateTime          @db.Date
+  status       ReadingPlanStatus @default(ACTIVE)
+  createdById  String?
+  createdBy    User?             @relation("PlanCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([groupId, status])
+  @@index([bookId])
+  @@map("group_reading_plans")
+}
+
+/// A share of one owned Highlight into one group.
+model GroupHighlight {
+  id          String    @id @default(uuid())
+  groupId     String
+  group       Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  highlightId String
+  highlight   Highlight @relation(fields: [highlightId], references: [id], onDelete: Cascade)
+  sharedById  String
+  sharedBy    User      @relation("HighlightSharedBy", fields: [sharedById], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  @@unique([groupId, highlightId])
+  @@index([groupId, createdAt])
+  @@index([sharedById])
+  @@map("group_highlights")
 }
 
 // ── Friends ─────────────────────────────────────────────────────────────────
@@ -357,6 +407,7 @@ model Book {
   pageViews        PageView[]
   contentVersions  BookContentVersion[]
   conflictCopies   ConflictCopy[]
+  readingPlans     GroupReadingPlan[]
 
   @@index([status])
   @@index([title])
@@ -516,6 +567,8 @@ model Highlight {
   deletedAt      DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  groupShares GroupHighlight[]
 
   @@unique([userId, clientEntityId])
   @@index([userId, bookId])
