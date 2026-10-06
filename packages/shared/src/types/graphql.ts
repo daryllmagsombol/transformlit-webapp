@@ -54,6 +54,47 @@ export interface GraphQLGroupPostComment {
   author?: GraphQLUser | null;
 }
 
+// ── Group reading plans + shared highlights ────────────────────────────────
+export interface GraphQLPlanMemberProgress {
+  user: GraphQLUser;
+  currentPage: number;
+  totalPages?: number | null;
+  percent: number;
+  onPace: boolean;
+}
+
+export interface GraphQLGroupReadingPlan {
+  id: string;
+  groupId: string;
+  book: GraphQLBook;
+  title?: string | null;
+  startDate: string;
+  targetDate: string;
+  status: string;
+  createdById?: string | null;
+  createdAt: string;
+  expectedPercent: number;
+  members: GraphQLPlanMemberProgress[];
+}
+
+export interface GraphQLSharedHighlight {
+  id: string;
+  bookId: string;
+  bookTitle: string;
+  page: number;
+  text: string;
+  note?: string | null;
+  color?: string | null;
+}
+
+export interface GraphQLGroupHighlight {
+  id: string;
+  groupId: string;
+  highlight: GraphQLSharedHighlight;
+  sharedBy: GraphQLUser;
+  createdAt: string;
+}
+
 // ── Friendship ─────────────────────────────────────────────────────────────
 export interface GraphQLFriendship {
   id: string;

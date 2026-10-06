@@ -1,0 +1,98 @@
+# Group reading plans + shared highlights (Task 7).
+#
+# `groupReadingPlan` returns the group's ACTIVE plan (or null) with derived
+# pacing (`expectedPercent`) and per-member progress rows. `groupHighlights`
+# lists non-deleted shares newest-first, paginated by `offset`/`limit`.
+#
+# Mutations create/archive a plan, share a caller-owned highlight to a group,
+# and soft-delete a share.
+
+query GroupReadingPlan($groupId: String!) {
+  groupReadingPlan(groupId: $groupId) {
+    id
+    groupId
+    title
+    startDate
+    targetDate
+    status
+    expectedPercent
+    book {
+      id
+      title
+      author
+      coverUrl
+    }
+    members {
+      currentPage
+      totalPages
+      percent
+      onPace
+      user {
+        id
+        displayName
+        avatarUrl
+      }
+    }
+  }
+}
+
+query GroupHighlights($groupId: String!, $offset: Int, $limit: Int) {
+  groupHighlights(groupId: $groupId, offset: $offset, limit: $limit) {
+    id
+    createdAt
+    sharedBy {
+      id
+      displayName
+      avatarUrl
+    }
+    highlight {
+      id
+      bookId
+      page
+      text
+      note
+      color
+      bookTitle
+    }
+  }
+}
+
+mutation CreateGroupReadingPlan($input: CreateGroupReadingPlanInput!) {
+  createGroupReadingPlan(input: $input) {
+    id
+    groupId
+    title
+    startDate
+    targetDate
+    status
+    expectedPercent
+  }
+}
+
+mutation ArchiveGroupReadingPlan($planId: String!) {
+  archiveGroupReadingPlan(planId: $planId)
+}
+
+mutation ShareHighlightToGroup($input: ShareHighlightInput!) {
+  shareHighlightToGroup(input: $input) {
+    id
+    createdAt
+    sharedBy {
+      id
+      displayName
+      avatarUrl
+    }
+    highlight {
+      id
+      page
+      text
+      note
+      color
+      bookTitle
+    }
+  }
+}
+
+mutation UnshareHighlight($shareId: String!) {
+  unshareHighlight(shareId: $shareId)
+}

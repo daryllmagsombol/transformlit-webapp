@@ -204,6 +204,14 @@ input CreateGroupPostInput {
   imageKey: String
 }
 
+input CreateGroupReadingPlanInput {
+  bookId: ID!
+  groupId: ID!
+  startDate: DateTime!
+  targetDate: DateTime!
+  title: String
+}
+
 type DailyActivityPoint {
   activityCount: Int!
   dayKey: String!
@@ -260,6 +268,14 @@ enum GroupCategory {
   YOUNG_ADULT
 }
 
+type GroupHighlight {
+  createdAt: DateTime!
+  groupId: ID!
+  highlight: SharedHighlight!
+  id: ID!
+  sharedBy: User!
+}
+
 type GroupMember {
   id: ID!
   joinedAt: DateTime!
@@ -299,6 +315,20 @@ type GroupPostComment {
   createdAt: DateTime!
   id: ID!
   postId: ID!
+}
+
+type GroupReadingPlan {
+  book: Book!
+  createdAt: DateTime!
+  createdById: ID
+  expectedPercent: Int!
+  groupId: ID!
+  id: ID!
+  members: [PlanMemberProgress!]!
+  startDate: DateTime!
+  status: ReadingPlanStatus!
+  targetDate: DateTime!
+  title: String
 }
 
 enum GroupVisibility {
@@ -367,11 +397,13 @@ type Mutation {
   addHighlight(input: AddHighlightInput!): Highlight!
   applyBookReaderOperation(input: ReaderOperationInput!): ReaderOperationResult!
   approveGroupMember(groupId: String!, userId: String!): GroupMember!
+  archiveGroupReadingPlan(planId: String!): Boolean!
   banGroupMember(groupId: String!, userId: String!): GroupMember!
   createAnnouncement(input: PublishAnnouncementInput!): Announcement!
   createGroup(input: CreateGroupInput!): Group!
   createGroupPost(groupId: String!, input: CreateGroupPostInput!): GroupPost!
   createGroupPostComment(body: String!, postId: String!): GroupPostComment!
+  createGroupReadingPlan(input: CreateGroupReadingPlanInput!): GroupReadingPlan!
   deleteAnnouncement(id: String!): Boolean!
   deleteBook(id: String!): Boolean!
   deleteGroup(groupId: String!): Group!
@@ -396,10 +428,12 @@ type Mutation {
   sendFriendRequest(addresseeId: String!): Friendship!
   sendMessage(input: SendMessageInput!): Message!
   setReadingGoal(input: SetReadingGoalInput!): ReadingGoal!
+  shareHighlightToGroup(input: ShareHighlightInput!): GroupHighlight!
   startDirectConversation(otherUserId: String!): Conversation!
   toggleGroupPostLike(postId: String!): Boolean!
   unbanGroupMember(groupId: String!, userId: String!): GroupMember!
   unpublishAnnouncement(id: String!): Announcement!
+  unshareHighlight(shareId: String!): Boolean!
   updateAnnouncement(id: String!, input: UpdateAnnouncementInput!): Announcement!
   updateBook(id: String!, input: UpdateBookInput!): Book!
   updateGroup(groupId: String!, input: UpdateGroupInput!): Group!
@@ -471,6 +505,14 @@ input PageTextAnchorV1Input {
   version: Int!
 }
 
+type PlanMemberProgress {
+  currentPage: Int!
+  onPace: Boolean!
+  percent: Int!
+  totalPages: Int
+  user: User!
+}
+
 type ProgressRecord {
   bookId: ID!
   currentPage: Int!
@@ -502,9 +544,11 @@ type Query {
   friendshipStatus(otherUserId: String!): Friendship
   group(id: String!): Group
   groupBySlug(slug: String!): Group
+  groupHighlights(groupId: String!, limit: Int! = 25, offset: Int! = 0): [GroupHighlight!]!
   groupMembers(groupId: String!): [GroupMember!]!
   groupPostComments(postId: String!): [GroupPostComment!]!
   groupPosts(groupId: String!, limit: Int! = 20, offset: Int! = 0): [GroupPost!]!
+  groupReadingPlan(groupId: String!): GroupReadingPlan
   groups: [Group!]!
   highlights(bookId: String!): [Highlight!]!
   me: User!
@@ -599,6 +643,11 @@ type ReadingGoal {
   year: Int!
 }
 
+enum ReadingPlanStatus {
+  ACTIVE
+  ARCHIVED
+}
+
 input RecordActivityInput {
   operationId: String
   pagesDelta: Int! = 0
@@ -631,6 +680,21 @@ input SetReadingGoalInput {
   targetKind: GoalKind!
   targetValue: Int!
   year: Int!
+}
+
+input ShareHighlightInput {
+  groupId: ID!
+  highlightId: ID!
+}
+
+type SharedHighlight {
+  bookId: ID!
+  bookTitle: String!
+  color: String
+  id: ID!
+  note: String
+  page: Int!
+  text: String!
 }
 
 type Subscription {
