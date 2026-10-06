@@ -43,11 +43,11 @@ This feature makes it real:
 - **Any activity qualifies a day.** One page, one chapter, one feed visit, or one group post marks the day. No minimum threshold.
 - **Event + rollup.** `ActivityEvent` is the append-only truth; `DailyActivity` is a per-day rollup so reads are O(days), not O(events). Reads (`myProgress`, `myActivityCalendar`) never scan raw events.
 - **`UserStreak` is a cache, not a source of truth.** It is fully rebuildable from `DailyActivity` and safe to drop.
-- **Idempotent recording.** `recordActivity` dedups per `(userId, dayKey, type)` for streak purposes and accumulates `pagesDelta`. Retries and duplicate fires are harmless.
+- **Idempotent recording.** `recordActivity` dedups per `(userId, dayKey, type)` for `activityCount` (streak qualification) via a unique-constraint insert. `pagesRead` accumulation is **not** idempotent by type alone: a retried/offline-flushed `BOOK_READ` with `pagesDelta: 1` would inflate `pagesRead`. To make it replay-safe, `RecordActivityInput` carries an optional client-generated `operationId` (UUID); a repeated `(userId, operationId)` is stored as a replay receipt and its `pagesDelta` is **not** added again (mirroring `ReaderOperationReceipt`, `schema.prisma:538`). Without `operationId`, `pagesRead` is best-effort and may over-count under replay.
 - **Normalized page unit.** Ebook page advance = 1 page; Bible chapter = 1 page; feed and group post = 0 pages (streak only). This keeps a single comparable `pagesRead` number across activity types.
 - **Feed auto-fires on load.** Visiting the feed marks the day. The server dedups, so over-firing is harmless. Accepted trade-off: streaks are easy to keep alive; revisit if streaks should require deliberate reading.
 - **Fire-and-forget, fail-open.** A failed or offline `recordActivity` never blocks reading UI.
-- **Module boundary respected.** New backend domain module `progress`, importing only `PrismaModule` and `AuthModule` (the established pattern). No cross-domain imports; other domains call `recordActivity` via the client or, where a server hook already exists, by emitting the same mutation payload shape.
+- **Module boundary respected.** New backend domain module `progress`, importing only `AuthModule` (`PrismaModule` is `@Global()`, so it is available without import — this matches `feed.module.ts`; the `ARCHITECTURE.md:67` note about importing Prisma is stale). No cross-domain imports; all four activity call sites are **client-fired** mutations (the client fires `recordActivity` after the owning mutation succeeds). The server-side `GroupsService` does not call `ProgressService`.
 
 ## Data Model (Prisma additions)
 
@@ -74,12 +74,38 @@ model ActivityEvent {
   type       ActivityType
   /// Calendar day in UTC+8, server-computed. Never client-supplied.
   dayKey     String
-  /// Normalized pages contributed (0 for feed/group).
+  /// Normalized pages contributed (0 for feed/group). Clamped server-side to [0, 1].
   pagesDelta Int          @default(0)
-  occurredAt DateTime     @default(now())
+  createdAt  DateTime     @default(now())
 
-  @@index([userId, dayKey])
+  @@index([userId, dayKey, type])
   @@map("activity_events")
+}
+
+/// Replay-dedup receipt for operationId-carrying events. Insert failure (P2002)
+/// means this operation was already applied; its pagesDelta is not added again.
+model ActivityEventReceipt {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  operationId String
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, operationId])
+  @@map("activity_event_receipts")
+}
+
+/// Dedup gate: one row per (user, day, type). Insert failure (P2002) = type already counted.
+model DailyActivityType {
+  id        String       @id @default(uuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dayKey    String
+  type      ActivityType
+  createdAt DateTime     @default(now())
+
+  @@unique([userId, dayKey, type])
+  @@map("daily_activity_types")
 }
 
 /// Per-day rollup. Read path for streak + heatmap; rebuildable from ActivityEvent.
@@ -96,7 +122,6 @@ model DailyActivity {
   updatedAt     DateTime @updatedAt
 
   @@unique([userId, dayKey])
-  @@index([userId])
   @@map("daily_activity")
 }
 
@@ -127,7 +152,7 @@ model UserStreak {
 }
 ```
 
-`User` gains back-relations for `activityEvents`, `dailyActivity`, `readingGoals`, and `streak`.
+`User` gains back-relations for `activityEvents`, `activityEventReceipts`, `dailyActivityTypes`, `dailyActivity`, `readingGoals`, and `streak`.
 
 ## GraphQL API
 
@@ -174,12 +199,12 @@ type Mutation {
 input RecordActivityInput {
   type: ActivityType!
   pagesDelta: Int = 0
+  operationId: String   # UUID; makes pagesDelta accumulation replay-safe
 }
 
 type RecordActivityPayload {
   dayKey: String!
   counted: Boolean!        # false if this type was already recorded today
-  currentStreak: Int!
 }
 
 input SetReadingGoalInput {
@@ -193,15 +218,18 @@ input SetReadingGoalInput {
 
 - **`recordActivity`**
   1. Compute `dayKey` server-side in UTC+8.
-  2. Insert an `ActivityEvent` row (always).
-  3. Upsert `DailyActivity`: increment `pagesRead` by `pagesDelta`; increment `activityCount` only if this `(user, dayKey, type)` was not already recorded (dedup check against existing events for that day/type). `counted` reflects that.
-  4. Recompute/refresh `UserStreak` when the day newly qualifies.
-  5. Return `{ dayKey, counted, currentStreak }`.
+  2. Clamp `pagesDelta` to `[0, 1]` (the normalized unit is one page per advance) so a malicious client cannot inflate `pagesRead`. Reject unknown/negative values.
+  3. Insert an `ActivityEvent` row, using an `ActivityEventReceipt` on `(userId, operationId)` to detect a replay; on replay, skip the `pagesRead` accumulation.
+  4. Attempt to insert `DailyActivityType` on `(userId, dayKey, type)`. A P2002 (unique violation) means the type was already counted today → `counted: false`; a successful insert → `counted: true`. This is race-free and replaces any read-then-write check.
+  5. Upsert `DailyActivity`: always add the (replay-safe) `pagesDelta` to `pagesRead`; increment `activityCount` only when step 4's insert succeeded.
+  6. Refresh `UserStreak` when the day newly qualifies.
+  7. Return `{ dayKey, counted }`.
 
 - **`myProgress(year)`**
   - `goal`: the `ReadingGoal` for `(user, year)` or `null`.
   - `daysRead` / `pagesRead`: aggregate over `DailyActivity` rows within `year` (UTC+8 bounds).
-  - `currentStreak` / `longestStreak`: from `UserStreak`. The cache is treated as **stale** when it is absent, or when `UserStreak.lastActiveDayKey` does not equal the maximum `DailyActivity.dayKey` for the user; on stale, recompute both values from `DailyActivity` and refresh the cache before returning.
+  - `currentStreak`: **always** recomputed from `DailyActivity` (O(days) — the same bounded read the spec already relies on). It is never served from the cache, because a cache cannot know "today" without a recompute; this removes the time-passage blind spot where a stale cache would report a broken streak as alive.
+  - `longestStreak`: served from `UserStreak`; recomputed only when the cache is absent or when `UserStreak.lastActiveDayKey` does not equal the maximum `DailyActivity.dayKey` for the user (new activity arrived). The recompute scans the user's all-time `DailyActivity` rows (bounded by days-active, not events).
   - `lastActiveDayKey`: most recent `DailyActivity.dayKey` in the year.
 
 - **`myActivityCalendar(year)`** — all `DailyActivity` rows for the year as `DailyActivityPoint`s, ordered by `dayKey`. Missing days are omitted (client renders gaps as empty).
@@ -210,7 +238,7 @@ input SetReadingGoalInput {
 
 - **Timezone** — server is authoritative for `dayKey`. The client never sends a date.
 
-- **Streak rule** — consecutive `dayKey`s ending today or yesterday. Yesterday is tolerated until the end of today so an as-yet-unread current day does not display a broken streak.
+- **Streak rule** — `currentStreak` is computed by walking back from `today` (UTC+8); if `today` has no qualifying day, walk back from `yesterday`. This makes the "today or yesterday" tolerance an implementation detail of the walk-back, not a separate rule.
 
 ## Backend Components
 
@@ -218,10 +246,10 @@ New module `apps/api/src/progress/`:
 
 | File | Responsibility |
 |---|---|
-| `progress.module.ts` | Registers resolver + services; imports `PrismaModule`, `AuthModule`. Exports `ProgressService`. |
-| `progress.service.ts` | `recordActivity`, `getMyProgress`, `getActivityCalendar`, `setReadingGoal`. Owns dedup + upsert logic in a Prisma transaction. |
+| `progress.module.ts` | Registers resolver + services; imports `AuthModule` only (`PrismaModule` is `@Global()`, available without import — matches `feed.module.ts`). Exports `ProgressService`. |
+| `progress.service.ts` | `recordActivity`, `getMyProgress`, `getActivityCalendar`, `setReadingGoal`. Owns receipt/dedup + upsert logic in a Prisma transaction. |
 | `streak.service.ts` | Streak math from `DailyActivity`: `computeCurrent`, `computeLongest`, `refreshCache`. Pure-ish and unit-testable. |
-| `day-key.util.ts` | `toDayKey(date): string` (UTC+8), `yearBounds(year): { start, end }`. Single source of truth for the boundary. |
+| `day-key.util.ts` | `toDayKey(date): string` (UTC+8, mirroring `feed.service.ts:118-127`), `yearBounds(year): { startDayKey: string, endDayKey: string }` returning **strings** so year scope is a lexicographic `dayKey` range, not Date math. |
 | `progress.resolver.ts` | GraphQL surface, JWT-guarded, `@CurrentUser()`. |
 | `models/progress.model.ts` | `MyProgress`, `ReadingGoal`, `DailyActivityPoint` object types. |
 | `dto/record-activity.input.ts` | `RecordActivityInput` with class-validator + Zod parity per repo convention. |
@@ -262,35 +290,39 @@ UI implementation is routed to the `@designer` lane; this section defines intent
 | Group post | On successful post create | `GROUP_POST` | 0 |
 
 - Calls are fire-and-forget; failures are swallowed (fail-open).
-- Offline: enqueue into the existing offline outbox and flush on reconnect so an offline Bible chapter still counts. The outbox and account scoping already exist under `apps/web/src/lib/offline/*`.
-- The feed page fires on load; server-side dedup keeps this idempotent.
+- **Offline:** Bible reads performed while offline fire `recordActivity` **on reconnect** (fire-and-forget). The existing reader outbox (`apps/web/src/lib/offline/outbox.ts`) is specialized for reader mutations — `OutboxOperationKind` is `PROGRESS_SET | BOOKMARK_* | ANNOTATION_*`, and records require `bookId`/`contentVersion`/`entityKey`/`baseRevision` with dispatch via `dispatchReaderOperation` (`sync-service.ts:585`). It cannot carry activity pings without a new kind, optional fields, and a dispatch branch; that refactor is **out of scope for v1**. Consequently, per Non-goals, an offline read that never reconnects does not count server-side — accepted and documented.
+- The feed page fires on load; server-side dedup (`DailyActivityType`) makes repeated fires harmless, though the client should skip firing if it already fired today to avoid pointless writes.
+- **Write-volume note:** `BOOK_READ` fires per page advance. To avoid write amplification on B1ms, debounce client-side (e.g. coalesce to one ping per session or per N page advances); the `activityCount` dedup means extra pings only cost write I/O, not correctness.
 
 ## Offline & Error Handling
 
-- `recordActivity` is idempotent per `(user, dayKey, type)`; retries and duplicates are safe by design.
-- The reader UIs never await `recordActivity`; a failure cannot block reading.
+- `recordActivity` dedups `activityCount` race-free via the `DailyActivityType` unique constraint, and dedups `pagesRead` replay via `ActivityEventReceipt` when `operationId` is supplied. The reader UIs never await it; a failure cannot block reading.
 - `myProgress` / `myActivityCalendar` failures degrade the widget and page to neutral/empty states, not errors that break the shell.
 - `dayKey` is computed server-side only; client clocks are untrusted.
-- Goal input is validated server-side with typed errors.
+- `pagesDelta` is clamped server-side to `[0, 1]`; goal input is validated server-side with typed errors.
 
 ## Testing Plan
 
 Aligned with `docs/superpowers/specs/2026-06-29-testing-strategy-design.md`.
 
-1. **Unit (API) — `streak.service.spec.ts`**: consecutive-day math; yesterday tolerance; gap breaks the streak; empty ledger; UTC+8 boundary correctness (a 23:59 UTC read lands on the next UTC+8 day); idempotent dedup.
-2. **Unit (API) — `progress.service.spec.ts`**: goal upsert + year scoping; rollup increments (`activityCount` only on new type, `pagesRead` always sums); calendar ordering; validation rejection for out-of-range `targetValue`.
-3. **Unit (API) — `day-key.util.spec.ts`**: `toDayKey` across the UTC+8 midnight boundary; `yearBounds`.
+1. **Unit (API) — `streak.service.spec.ts`**: consecutive-day math; yesterday tolerance; gap breaks the streak; empty ledger; first-ever activity; UTC+8 boundary correctness (a 23:59 UTC read lands on the next UTC+8 day); stale-cache recompute (last activity days ago → `currentStreak` recomputed to 0, not served stale).
+2. **Unit (API) — `progress.service.spec.ts`**: goal upsert + year scoping; `DailyActivityType` P2002 → `counted: false` and `activityCount` unchanged (race-free dedup); `pagesRead` accumulates only when the `operationId` receipt is new (replay under offline flush does not double-count); `pagesDelta` clamped to [0, 1]; validation rejection for out-of-range `targetValue`.
+3. **Unit (API) — `day-key.util.spec.ts`**: `toDayKey` across the UTC+8 midnight boundary; a read at 23:30 UTC on Dec 31 2026 (07:30 UTC+8 Jan 1 2027) maps to **2027**, verifying `yearBounds` uses `dayKey` strings not `occurredAt`.
 4. **Resolver tests — `progress.resolver.spec.ts`**: each operation delegates with `user.id`; guards applied (mirrors existing `*.resolver.spec.ts`).
 5. **Web unit**: sidebar widget states (no goal / in progress / complete / query failure); heatmap cell intensity + gap rendering; goal editor validation.
-6. **Integration**: record activity → rollup updates → `myProgress` reflects `daysRead`/`pagesRead`/streak; second same-day same-type event returns `counted: false` and does not double-count.
-7. **Manual / E2E (browser)**: `/progress` and widget render real data; set a goal and see the widget update; record an offline read then reconnect and confirm the day counts.
+6. **Integration**: record activity → rollup updates → `myProgress` reflects `daysRead`/`pagesRead`/streak; second same-day same-type event returns `counted: false` and does not double-count; duplicated `operationId` does not inflate `pagesRead`.
+7. **Manual / E2E (browser)**: `/progress` and widget render real data; set a goal and see the widget update; an offline Bible read that reconnects counts the day, and one that never reconnects does not (documented limitation).
 
 ## Risks & Follow-ups
 
 - **Scope creep on "engagement."** Feed auto-fire makes streaks easy. If streaks should later *mean* reading, that is a data-model/behavior change, not a tweak. Ship as specified, then revisit.
-- **`ActivityEvent` growth.** The `DailyActivity` rollup makes it safe to prune raw events older than N days later, without losing history. Deferred; not v1.
-- **Bible is client-only.** A user who is permanently offline keeps a local streak the server never sees. Accepted and documented limitation.
-- **Streak cache drift.** `UserStreak` can lag if a write path bypasses `ProgressService`. Mitigation: `myProgress` recomputes from `DailyActivity` when the cache is absent or stale.
+- **Write amplification on B1ms.** Every page advance is up to 1 `ActivityEvent` insert + 1 `DailyActivityType` insert + 1 `DailyActivity` upsert. Mitigation in v1: debounce `BOOK_READ` client-side (coalesce to one ping per session or per N advances). The rollup/dedup keep this correct regardless; this is purely about write I/O.
+- **Feed auto-fire volume.** A client refreshing the feed repeatedly produces inserts that dedup to zero net signal. Mitigation: client skips `FEED_READ` if already fired today; server early-returns on an existing `DailyActivityType` row.
+- **`longestStreak` all-time scan.** Recomputed only when new activity arrives; scans the user's all-time `DailyActivity` rows (bounded by days-active, not events). Acceptable now; grows linearly with engagement. Follow-up: store `longestStreak` as a monotonic max and recompute only when `currentStreak` exceeds it.
+- **`ActivityEvent` growth.** The `DailyActivity` rollup makes it safe to prune raw events older than N days without losing history. Deferred for v1 but the plan must set a concrete follow-up (a scheduled prune), not an open-ended "deferred".
+- **Book per-page reads.** The normalized unit is 1 page per advance; `pagesDelta` is clamped to [0, 1] server-side, so a malicious client cannot inflate `pagesRead`.
+- **Bible is client-only.** A user who never reconnects keeps a local streak the server never sees. Accepted and documented limitation.
+- **Streak cache drift.** `currentStreak` is always recomputed; `longestStreak` is cache-guarded by the `lastActiveDayKey == max(dayKey)` check and falls back to a full recompute.
 
 ## SonarQube Compliance
 
@@ -299,7 +331,9 @@ Per `docs/SONAR-GUIDELINES.md`, implementation must avoid triggering findings:
 - No `window` references in client code (use `globalThis`).
 - No array index in React keys — heatmap cells keyed by `dayKey`.
 - Cognitive complexity ≤ 15 per function — streak math and rollup logic extracted into helpers.
-- No nested ternaries; use `??` / `?.`; `String#replaceAll` where applicable.
+- No nested ternaries (S6644) — the sidebar numerator selection (`daysRead` vs `pagesRead` per `targetKind`) must be extracted to a helper, never an inline nested ternary.
+- Zod validation must not use deprecated APIs (S6665–S6690): use `z.number().gte(1).lte(366)` / `z.number().gte(1).lte(100000)`, **not** `.min()` / `.max()`.
+- Use `??` / `?.`; `String#replaceAll` where applicable.
 - Component props marked `readonly`.
 - Any finding surfaced during review is appended to `docs/SONAR-GUIDELINES.md` in the same change.
 
