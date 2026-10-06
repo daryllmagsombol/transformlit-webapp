@@ -15,7 +15,7 @@ export function assertOwnedDisposableDatabaseUrl(
   databaseUrl: string | undefined,
   container?: StartedPostgreSqlContainer | null,
 ): asserts databaseUrl is string {
-  if (databaseUrl === undefined || container === undefined || container === null || container.getConnectionUri() !== databaseUrl) {
+  if (databaseUrl === undefined || container?.getConnectionUri() !== databaseUrl) {
     throw new Error('Refusing database reset: URL is not owned by a live disposable Testcontainers instance');
   }
 }
