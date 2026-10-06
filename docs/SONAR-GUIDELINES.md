@@ -770,6 +770,47 @@ flags.every(Boolean);
 
 ---
 
+## Test Isolation Rules (opencode review)
+
+Recurring findings from the AI code review about tests that mount real runtime
+side-effects. These are not Sonar rules but must be enforced in every review.
+
+### Shell/apollo-consuming component tests must mock the shared Apollo client
+**Fix:** Any test that mounts a component tree reaching `apolloClient.query()`
+(for example `AppShell` → `Sidebar` → `ProgressWidget`, or `AuthenticatedLayout`
+→ `AppShell`) must `jest.mock` the shared client module. Without the mock,
+rendering fires a real network request (e.g. to `localhost:3005`) inside jsdom,
+which is slow, flaky, environment-dependent, and can leak `act(...)` warnings
+from late state updates. Default the mocked `query` to a never-resolving promise
+so the consuming effect is inert and the component stays in its loading state.
+Mocking the React provider alone is not enough — the production code uses the
+client singleton, not the provider.
+
+```tsx
+// ❌ Bad — mounts the shell, which fires a real MyProgress fetch in jsdom
+import { render, screen } from '@testing-library/react';
+import { AppShell } from './app-shell';
+
+it('renders children', () => {
+  render(<AppShell><div>Content</div></AppShell>);
+  expect(screen.getByText('Content')).toBeInTheDocument();
+});
+
+// ✅ Good — the shared client is mocked; the query never leaves the process
+jest.mock('../../lib/apollo-client', () => ({
+  apolloClient: { query: jest.fn(() => new Promise(() => {})) },
+}));
+import { render, screen } from '@testing-library/react';
+import { AppShell } from './app-shell';
+
+it('renders children', () => {
+  render(<AppShell><div>Content</div></AppShell>);
+  expect(screen.getByText('Content')).toBeInTheDocument();
+});
+```
+
+---
+
 ## Quick Reference — Common Fixes
 
 | Issue | Fix |
@@ -835,6 +876,7 @@ flags.every(Boolean);
 | Subject-mismatch fence cleared by `null` | Keep the fence sticky until an affirmative match |
 | SW cache miss offline | Fall back to cached shell, don't reject |
 | Unguarded IndexedDB `createObjectStore` | Guard with `objectStoreNames.contains` (+`oldVersion`) |
+| Shell test mounts real Apollo query | `jest.mock` shared `apollo-client`; default `query` to a pending promise |
 
 ## PWA E2E infrastructure findings — CI run 37032368483
 

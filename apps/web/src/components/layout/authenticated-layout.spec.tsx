@@ -28,6 +28,14 @@ jest.mock('../../store', () => {
   };
 });
 
+// AuthenticatedLayout renders the real AppShell → Sidebar → ProgressWidget,
+// which reads MyProgress through the shared Apollo client singleton. Mock it so
+// mounting the layout never fires a real query at the API; the default pending
+// promise keeps the widget in its loading state for these layout assertions.
+jest.mock('../../lib/apollo-client', () => ({
+  apolloClient: { query: jest.fn(() => new Promise(() => {})) },
+}));
+
 describe('AuthenticatedLayout', () => {
   it('renders children', () => {
     render(<AuthenticatedLayout><div data-testid="child">Protected Content</div></AuthenticatedLayout>);

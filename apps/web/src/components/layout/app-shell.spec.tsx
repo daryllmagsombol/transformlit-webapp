@@ -34,6 +34,14 @@ jest.mock('../friends/profile-sheet-provider', () => ({
   ),
 }));
 
+// The shell mounts the Sidebar progress widget, which reads MyProgress through
+// the shared Apollo client singleton. Mock it so rendering the shell never
+// fires a real query at the API (jsdom has no server); the default pending
+// promise keeps the widget in its loading state for these shell assertions.
+jest.mock('../../lib/apollo-client', () => ({
+  apolloClient: { query: jest.fn(() => new Promise(() => {})) },
+}));
+
 describe('AppShell', () => {
   beforeEach(() => {
     mockPathname = '/feed';

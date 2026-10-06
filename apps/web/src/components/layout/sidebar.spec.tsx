@@ -208,6 +208,20 @@ describe('Sidebar', () => {
       expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
     });
 
+    it('guards against a zero target without dividing by zero', async () => {
+      mockQuery.mockResolvedValue({
+        data: { myProgress: progressFixture({ daysRead: 12, goal: { year: 2026, targetKind: 'DAYS', targetValue: 0 } }) },
+      });
+      render(<Sidebar />);
+      await screen.findByText('12/0');
+      const bar = screen.getByRole('progressbar');
+      expect(bar).toHaveAttribute('aria-valuenow', '0');
+      expect(bar.firstElementChild).toHaveStyle({ width: '0%' });
+      // A divide-by-zero must never leak NaN/Infinity into the rendered card.
+      expect(document.body.textContent).not.toMatch(/NaN|Infinity/);
+      expect(bar.firstElementChild?.getAttribute('style')).not.toMatch(/NaN|Infinity/);
+    });
+
     it('renders the current streak chip', async () => {
       render(<Sidebar />);
       expect(await screen.findByText('5 day streak')).toBeInTheDocument();
