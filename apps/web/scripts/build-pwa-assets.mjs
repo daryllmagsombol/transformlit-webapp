@@ -51,6 +51,15 @@ const REQUIRED_PUBLIC_ASSETS = [
   '/icons/apple-touch-icon.png',
 ];
 
+// Explicit UTF-16 code-unit comparator. This matches the default `Array#sort`
+// ordering it replaces, so the serialized asset list (and therefore the release
+// digest) is byte-for-byte identical while satisfying the sort-comparator rule.
+function compareCodeUnits(a, b) {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -141,8 +150,8 @@ function collectShellAssets(buildId) {
     // `/_next/static/...` URLs are real browser-fetchable shell assets.
     ...clientChunks.filter((chunk) => chunk.startsWith('/_next/static/')),
   ]);
-  const staticAssets = [...staticUrls].map(assertStaticAssetExists).sort();
-  const publicAssets = REQUIRED_PUBLIC_ASSETS.map(assertPublicAssetExists).sort();
+  const staticAssets = [...staticUrls].map(assertStaticAssetExists).sort(compareCodeUnits);
+  const publicAssets = REQUIRED_PUBLIC_ASSETS.map(assertPublicAssetExists).sort(compareCodeUnits);
 
   const assets = [...ROUTE_ASSETS, ...publicAssets, ...staticAssets];
   return { buildId, assets };
@@ -182,21 +191,17 @@ function writeAtomic(filePath, contents) {
   renameSync(temporaryPath, filePath);
 }
 
-/** Reads the release payload embedded in the served worker bytes. */
-function embeddedPayload(workerSource) {
-  const marker = `${BUILD_MARKER} `;
-  const markerIndex = workerSource.indexOf(marker);
-  if (markerIndex === -1) throw new Error('Served worker is missing its embedded release payload');
-
-  // Scan the JSON object that follows the marker, tracking string/escape state
-  // so braces inside string values cannot terminate the object early.
-  const start = workerSource.indexOf('{', markerIndex);
-  if (start === -1) throw new Error('Served worker payload is not a JSON object');
+/**
+ * Scans the JSON object starting at `start`, tracking string/escape state so
+ * braces inside string values cannot terminate the object early. Returns the
+ * index of the matching closing brace, or -1 if the object is unterminated.
+ */
+function scanJsonObject(source, start) {
   let depth = 0;
   let inString = false;
   let escaped = false;
-  for (let index = start; index < workerSource.length; index += 1) {
-    const char = workerSource[index];
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index];
     if (inString) {
       if (escaped) escaped = false;
       else if (char === '\\') escaped = true;
@@ -207,10 +212,23 @@ function embeddedPayload(workerSource) {
     else if (char === '{') depth += 1;
     else if (char === '}') {
       depth -= 1;
-      if (depth === 0) return JSON.parse(workerSource.slice(start, index + 1));
+      if (depth === 0) return index;
     }
   }
-  throw new Error('Served worker payload is not valid JSON');
+  return -1;
+}
+
+/** Reads the release payload embedded in the served worker bytes. */
+function embeddedPayload(workerSource) {
+  const marker = `${BUILD_MARKER} `;
+  const markerIndex = workerSource.indexOf(marker);
+  if (markerIndex === -1) throw new Error('Served worker is missing its embedded release payload');
+
+  const start = workerSource.indexOf('{', markerIndex);
+  if (start === -1) throw new Error('Served worker payload is not a JSON object');
+  const end = scanJsonObject(workerSource, start);
+  if (end === -1) throw new Error('Served worker payload is not valid JSON');
+  return JSON.parse(workerSource.slice(start, end + 1));
 }
 
 /**
