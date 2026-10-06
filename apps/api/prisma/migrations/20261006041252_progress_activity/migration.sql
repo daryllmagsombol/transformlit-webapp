@@ -1,17 +1,14 @@
-/*
-  Warnings:
-
-  - You are about to drop the column `clientEntityId` on the `book_progress` table. All the data in the column will be lost.
-
-*/
 -- CreateEnum
 CREATE TYPE "ActivityType" AS ENUM ('BOOK_READ', 'BIBLE_READ', 'FEED_READ', 'GROUP_POST');
 
 -- CreateEnum
 CREATE TYPE "GoalKind" AS ENUM ('DAYS', 'PAGES');
 
--- AlterTable
-ALTER TABLE "book_progress" DROP COLUMN "clientEntityId";
+-- NOTE: `book_progress.clientEntityId` drift is intentionally NOT resolved here.
+-- 20261001000300_pwa_contract_cleanup documents that the column is deliberately
+-- retained in the database (dropped from the Prisma schema only) for the
+-- additive rollback policy. Dropping it is destructive and out of scope for
+-- this migration, so no DROP is emitted.
 
 -- CreateTable
 CREATE TABLE "activity_events" (
