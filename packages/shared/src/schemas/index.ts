@@ -149,3 +149,29 @@ export const cursorPaginationSchema = z.object({
 });
 
 export type CursorPaginationInput = z.infer<typeof cursorPaginationSchema>;
+
+// ── Progress ───────────────────────────────────────────────────────────────
+
+const UUID_PATTERN = new RegExp(
+  String.raw`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
+);
+
+export const recordActivitySchema = z.object({
+  type: z.enum(['BOOK_READ', 'BIBLE_READ', 'FEED_READ', 'GROUP_POST']),
+  pagesDelta: z.number().int().gte(0).lte(1).default(0),
+  operationId: z.string().regex(UUID_PATTERN, 'operationId must be a UUID').optional(),
+});
+
+export const setReadingGoalSchema = z
+  .object({
+    year: z.number().int().gte(2000).lte(2100),
+    targetKind: z.enum(['DAYS', 'PAGES']),
+    targetValue: z.number().int().gte(1).lte(100000),
+  })
+  .refine((v) => v.targetKind !== 'DAYS' || v.targetValue <= 366, {
+    message: 'A DAYS goal cannot exceed 366',
+    path: ['targetValue'],
+  });
+
+export type RecordActivityInput = z.infer<typeof recordActivitySchema>;
+export type SetReadingGoalInput = z.infer<typeof setReadingGoalSchema>;

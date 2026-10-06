@@ -17,6 +17,8 @@ export {
   AnnouncementCategory,
   GroupCategory,
   NotificationType,
+  ActivityType,
+  GoalKind,
 } from './enums.js';
 export type {
   RegisterLocalInput,
@@ -36,5 +38,7 @@ export type {
   PublishAnnouncementInput,
   UpdateAnnouncementInput,
   CursorPaginationInput,
+  RecordActivityInput,
+  SetReadingGoalInput,
 } from './schemas/index.js';
 
