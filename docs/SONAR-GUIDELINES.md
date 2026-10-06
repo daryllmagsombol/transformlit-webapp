@@ -510,6 +510,35 @@ return { accessToken, refreshToken, user };
 
 ---
 
+## Cleanup / Reliability Rules (from the 2026-10 SonarQube backlog)
+
+These appeared en masse on legacy files. Each is mechanical; fix in the same style everywhere.
+
+| Rule | Message | Fix |
+|---|---|---|
+| `S4325` | "This assertion is unnecessary since it does not change the type" | Remove the redundant `as T` cast. ❌ `input.baseRevision as number` ✅ `input.baseRevision` |
+| `S7778` | "Do not call `Array#push()` multiple times" | Push all items in one call, or push an array. ❌ `a.push(x); a.push(y)` ✅ `a.push(x, y)` |
+| `S7755` | "Prefer `.at(…)` over `[…length - index]`" | ❌ `batch[batch.length - 1]` ✅ `batch.at(-1)`; `arr.slice(0, len-12)` → `arr.slice(0, -12)` |
+| `S6551` | "Object's default stringification format" | Never `String(value)` on a possibly-object value. Narrow to a string first. ❌ `String(a ?? b ?? '')` ✅ `firstString(a, b) ?? ''` |
+| `S3863` | "imported multiple times" | Merge the duplicate import statements from the same module. |
+| `S6571` | "'unknown' overrides all other types in this union" | Remove the redundant `unknown` arm, or narrow the union. |
+| `S6598` | "Interface has only a call signature" | Convert to a function type alias: `type F = (x: T) => R`. |
+| `S2094` | "Unexpected empty class" | Make it a plain type/object, **unless** it is a reflective marker — then add a `readonly marker` field. |
+| `S3776` | Cognitive complexity > 15 | Extract cohesive helpers; preserve exact order/branches/messages. |
+| `S3626` | "Remove this redundant jump" | Drop the trailing `return;`/`continue` that ends the block. |
+| `S4144` | "implementation identical to line N" | Merge/parameterize the duplicate function. |
+| `S7059` | "asynchronous operation outside of the constructor" | Move async init to an explicit `init()`/`open()`; update callers. |
+| `S6811` | ARIA `progressbar`/`status` role | Use `<progress>` / `<output>` (see Accessibility). |
+| `S6704`/`S6845`/`S6847` | Non-interactive element with handlers | Use a real `<button>`, or add `role` + `tabIndex` + keyboard handling per S6701. |
+| `S7735` | "Unexpected negated condition" | Invert to the positive form where it reads better. |
+| `S7718` | catch param naming | Name a used catch param `error_` (or a descriptive name); use bare `catch` when unused. |
+| `S4624` | Nested template literals | Extract the inner literal/expression to a variable. |
+| `S6594`/`S4030` | `Set` for membership | Use `new Set([...])` + `.has()` instead of array `.includes()`. |
+
+**Never "fix" one of these by changing behavior.** If the asserted type, the pushed order, or the constructor's async timing is load-bearing, stop and report it instead.
+
+---
+
 ## Accessibility Rules
 
 ### S6700 — Use semantic HTML
