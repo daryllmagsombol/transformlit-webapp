@@ -811,6 +811,35 @@ it('renders children', () => {
 
 ---
 
+## Fire-and-forget helpers and side-effect ordering (opencode review)
+
+### FIRE-AND-FORGET-CONTRACT — "Never throws" must guard synchronous throws too
+**Fix:** A helper documented as fire-and-forget / "never throws" must not throw
+synchronously either. A trailing `.catch()` only handles a rejected promise; it
+does nothing for a synchronous throw from argument evaluation or from a `mutate`
+that throws instead of rejecting. Wrap the **entire** body in `try/catch`, and
+return a promise that resolves to `void` so callers may either ignore it or
+`await` it.
+
+❌ `client.mutate({ operationId: globalThis.crypto.randomUUID() /* or mutate throws */ }).catch(() => {})` — the UUID or the `mutate` call can throw before `.catch` is attached.
+✅ `try { return client.mutate({...}).then(() => undefined, () => undefined); } catch { return Promise.resolve(); }`
+
+### SIDE-EFFECT-ORDERING — Await a write before re-reading, and keep unrelated effects out of a failure boundary
+**Fix:** Two related ordering rules. (1) When a UI action writes then immediately
+re-reads (a check-in then `loadData`), `await` the write first — a fire-and-forget
+write races the read and renders stale data. (2) A side effect that must never
+determine the success/failure of a primary operation (recording analytics/activity
+after a create) must sit **outside** the primary operation's `try/catch`, or a
+throw there is misreported as the primary operation failing.
+
+❌ `recordActivity(...); loadData(year);` — reload typically renders before the write lands.
+✅ `void recordActivity(...).then(() => loadData(year));`
+
+❌ `try { await createPost(); recordActivity(...); setBody(''); } catch { toast('Failed to post'); }` — an activity throw reports a succeeded post as failed.
+✅ `await createPost(); /* separate */ recordActivity(...); setBody('');` — keep the recorder out of the create `try/catch`.
+
+---
+
 ## Quick Reference — Common Fixes
 
 | Issue | Fix |
