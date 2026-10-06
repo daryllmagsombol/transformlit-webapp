@@ -311,7 +311,7 @@ export function BibleReaderView({
   const studyVerseText = useMemo(() => {
     if (studyVerse === null) return null;
     const verse = content.find((c) => c.type === 'verse' && c.number === studyVerse);
-    return verse && verse.type === 'verse' ? verse.content : null;
+    return verse?.type === 'verse' ? verse.content : null;
   }, [studyVerse, content]);
 
   const wordsForVerse = studyVerse !== null && words?.verses?.[String(studyVerse)] ? words.verses[String(studyVerse)] : [];

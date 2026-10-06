@@ -95,7 +95,7 @@ function BookDownloadButton({ book }: { readonly book: GraphQLBook }) {
   const [completed, setCompleted] = useState(0);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [storageAvailable, setStorageAvailable] = useState(typeof globalThis.indexedDB !== 'undefined');
+  const [storageAvailable, setStorageAvailable] = useState(globalThis.indexedDB !== undefined);
   const [persistenceGranted, setPersistenceGranted] = useState<boolean | null>(null);
   // Reactive permit: re-renders when ownership is established/cleared, so the
   // button cannot stay disabled after an asynchronous activation.
@@ -146,9 +146,9 @@ function BookDownloadButton({ book }: { readonly book: GraphQLBook }) {
         setState(result?.status ?? 'READY');
         setCompleted(result?.completedItems ?? 0);
         setTotal(result?.itemCount ?? 0);
-      } catch (caught) {
+      } catch (error_) {
         setState('INTERRUPTED');
-        setError(caught instanceof Error ? caught.message : 'Download failed');
+        setError(error_ instanceof Error ? error_.message : 'Download failed');
       }
     },
     [],
@@ -173,8 +173,8 @@ function BookDownloadButton({ book }: { readonly book: GraphQLBook }) {
       setState('IDLE');
       setCompleted(0);
       setTotal(0);
-    } catch (caught: unknown) {
-      setError(caught instanceof Error ? caught.message : 'Could not remove download');
+    } catch (error_: unknown) {
+      setError(error_ instanceof Error ? error_.message : 'Could not remove download');
     }
   }, [book.id]);
 
@@ -186,7 +186,7 @@ function BookDownloadButton({ book }: { readonly book: GraphQLBook }) {
       itemCount={total}
       error={error}
       canDownload={permitted && book.conversionStatus === 'READY'}
-      deniedReason={!permitted ? 'Sign in to save this book offline.' : 'This book is still being prepared.'}
+      deniedReason={permitted ? 'This book is still being prepared.' : 'Sign in to save this book offline.'}
       storageAvailable={storageAvailable}
       persistenceGranted={persistenceGranted}
       onStart={onStart}

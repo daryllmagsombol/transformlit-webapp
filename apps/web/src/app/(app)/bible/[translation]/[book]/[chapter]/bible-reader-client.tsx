@@ -83,9 +83,9 @@ function BibleChapterDownload({ translation, book, chapter, label }: {
       setState('STAGING');
       const result = await offlineDownloadManager().startBibleChapterDownload(translation, book, chapter);
       setState(result.status);
-    } catch (caught) {
+    } catch (error_) {
       setState('FAILED');
-      setError(caught instanceof Error ? caught.message : 'Bible chapter download failed');
+      setError(error_ instanceof Error ? error_.message : 'Bible chapter download failed');
     }
   }, [translation, book, chapter]);
 
@@ -95,9 +95,9 @@ function BibleChapterDownload({ translation, book, chapter, label }: {
       setState('STAGING');
       const result = await offlineDownloadManager().retryBibleChapterDownload(translation, book, chapter);
       setState(result.status);
-    } catch (caught) {
+    } catch (error_) {
       setState('FAILED');
-      setError(caught instanceof Error ? caught.message : 'Bible chapter download failed');
+      setError(error_ instanceof Error ? error_.message : 'Bible chapter download failed');
     }
   }, [translation, book, chapter]);
 

@@ -59,7 +59,8 @@ function bookHref(bookId: string, page: number): string {
 }
 
 function bibleHref(translation: string, book: string, chapter: number, verse?: number): string {
-  return `#bible/${translation}/${book}/${chapter}${verse ? `/v${verse}` : ''}`;
+  const verseSegment = verse ? `/v${verse}` : '';
+  return `#bible/${translation}/${book}/${chapter}${verseSegment}`;
 }
 
 function describeDownload(download: DownloadManifestRecord): string {

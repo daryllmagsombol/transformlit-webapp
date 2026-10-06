@@ -153,7 +153,7 @@ async function loadProgressServerValue(bookId: string): Promise<ConflictServerVa
 
 /** Downloaded content versions for the book, or undefined when unavailable. */
 async function loadAvailableContentVersions(bookId: string): Promise<readonly number[] | undefined> {
-  if (typeof globalThis.indexedDB === 'undefined' || typeof IDBKeyRange === 'undefined') return undefined;
+  if (globalThis.indexedDB === undefined || typeof IDBKeyRange === 'undefined') return undefined;
   const owner = accountLifecycle().getOwner();
   if (!owner) return undefined;
   const range = IDBKeyRange.bound(
