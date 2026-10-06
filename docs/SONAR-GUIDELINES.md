@@ -339,7 +339,7 @@ import { randomUUID } from 'node:crypto';
 ```
 
 ### S6479 — No array index in React keys
-**Fix:** Use stable unique IDs instead of array index.
+**Fix:** Use stable unique IDs instead of array index. When list items are structurally identical (same type, no id, no content), key by a **per-render ordinal** counted as you map — never the array index.
 
 ```ts
 // ❌ Bad
@@ -347,6 +347,36 @@ import { randomUUID } from 'node:crypto';
 
 // ✅ Good
 {items.map((item) => <div key={item.id}>{item}</div>)}
+
+// ✅ Also good — items have no id/content identity (e.g. Bible `line_break`)
+let lineBreakOrdinal = 0;
+{content.map((item) => {
+  if (item.type === 'line_break') {
+    lineBreakOrdinal += 1;
+    return <div key={`lb-${lineBreakOrdinal}`} />;
+  }
+  return <Verse key={`verse-${item.number}`} />;
+})}
+```
+
+### S6353 / S6582 / S1854 — Sort comparators, optional chains, redundant assignments
+**Fix:** Three related "reliability" findings that appear as High on new code:
+
+```ts
+// ❌ Bad — no comparator: sort is alphabetical/type-dependent
+[...days].sort();
+// ✅ Good — explicit comparator (dayKeys are ISO strings)
+[...days].sort((a, b) => a.localeCompare(b));
+
+// ❌ Bad — explicit null check where an optional chain reads cleaner (S6582)
+if (!parsed || parsed.year !== year) return fallback;
+// ✅ Good
+if (parsed?.year !== year) return fallback;
+
+// ❌ Bad — `run` already holds the value on every path (S1854)
+if (run > longest) longest = run;
+// ✅ Good
+longest = Math.max(longest, run);
 ```
 
 ### S6480 — Context provider values must be stable
@@ -421,6 +451,22 @@ function isLoopbackPeer(address?: string): boolean {
 
 If a hotspot genuinely cannot be avoided, it MUST be reviewed in the Sonar UI before merge.
 
+### Hotspot inventory — the gate needs 100% reviewed, so avoid these by construction
+
+These were all surfaced by the scan. Prefer code that does not create them; where a hotspot is intentional test/tooling code, mark it **Safe** in the Sonar UI.
+
+| Rule | Category | What triggers it | Avoid by |
+|---|---|---|---|
+| `S2245` | Weak crypto | `Math.random()` in `apps/web/scripts/test-utils/pwa-fixture.ts` (temp-dir name) | Fine for a non-security fixture — mark **Safe**, or use a counter. Never use `Math.random()` for tokens/ids. |
+| `S1523` | Code injection (RCE) | `runInNewContext(workerSource, sandbox)` in test-utils | It is a test sandbox for a known, repo-owned worker script — mark **Safe**. Never `runInNewContext` on untrusted input. |
+| `S5693` | DoS | Multer `FileInterceptor` with no explicit `limits.fileSize` in `apps/api/src/uploads/uploads.controller.ts` | Set `limits: { fileSize: MAX_FILE_SIZE_BYTES }` (already a shared constant). |
+| `S5852` | DoS (ReDoS) | `.replace(/\/+$/, '')` in `download-manager.ts` | Use a linear pattern (e.g. a `while (endsWith('/'))` trim) or mark **Safe** after review — `/\/+$/` is not catastrophic. |
+| `S6504` | Permission | `COPY --chown=node:node` in `apps/web/Dockerfile` | Intentional: the runtime user is non-root. Mark **Safe**. |
+| `S6470` | Permission | `COPY . .` in both Dockerfiles | Covered by a `.dockerignore`; confirm it excludes `.env*`, `.git`, `node_modules`. Mark **Safe**. |
+| `S1313` | Hardcoded IP | literal loopback IPs in tests | See the `S1313` rule above — derive from parts. |
+
+**Required review step:** after a scan, open **Security Hotspots → To review** and assess every entry. "Safe" with a one-line rationale is a legitimate outcome; leaving one **To review** fails the gate.
+
 ---
 
 ## Data / API Handling Rules (opencode review)
@@ -476,6 +522,24 @@ return { accessToken, refreshToken, user };
 | `<div role="separator">` | `<hr>` |
 | `<div role="button">` | `<button>` |
 | `<div role="button">` | `<input type="button">` |
+| `<div role="progressbar" aria-valuenow=…>` | `<progress value=… max=…>` (S6811) |
+| `<div role="status">` | `<output>` (S6811) |
+
+### S6811 — Prefer native `<progress>` / `<output>` over ARIA roles
+**Fix:** Use the native element. A `<progress>` takes `value`/`max` instead of
+`aria-valuenow`/`aria-valuemax`, so update tests that queried the old attributes.
+
+```tsx
+// ❌ Bad — flagged: custom progressbar role
+<div role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+  <div style={{ width: `${percent}%` }} />
+</div>
+
+// ✅ Good — native element
+<progress value={percent} max={100} aria-label="Yearly reading goal progress" />
+```
+Tests: `screen.getByRole('progressbar')` still works; assert `toHaveAttribute('value', '50')`
+and `max` instead of `aria-valuenow`.
 
 ### S6701 — Interactive elements need keyboard support
 **Fix:** Add `onKeyDown` or `onKeyUp` to non-interactive elements with `onClick`.
@@ -584,7 +648,12 @@ do NOT change working code that uses the standalone `split()`.
 ### React deprecations
 | ❌ Deprecated | ✅ Replacement |
 |---------------|----------------|
-| `FormEvent` (bare import) | `React.FormEvent<HTMLFormElement>` for form handlers, or `SubmitEvent`/`ChangeEvent`/`SyntheticEvent` as appropriate |
+| `FormEvent` (bare import) | `React.SyntheticEvent<HTMLFormElement>` for form handlers, or `SubmitEvent`/`ChangeEvent` as appropriate |
+
+**`FormEvent` is deprecated in @types/react 19 — do not use `React.FormEvent` either.** The
+`@deprecated` tag says *"FormEvent doesn't actually exist"*; prefer `React.SyntheticEvent<T>`
+for a generic `onSubmit` handler, or a more specific event type. The existing entry that
+recommended `React.FormEvent<HTMLFormElement>` is superseded by this rule.
 
 ### Testing deprecations
 | ❌ Deprecated | ✅ Replacement |
