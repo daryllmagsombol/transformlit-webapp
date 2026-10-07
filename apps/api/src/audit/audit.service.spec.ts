@@ -72,4 +72,35 @@ describe('AuditService', () => {
     expect(count).toHaveBeenCalledWith({ where: {} });
     expect(result).toEqual({ items: [], total: 0 });
   });
+
+  it('list drops explicit null GraphQL filters instead of emitting SQL NULL', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const count = jest.fn().mockResolvedValue(0);
+    const prisma = { auditLog: { findMany, count } } as any;
+    const service = new AuditService(prisma);
+    // GraphQL nullable inputs deliver explicit null for cleared fields.
+    await service.list(
+      { action: null, actorId: null, targetType: null, targetId: null, from: null, to: null },
+      1,
+      25,
+    );
+    const arg = findMany.mock.calls[0][0];
+    expect(arg.where).toEqual({});
+    expect(arg.where).not.toHaveProperty('action');
+    expect(arg.where).not.toHaveProperty('userId');
+    expect(arg.where).not.toHaveProperty('createdAt');
+    expect(count).toHaveBeenCalledWith({ where: {} });
+  });
+
+  it('list keeps a partial null date range from producing null bounds', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const count = jest.fn().mockResolvedValue(0);
+    const prisma = { auditLog: { findMany, count } } as any;
+    const service = new AuditService(prisma);
+    const from = new Date('2026-01-01T00:00:00Z');
+    await service.list({ from, to: null }, 1, 25);
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { createdAt: { gte: from, lte: undefined } },
+    }));
+  });
 });

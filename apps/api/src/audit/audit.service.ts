@@ -15,12 +15,14 @@ export interface RecordAuditInput {
 }
 
 export interface AuditFilters {
-  action?: string;
-  actorId?: string;
-  targetType?: string;
-  targetId?: string;
-  from?: Date;
-  to?: Date;
+  // GraphQL nullable inputs deliver explicit `null` for cleared fields, so the
+  // service accepts `null` and normalizes it away before building the `where`.
+  action?: string | null;
+  actorId?: string | null;
+  targetType?: string | null;
+  targetId?: string | null;
+  from?: Date | null;
+  to?: Date | null;
 }
 
 /** Raw `audit_logs` row. `userId` is exposed to GraphQL as `actorId` by the resolver. */
@@ -88,12 +90,19 @@ export class AuditService {
 
   private buildWhere(filters: AuditFilters): Prisma.AuditLogWhereInput {
     const where: Prisma.AuditLogWhereInput = {};
-    if (filters.action !== undefined) where.action = filters.action;
-    if (filters.actorId !== undefined) where.userId = filters.actorId;
-    if (filters.targetType !== undefined) where.targetType = filters.targetType;
-    if (filters.targetId !== undefined) where.targetId = filters.targetId;
-    if (filters.from !== undefined || filters.to !== undefined) {
-      where.createdAt = { gte: filters.from, lte: filters.to };
+    const action = filters.action ?? undefined;
+    const actorId = filters.actorId ?? undefined;
+    const targetType = filters.targetType ?? undefined;
+    const targetId = filters.targetId ?? undefined;
+    const from = filters.from ?? undefined;
+    const to = filters.to ?? undefined;
+
+    if (action !== undefined) where.action = action;
+    if (actorId !== undefined) where.userId = actorId;
+    if (targetType !== undefined) where.targetType = targetType;
+    if (targetId !== undefined) where.targetId = targetId;
+    if (from !== undefined || to !== undefined) {
+      where.createdAt = { gte: from, lte: to };
     }
     return where;
   }
