@@ -18,7 +18,6 @@ import {
   GroupMember,
   CreateGroupInput,
   UpdateGroupInput,
-  AdminGroup,
   AdminGroupPage,
   AdminGroupsFilter,
 } from './models/group.model.js';

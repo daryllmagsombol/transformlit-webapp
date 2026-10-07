@@ -1385,3 +1385,12 @@ Calling a resolver method directly never runs `UseGuards`/`RolesGuard`, and CI r
 
 ❌ Sequence the urgent guard fix after schema and module work.
 ✅ Guard the books endpoints first, then schema → audit → auth → admin → web.
+
+### ADM-23 — Unused import fails the "0 new issues" quality gate (S1128)
+Review of `groups.resolver.ts` found `AdminGroup` imported but never referenced — only
+`AdminGroupPage` and `AdminGroupsFilter` were used. A single Low/Minor issue fails the
+New Code quality gate (0 new issues). Remove any import that is not referenced; rely on
+the linter/compiler rather than leaving unused symbols "for symmetry".
+
+❌ `import { AdminGroup, AdminGroupPage, AdminGroupsFilter } from './models/group.model.js';` while only the page/filter types appear in the resolver.
+✅ Import only what is used: `import { AdminGroupPage, AdminGroupsFilter } from './models/group.model.js';`
