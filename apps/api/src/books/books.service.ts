@@ -4,7 +4,6 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-  Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
@@ -39,7 +38,7 @@ export class BooksService {
     private readonly prisma: PrismaService,
     private readonly blob: BlobService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
-    @Optional() private readonly audit?: AuditService,
+    private readonly audit: AuditService,
   ) {}
 
   async listBooks() {
@@ -102,7 +101,7 @@ export class BooksService {
   ) {
     await this.assertCanManageBookPublic(id, actorId, actorRole);
     const book = await this.prisma.book.update({ where: { id }, data: input });
-    await this.audit?.record({
+    await this.audit.record({
       actorId,
       action: AuditAction.BOOK_UPDATED,
       targetType: 'BOOK',
@@ -174,7 +173,7 @@ export class BooksService {
     });
 
     // Post-commit only: the book row and conversion job are already durable.
-    await this.audit?.record({
+    await this.audit.record({
       actorId,
       action: AuditAction.BOOK_UPLOADED,
       targetType: 'BOOK',
@@ -320,7 +319,7 @@ export class BooksService {
       where: { id },
       data: { deletedAt: new Date() },
     });
-    await this.audit?.record({
+    await this.audit.record({
       actorId,
       action: AuditAction.BOOK_DELETED,
       targetType: 'BOOK',

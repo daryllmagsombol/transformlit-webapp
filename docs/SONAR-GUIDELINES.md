@@ -1391,3 +1391,16 @@ Calling a resolver method directly never runs `UseGuards`/`RolesGuard`, and CI r
 
 ❌ `if (filters.action !== undefined) where.action = filters.action;` — a cleared GraphQL filter sends `null`, producing `action IS NULL` or `gte: null`.
 ✅ `const action = filters.action ?? undefined;` then `if (action !== undefined) where.action = action;` for all six fields (`action`, `actorId`, `targetType`, `targetId`, `from`, `to`), and pin it with a test asserting the `where` omits null-valued keys.
+
+### ADM-24 — An `@Optional()` audit dependency can silently drop audit records
+`BooksService` injected `AuditService` with `@Optional()` and called `this.audit?.record(...)`, while every other service injected it as required. The optional was there only because `BookDownloadBackfillModule` bootstraps `BooksService` as a separate application-context root without `AuditModule` (so `@Global()` does not cover it). For an audit feature, silently skipping every write in a context that forgets the module is the worst failure mode — it looks healthy and records nothing. Prefer required DI; if a context genuinely cannot provide the dependency, fix that context so it fails fast at bootstrap rather than degrading to no-op audit. When required DI is impractical, at minimum add a DI-level test proving the service is constructed *with* an `AuditService` in the real module graph.
+
+❌ `@Optional() private readonly audit?: AuditService` + `this.audit?.record(...)` — a context missing `AuditModule` boots fine and writes zero audit rows.
+✅ `private readonly audit: AuditService` (required) and import `AuditModule` into the standalone `BookDownloadBackfillModule`; bootstrap now fails loudly if the graph is wrong.
+
+### ADM-25 — An emitted audit action with no assertion can regress unnoticed
+`BOOK_UPLOADED` and `BOOK_DELETED` were emitted but no test asserted them; only `BOOK_UPDATED` was covered. An audit row that is emitted but unasserted can be renamed, dropped, or given the wrong target id without any test failing. Every emitted action with a real call site needs at least one positive assertion (action constant + `targetId`) plus, where the mutation can throw, a negative assertion that nothing was recorded.
+
+❌ Implement `audit.record({ action: BOOK_UPLOADED, ... })` and `{ action: BOOK_DELETED, ... }` but only test `BOOK_UPDATED`.
+✅ Add assertions that `uploadBookFile`/`deleteBook` record `BOOK_UPLOADED`/`BOOK_DELETED` with the correct `targetType`/`targetId`, and that a throwing mutation records nothing.
+

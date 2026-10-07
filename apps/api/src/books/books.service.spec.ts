@@ -617,6 +617,25 @@ describe('BooksService', () => {
         service.deleteBook('missing', 'user-1', UserRole.MEMBER),
       ).rejects.toThrow(NotFoundException);
     });
+
+    it('records BOOK_DELETED after the delete commits', async () => {
+      await service.deleteBook('book-1', 'user-1', UserRole.MEMBER);
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: 'user-1',
+          action: AuditAction.BOOK_DELETED,
+          targetType: 'BOOK',
+          targetId: 'book-1',
+        }),
+      );
+    });
+
+    it('does not record BOOK_DELETED when the mutation throws', async () => {
+      await expect(
+        service.deleteBook('book-1', 'user-2', UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+      expect(audit.record).not.toHaveBeenCalled();
+    });
   });
 
   // ── uploadBookFile ─────────────────────────────────────────────────────────
@@ -637,10 +656,12 @@ describe('BooksService', () => {
         $transaction: jest.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
       };
       const localStorage = { put: jest.fn().mockResolvedValue(undefined) };
+      const localAudit = { record: jest.fn().mockResolvedValue(undefined) };
       const localService = new BooksService(
         localPrisma as never,
         { streamPdf: jest.fn(), uploadPdf: jest.fn() } as never,
         localStorage as never,
+        localAudit as never,
       );
 
       const result = await localService.uploadBookFile('book-1', buildTestPdf(['Hello']), 'user-1', UserRole.MEMBER);
@@ -661,6 +682,20 @@ describe('BooksService', () => {
       expect(result.format).toBe('PDF');
     });
 
+    it('records BOOK_UPLOADED after the transaction commits', async () => {
+      await service.uploadBookFile('book-1', buildTestPdf(['Hello']), 'user-1', UserRole.MEMBER);
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: 'user-1',
+          action: AuditAction.BOOK_UPLOADED,
+          targetType: 'BOOK',
+          targetId: 'book-1',
+        }),
+      );
+      // Post-commit only: the audit write must not run inside the transaction.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+
     it('rejects a non-PDF buffer', async () => {
       const localPrisma = {
         book: { findUnique: jest.fn().mockResolvedValue({ id: 'book-1', createdById: 'user-1' }), update: jest.fn() },
@@ -670,6 +705,7 @@ describe('BooksService', () => {
         localPrisma as never,
         {} as never,
         { put: jest.fn() } as never,
+        { record: jest.fn() } as never,
       );
       await expect(
         localService.uploadBookFile('book-1', Buffer.from('nope'), 'user-1', UserRole.MEMBER),
@@ -684,7 +720,12 @@ describe('BooksService', () => {
         $transaction: jest.fn(),
       };
       const localStorage = { put: jest.fn() };
-      const localService = new BooksService(localPrisma as never, {} as never, localStorage as never);
+      const localService = new BooksService(
+        localPrisma as never,
+        {} as never,
+        localStorage as never,
+        { record: jest.fn() } as never,
+      );
       const epub = Buffer.concat([Buffer.from('PK\u0003\u0004'), Buffer.from('application/epub+zip')]);
 
       await expect(
@@ -714,7 +755,7 @@ describe('BooksService', () => {
         bookConversionJob: { create: jest.fn() },
         $transaction: jest.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
       };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, { record: jest.fn() } as never);
 
       const result = await localService.retryConversion('book-1');
 
@@ -734,7 +775,7 @@ describe('BooksService', () => {
         },
         $transaction: jest.fn(),
       };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, { record: jest.fn() } as never);
       await expect(localService.retryConversion('book-1')).rejects.toThrow(/failed conversion/i);
       expect(localPrisma.$transaction).not.toHaveBeenCalled();
     });
@@ -746,7 +787,7 @@ describe('BooksService', () => {
         },
         $transaction: jest.fn(),
       };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, { record: jest.fn() } as never);
       await expect(localService.retryConversion('book-1')).rejects.toThrow(/no stored original/i);
       expect(localPrisma.$transaction).not.toHaveBeenCalled();
     });
@@ -756,7 +797,7 @@ describe('BooksService', () => {
         book: { findUnique: jest.fn().mockResolvedValue(null) },
         $transaction: jest.fn(),
       };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, { record: jest.fn() } as never);
       await expect(localService.retryConversion('book-1')).rejects.toThrow(NotFoundException);
     });
   });
@@ -768,19 +809,19 @@ describe('BooksService', () => {
 
     it('allows a free, published, ready book', async () => {
       const localPrisma = { book: { findUnique: jest.fn().mockResolvedValue(base) }, bookAccess: { findUnique: jest.fn() } };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, { record: jest.fn() } as never);
       await expect(localService.assertCanRead('book-1', 'user-1')).resolves.toMatchObject({ id: 'book-1' });
     });
 
     it('rejects a deleted book', async () => {
       const localPrisma = { book: { findUnique: jest.fn().mockResolvedValue({ ...base, deletedAt: new Date() }) }, bookAccess: { findUnique: jest.fn() } };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, { record: jest.fn() } as never);
       await expect(localService.assertCanRead('book-1', 'user-1')).rejects.toThrow(/not available/);
     });
 
     it('rejects a book that is still converting', async () => {
       const localPrisma = { book: { findUnique: jest.fn().mockResolvedValue({ ...base, conversionStatus: 'PENDING' }) }, bookAccess: { findUnique: jest.fn() } };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, { record: jest.fn() } as never);
       await expect(localService.assertCanRead('book-1', 'user-1')).rejects.toThrow(/not ready/);
     });
 
@@ -789,7 +830,7 @@ describe('BooksService', () => {
         book: { findUnique: jest.fn().mockResolvedValue({ ...base, accessLevel: 'RESTRICTED' }) },
         bookAccess: { findUnique: jest.fn().mockResolvedValue(null) },
       };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, { record: jest.fn() } as never);
       await expect(localService.assertCanRead('book-1', 'user-1')).rejects.toThrow(/do not have access/);
     });
 
@@ -798,7 +839,7 @@ describe('BooksService', () => {
         book: { findUnique: jest.fn().mockResolvedValue({ ...base, accessLevel: 'RESTRICTED' }) },
         bookAccess: { findUnique: jest.fn().mockResolvedValue({ id: 'access-1' }) },
       };
-      const localService = new BooksService(localPrisma as never, {} as never, {} as never);
+      const localService = new BooksService(localPrisma as never, {} as never, {} as never, { record: jest.fn() } as never);
       await expect(localService.assertCanRead('book-1', 'user-1')).resolves.toMatchObject({ id: 'book-1' });
     });
   });
@@ -820,7 +861,7 @@ describe('BooksService', () => {
         book: { findUnique: jest.fn() },
         bookAccess: { findUnique: jest.fn().mockResolvedValue(access) },
       };
-      return { service: new BooksService(localPrisma as never, {} as never, {} as never), localPrisma };
+      return { service: new BooksService(localPrisma as never, {} as never, {} as never, { record: jest.fn() } as never), localPrisma };
     }
 
     it('returns true for a free, published, ready book without an access lookup', async () => {
