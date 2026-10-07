@@ -49,7 +49,9 @@ export class SharedHighlightsService {
     const highlight = await this.prisma.highlight.findUnique({
       where: { id: input.highlightId },
     });
-    if (!highlight || highlight.deletedAt !== null) {
+    // `undefined !== null` covers the missing-highlight case, so the optional
+    // chain alone is equivalent to the previous `!highlight ||` guard.
+    if (highlight?.deletedAt !== null) {
       throw new NotFoundException('Highlight not found');
     }
     if (highlight.userId !== userId) {

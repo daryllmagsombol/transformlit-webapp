@@ -58,7 +58,9 @@ export class ReadingPlansService {
       where: { id: input.bookId },
       select: { id: true, deletedAt: true },
     });
-    if (!book || book.deletedAt !== null) {
+    // `undefined !== null` covers the missing-book case, so the optional chain
+    // alone is equivalent to the previous `!book ||` guard.
+    if (book?.deletedAt !== null) {
       throw new NotFoundException('Book not found');
     }
 
