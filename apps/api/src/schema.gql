@@ -24,6 +24,32 @@ input AddHighlightInput {
   text: String!
 }
 
+type AdminGroup {
+  activeMemberCount: Int!
+  category: GroupCategory
+  coverImageUrl: String
+  createdAt: DateTime!
+  description: String
+  featured: Boolean!
+  id: ID!
+  name: String!
+  pendingMemberCount: Int!
+  slug: String!
+  visibility: GroupVisibility!
+}
+
+type AdminGroupPage {
+  items: [AdminGroup!]!
+  page: Int!
+  pageSize: Int!
+  total: Int!
+}
+
+input AdminGroupsFilter {
+  query: String
+  visibility: GroupVisibility
+}
+
 type Announcement {
   body: String!
   category: AnnouncementCategory!
@@ -530,6 +556,7 @@ input PublishAnnouncementInput {
 }
 
 type Query {
+  adminGroups(filter: AdminGroupsFilter, page: Int! = 1, pageSize: Int! = 25): AdminGroupPage!
   announcement(id: String!): Announcement
   announcements: [Announcement!]!
   book(id: String!): Book!

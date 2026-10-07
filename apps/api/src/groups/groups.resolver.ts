@@ -10,8 +10,18 @@ import {
 import { UseGuards } from '@nestjs/common';
 import { GroupsService } from './groups.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
+import { RolesGuard } from '../auth/guards/roles.guard.js';
+import { Roles } from '../common/decorators/roles.decorator.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
-import { Group, GroupMember, CreateGroupInput, UpdateGroupInput } from './models/group.model.js';
+import {
+  Group,
+  GroupMember,
+  CreateGroupInput,
+  UpdateGroupInput,
+  AdminGroup,
+  AdminGroupPage,
+  AdminGroupsFilter,
+} from './models/group.model.js';
 import { GroupCategory, GroupMemberRole, UserRole } from '@transformlit/shared';
 
 @Resolver(() => Group)
@@ -78,9 +88,21 @@ export class GroupsResolver {
   @UseGuards(JwtAuthGuard)
   async groupMembers(
     @Args('groupId') groupId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.groupsService.listMembers(groupId, user.id);
+    return this.groupsService.listMembers(groupId, user.id, user.role);
+  }
+
+  @Query(() => AdminGroupPage, { name: 'adminGroups' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MODERATOR)
+  async adminGroups(
+    @Args('filter', { type: () => AdminGroupsFilter, nullable: true })
+    filter?: AdminGroupsFilter,
+    @Args('page', { type: () => Int, defaultValue: 1 }) page = 1,
+    @Args('pageSize', { type: () => Int, defaultValue: 25 }) pageSize = 25,
+  ) {
+    return this.groupsService.adminGroups(filter ?? {}, page, pageSize);
   }
 
   // ── Mutations ──────────────────────────────────────────────────────────────
@@ -134,47 +156,47 @@ export class GroupsResolver {
   @Mutation(() => GroupMember, { name: 'approveGroupMember' })
   @UseGuards(JwtAuthGuard)
   async approveGroupMember(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
     @Args('groupId') groupId: string,
     @Args('userId') userId: string,
   ) {
-    return this.groupsService.approveMember(groupId, user.id, userId);
+    return this.groupsService.approveMember(groupId, user.id, userId, user.role);
   }
 
   @Mutation(() => Boolean, { name: 'removeGroupMember' })
   @UseGuards(JwtAuthGuard)
   async removeGroupMember(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
     @Args('groupId') groupId: string,
     @Args('userId') userId: string,
   ) {
-    return this.groupsService.removeMember(groupId, user.id, userId);
+    return this.groupsService.removeMember(groupId, user.id, userId, user.role);
   }
 
   @Mutation(() => GroupMember, { name: 'banGroupMember' })
   @UseGuards(JwtAuthGuard)
   async banGroupMember(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
     @Args('groupId') groupId: string,
     @Args('userId') userId: string,
   ) {
-    return this.groupsService.banMember(groupId, user.id, userId);
+    return this.groupsService.banMember(groupId, user.id, userId, user.role);
   }
 
   @Mutation(() => GroupMember, { name: 'unbanGroupMember' })
   @UseGuards(JwtAuthGuard)
   async unbanGroupMember(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
     @Args('groupId') groupId: string,
     @Args('userId') userId: string,
   ) {
-    return this.groupsService.unbanMember(groupId, user.id, userId);
+    return this.groupsService.unbanMember(groupId, user.id, userId, user.role);
   }
 
   @Mutation(() => GroupMember, { name: 'updateGroupMemberRole' })
   @UseGuards(JwtAuthGuard)
   async updateGroupMemberRole(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
     @Args('groupId') groupId: string,
     @Args('userId') userId: string,
     @Args('role', { type: () => GroupMemberRole }) role: GroupMemberRole,
@@ -184,6 +206,7 @@ export class GroupsResolver {
       user.id,
       userId,
       role === 'MODERATOR' ? 'MODERATOR' : 'MEMBER',
+      user.role,
     );
   }
 }
