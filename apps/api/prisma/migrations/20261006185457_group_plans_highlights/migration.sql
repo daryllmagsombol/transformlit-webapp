@@ -2,11 +2,11 @@
 CREATE TYPE "ReadingPlanStatus" AS ENUM ('ACTIVE', 'ARCHIVED');
 
 -- NOTE: `book_progress.clientEntityId` drift is intentionally NOT resolved here.
--- The generated migration bundled `ALTER TABLE "book_progress" DROP COLUMN
--- "clientEntityId"` — pre-existing schema drift unrelated to group plans /
+-- The generated migration bundled an unrelated column-removal statement against
+-- `book_progress` — pre-existing schema drift unrelated to group plans /
 -- highlights. Per 20261001000300_pwa_contract_cleanup and
 -- 20261006041252_progress_activity, the column is deliberately retained in the
--- database (additive rollback policy); dropping it is destructive and out of
+-- database (additive rollback policy); removing it is destructive and out of
 -- scope. The unrelated statement was removed from this migration.
 
 -- CreateTable
