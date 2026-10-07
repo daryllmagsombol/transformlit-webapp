@@ -1271,3 +1271,117 @@ For this server's current approved scope, `app.transformlit.com` is active; `tra
 
 ❌ Let a missing `hashlib` import in a failure handler discard the maintenance check’s exit status/stdout/stderr, then claim the public gate passed or guess which route failed.
 ✅ Persist the raw checker result first; parse it second; if recovery runs, record its separate command/result while preserving the initiating failure evidence.
+
+---
+
+## Admin console design review findings — AI review IDs (not Sonar rules)
+
+Findings from the @oracle review of `docs/superpowers/specs/2026-10-07-admin-console-design.md` (2026-10-07). Each ID is referenced from the revised spec.
+
+### ADM-1 — Guard metadata is inert; every guarded op needs `@UseGuards`
+`@Roles(...)` only sets metadata. `RolesGuard` is not a global guard (only `ContextThrottlerGuard` is registered via `APP_GUARD`, `app.module.ts:153`). A method with `@Roles` but no `@UseGuards(JwtAuthGuard, RolesGuard)` is unprotected. Apply the guard on every staff-gated method, and guard **all** mutating siblings (`uploadPdf` was missed, not just `uploadBook`).
+
+❌ Add `@Roles(ADMIN)` to `uploadBook` but leave `uploadPdf` on `JwtAuthGuard` only, so a member can still publish a book.
+✅ Use `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(...)` on `uploadBook`, `uploadPdf`, `updateBook`, `deleteBook`, `retryBookConversion`.
+
+### ADM-2 — A schema table with no code is not a feature
+`AuditLog` existed since the init migration but had no service, writer, or reader. A viewer over an empty table is dead UI. Verify a table has a writer before designing a reader.
+
+❌ Build an audit-log page backed by a table nothing writes to.
+✅ Build the write path (post-commit `AuditService.record`) and the reader together; note `AuditLog.user` is `onDelete: Cascade`.
+
+### ADM-3 — Never ship a metric without a writer
+`BookProgress.completedAt` had no writer anywhere, so `completionRate` would be permanently 0.
+
+❌ Define `completionRate` from `completedAt` while nothing sets it.
+✅ Add the completion writer (set `completedAt` when progress reaches page count) before exposing the metric.
+
+### ADM-4 — Membership checks are not global-staff checks
+`assertCanModerate`/`updateMemberRole`/`canView`/`listMembers` gate on an ACTIVE `GroupMember` row (and group-level `OWNER`). A global ADMIN who is not a member cannot act on an arbitrary group; `listGroups` hides private groups. Do not claim "staff can moderate any group" without threading the actor's global role through these gates.
+
+❌ State "global ADMIN/MODERATOR can moderate any group" and "no service changes" when the service only checks membership.
+✅ Thread `actorRole` into the gates (staff bypass), add a staff-only all-groups query, and preserve owner-protection.
+
+### ADM-5 — Suspension must cover every authentication path
+JWT + refresh revocation is not enough: reader pages use a separate sliding cookie (`ReaderSessionService.resolve`), which never checked user status, and `revokeAll(userId, bookId)` needs a `bookId`. Suspension must also revoke reading sessions and re-check status at resolve time.
+
+❌ Suspend a user, revoke their JWT/refresh, and leave their open reader cookie serving pages indefinitely.
+✅ Add `revokeAllForUser(userId)` (refresh families + reading sessions) and reject non-ACTIVE users in session resolution.
+
+### ADM-6 — Verify plumbing exists before claiming "reuse"
+"Upload dialog reuses existing upload" was false: the web app had no multipart link and `main.ts` had no `graphqlUploadExpress`, and `uploadBookFile` rejects EPUB. Check the transport exists.
+
+❌ Plan a PDF/EPUB upload dialog that reuses upload plumbing that is not wired.
+✅ Wire `graphqlUploadExpress` + the web upload link and scope v1 to PDF.
+
+### ADM-7 — Cite the correct precedent for `@Global()`
+`@Global()` is used by `PrismaModule` and `StorageModule`; the Azure module is explicitly imported. A spec that justifies `@Global()` with the wrong example misleads implementers.
+
+❌ Justify a new global module as "mirroring the azure pattern" (azure is not global).
+✅ Cite Prisma/Storage as the global-infra precedent, or import explicitly.
+
+### ADM-8 — Audit writes go after commit, never inside the business transaction
+A failed insert inside a Postgres transaction poisons it ("current transaction is aborted") and a rollback silently discards the row. Also: only emit `REFRESH_REUSE_DETECTED` when the stored token has `revokedAt` set (not on plain expiry), and derive the logout actor from the refresh-token row (the controller is `@Public`).
+
+❌ Call `audit.record()` inside the same `$transaction` as the mutation, or emit "reuse" for an ordinary expiry.
+✅ Record post-commit via the root `PrismaService`; emit reuse only on a revoked token; take the logout actor from the stored token.
+
+### ADM-9 — Enum conversions must tolerate non-uniform legacy values
+`User.status` defaulted to `"active"` while tests used `"ACTIVE"`. A naive cast silently mis-maps; preflight `SELECT DISTINCT lower(status)` and cast case-tolerantly.
+
+❌ `USING (status::"UserStatus")` and assume every row is `ACTIVE`.
+✅ `USING (CASE WHEN lower(status) = 'active' THEN 'ACTIVE'::"UserStatus" ELSE 'SUSPENDED'::"UserStatus" END)` after recording distinct values.
+
+### ADM-10 — Last-admin guard needs an exact predicate, serializable tx, and `P2034` retry
+Count `role = ADMIN AND status = ACTIVE AND deletedAt IS NULL` in the same transaction as the write; Prisma does not auto-retry serialization aborts.
+
+❌ Run the count and the update in separate statements and return an opaque 500 on `P2034`.
+✅ Check-and-write in one `Serializable` transaction with a bounded retry on `P2034`.
+
+### ADM-11 — Let Postgres rebuild dependent indexes on type change
+`ALTER COLUMN … TYPE` rebuilds dependent indexes; hand-writing index recreation risks drift. Also `DROP DEFAULT` before / `SET DEFAULT` after, and record the ACCESS EXCLUSIVE lock.
+
+❌ Hand-author `DROP INDEX`/`CREATE INDEX` for the enum conversion.
+✅ Emit the type change with `USING` plus default handling; let Postgres rebuild the index.
+
+### ADM-12 — Breaking GraphQL change: check real consumers and regeneration paths
+`User.status` `String!`→`UserStatus!` had no web/codegen consumers (verified), but adding the enum requires the shared barrel re-export and canonical SDL export (CI compares bytes).
+
+❌ Add the enum to `enums.ts` only, then hand-edit `schema.gql`.
+✅ Add the enum, export it from the shared barrel, run `graphql:schema:export`, and rebuild codegen.
+
+### ADM-13 — Don't put actions in a taxonomy that have no call site
+Listing `GROUP_DELETED` in an audit taxonomy while the console has no group-delete UI yields an action that never fires.
+
+❌ Enumerate audit actions the feature cannot emit.
+✅ Limit the taxonomy to actions with a real call site.
+
+### ADM-14 — Avoid N+1 in admin lists and drop ceremony
+Per-row `groupCount`/`actor` resolution caused N+1; `adminUser(id)` duplicated list data; class-validator/Zod on `@InputType` was not the existing convention.
+
+❌ Resolve `groupCount`/`actor` per row and add unused operations.
+✅ Batch counts/actors with `groupBy`/`findMany`; drop unused ops; use plain `@InputType`.
+
+### ADM-15 — Client role gates are UX-only
+`useRequireRole` hides the shell but proves nothing; a stale persisted role can render it.
+
+❌ Test only that a MEMBER is redirected and claim authorization works.
+✅ Assert server denial (403/typed error) for non-staff operations in tests.
+
+### ADM-16 — Nav constant aliasing and specs that assert counts
+`BOTTOM_NAV_ITEMS = SIDEBAR_NAV_ITEMS` means a new sidebar item also lands in mobile nav; `constants.spec.ts` asserts exactly 7 items.
+
+❌ Add an Admin nav item and leave the aliasing and the count assertion untouched.
+✅ Make Admin sidebar-only and update `constants.spec.ts` in the same change.
+
+### ADM-17 — Resolver unit tests do not exercise guards
+Calling a resolver method directly never runs `UseGuards`/`RolesGuard`, and CI runs a hardcoded integration file list.
+
+❌ Prove "MEMBER is rejected" with a resolver unit test that invokes the method directly.
+✅ Add GraphQL-layer integration tests and register them in `.github/workflows/opencode-review.yml`.
+
+### ADM-18 — Fix live security gaps first, ordered by dependency
+`uploadBook` was unguarded; that fix has no dependency on the enum/migration work.
+
+❌ Sequence the urgent guard fix after schema and module work.
+✅ Guard the books endpoints first, then schema → audit → auth → admin → web.

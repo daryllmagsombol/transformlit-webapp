@@ -1,71 +1,80 @@
-# Admin & Moderation Console — Design Spec
+# Admin & Moderation Console — Design Spec (rev. 2)
 
 **Date:** 2026-10-07
-**Status:** Approved (design) — pending written-spec review
+**Status:** Approved (design) — revised after independent @oracle review; pending user re-review
 **Branch:** `feature/admin-console`
-**Scope:** A staff-only `/admin` console plus the backend authorization, audit write-path, and analytics read-path it needs. Building blocks already exist: `Group`, `GroupMember` (with `BANNED`), `Book`/conversion tables, `Announcement` (with `publishAt`/`expiresAt`), `AuditLog`, `PageView`, and `BookProgress`.
+**Scope:** A staff-only `/admin` console plus the backend authorization, audit write-path, analytics read-path, and store-moderation changes it needs.
+
+> **Rev. 2 note.** Rev. 1 was reviewed line-by-line against the code by @oracle. It had three blockers (group moderation was unimplementable for global staff; the book-upload gap was only half-closed and its UI had no plumbing; suspension left the reader cookie alive) and one dead metric (`completedAt` has no writer). Every finding is resolved below and the resolution is marked **[ADM-n]**; the recurring lessons are recorded in `docs/SONAR-GUIDELINES.md` under the Admin Console review IDs.
 
 ---
 
 ## Overview
 
-The platform has admin-capable operations scattered across domain modules with **no UI**, **inconsistent authorization**, and two tables that are **written but never read** (`PageView`) or **never written at all** (`AuditLog`).
+Admin-capable operations exist across domain modules with **no UI**, **inconsistent authorization**, and two tables **written but never read** (`PageView`) or **never written at all** (`AuditLog`).
 
-Recon findings that define this work:
+Verified findings that define this work:
 
-1. **No admin surface.** There is no `/admin` route in `apps/web/src/app` and no admin API module in `apps/api/src`. Staff actions can only be performed through the GraphQL playground.
-2. **`RolesGuard`/`@Roles` is wired only in `feed.resolver.ts`** (`createAnnouncement` L31-32, `updateAnnouncement` L41-42, `publishAnnouncement` L52-53, `unpublishAnnouncement` L62-63, `deleteAnnouncement` L72-73). Everywhere else, authorization is inline service logic or absent.
-3. **`uploadBook` is unguarded** beyond `JwtAuthGuard` (`books.resolver.ts:70-77`). Any authenticated user can create a DRAFT book. This is a live security gap this spec closes.
-4. **`AuditLog` is write-only by schema and has no code at all** — no service, no writer, no reader. Grep for `auditLog|AuditLog` across `apps/api/src` returns nothing. The audit viewer is meaningless until the write path is built.
-5. **`PageView` is written but never read.** Written only in `PageViewService.record` (`page-view.service.ts:9-13`) from `books.controller.ts:94-98`; no `findMany`/`count`/`aggregate` exists.
-6. **`UsersService` has no administration methods.** Complete method list: `findById`, `findByEmail`, `searchUsers`, `updateProfile`, `listUsers`, `getProfile`. There is no role change, suspend, or delete. `User.status` exists (`schema.prisma:25`) but has **no writer**.
-7. **Group moderation backend already exists** (`groups.service.ts`): `approveMember` L272-283, `removeMember` L285-300, `banMember` L302-313, `unbanMember` L315-326, `updateMemberRole` L328-350, with `assertCanModerate` L240-249 and `assertCanManageGroup` L252-270. The console is mostly a UI + guard job here.
-8. **Seed already makes the admin OWNER of every group** (`seed.ts:154-162`) and the seeded admin account is `admin@transformlit.com` (role `ADMIN`, `seed.ts:19-30`).
+1. **No admin surface.** No `/admin` route in `apps/web/src/app`; no admin API module in `apps/api/src`.
+2. **`RolesGuard`/`@Roles` is wired only in `feed.resolver.ts`** (L31-73). `RolesGuard` is *not* a global guard — only `ContextThrottlerGuard` is (`app.module.ts:153`). `@Roles` alone is inert metadata; every use needs `@UseGuards(JwtAuthGuard, RolesGuard)`.
+3. **Book mutations are effectively unguarded.** `uploadBook` (`books.resolver.ts:70-77`) has only `JwtAuthGuard`; `uploadPdf` (L89-114) has only `JwtAuthGuard`; `uploadPdf` → `uploadBookFile` (`books.service.ts:120-164`) flips `status: 'PUBLISHED'` (L157). Any member can create a book and publish it. **[ADM-1]**
+4. **`AuditLog` has no code at all** — no service, writer, or reader. `AuditLog.user` is `onDelete: Cascade` (`schema.prisma:818`). **[ADM-2]**
+5. **`PageView` is written but never read.** Written only in `PageViewService.record` (`page-view.service.ts:9-13`) from `books.controller.ts:94-98`.
+6. **`BookProgress.completedAt` has no writer** — only the model field (`book.model.ts:105`) and schema. Completion stats would be permanently 0. **[ADM-3]**
+7. **Group moderation is membership-based only.** `assertCanModerate` (`groups.service.ts:240-249`) requires an ACTIVE `GroupMember`; `updateMemberRole` (L328-350) additionally requires group-level `OWNER`; `canView`/`listMembers` (L111-190) hide private groups from non-members; `listGroups` (L38-51) excludes private non-member groups. A global ADMIN who is not a member cannot moderate an arbitrary group. **[ADM-4]**
+8. **Suspension has a content-access hole.** Reader pages are authenticated by the `transformlit_reader` cookie via `ReaderSessionService.resolve` (`reader-session.service.ts:37-47`), which slides expiry and never checks user status. `revokeAll(userId, bookId)` requires a `bookId`. A suspended user keeps reading indefinitely. **[ADM-5]**
+9. **No user-administration methods exist.** `UsersService` has only `findById`, `findByEmail`, `searchUsers`, `updateProfile`, `listUsers`, `getProfile`. `User.status` exists (`schema.prisma:26`) but has no writer.
+10. **Seed** makes `admin@transformlit.com` (`role: 'ADMIN'`) OWNER of the *seeded* groups (`seed.ts:154-162`) — not of user-created groups.
 
 ### Non-goals (v1)
 
-- Global search (separate sub-project).
-- The stubbed CTAs (feed Share, friends Manage, "All groups").
-- Paid-book checkout / purchase flow; the `Buy` button stays a stub.
-- Email notifications; all admin notifications stay in-app.
-- A per-action permission matrix; v1 uses role tiers.
-- Cross-group analytics beyond book stats.
-- Hard-deleting users (suspend only).
-- Migrating the existing seed admin's memberships (the grant for the requesting user is handled as a separate operational task, not by this feature).
+- Global search (separate sub-project); the stubbed CTAs; paid-book checkout; email notifications; a per-action permission matrix; hard-deleting users; EPUB upload (rejected by `uploadBooksFile` today — **[ADM-6]**); two-page reader spread.
+- **Group deletion is not in the console** (the taxonomy drops `GROUP_DELETED` until a call site exists — **[ADM-13]**).
 
 ## Design Decisions
 
-- **Role tiers, not a permission table.** Global `ADMIN` and `MODERATOR` are staff; the capability matrix is fixed in v1. Group OWNER/MODERATOR remain group-scoped and are **not** granted console access.
-- **Guards on global-staff endpoints only.** `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(...)` is applied where the action is a platform-staff action. Group-scoped moderation keeps its existing service checks (`assertCanModerate`) — adding global `@Roles` there would wrongly require a global role for group owners.
-- **New `admin` module for admin-only operations.** User administration, audit, and analytics live in `apps/api/src/admin/`. This keeps `users.service.ts` focused and respects the module-boundary rule. It imports `AuthModule` only (`PrismaModule` is `@Global()`), matching `feed.module.ts`/`group-features`.
-- **`AuditModule` is `@Global()`.** Any domain must be able to `record(...)` without importing another domain module. This is infrastructure, like `PrismaModule`, not a domain (mirrors the `azure` module pattern).
-- **Audit is best-effort but loud.** A failed audit write must never fail the business action, but must log at error level. Audit rows are append-only and never updated or deleted by the app.
-- **Suspension is enforced server-side.** `jwt.strategy.ts:20-26` currently loads `where { id, deletedAt: null }`; it must also reject `status != ACTIVE`, otherwise a suspended user keeps working until the access token expires.
-- **Suspension revokes sessions.** Setting `SUSPENDED` revokes the user's refresh-token family so the suspension cannot be extended by refresh.
-- **Role is read from the DB, not the JWT.** `jwt.strategy.validate` already re-loads the user and returns `{ id, role }`; the guard consumes `user.role`. No JWT claim change is needed, and a role change takes effect on the next request.
-- **`status` becomes an enum.** `User.status String @default("active")` becomes `UserStatus @default(ACTIVE)`. Existing rows hold `"active"` (and tests also use `"ACTIVE"`); the migration cast tolerates both (see Migration notes).
-- **Analytics are computed on read, not denormalized.** Book/overview stats aggregate `PageView` + `BookProgress` at query time. No new rollup tables; `PageView` row growth is already a known follow-up.
-- **Console access is UX-gated, server-enforced.** Web hides the nav entry and routes for non-staff, but every operation is independently authorized server-side.
-- **Last-admin protection.** The system must never be left with zero `ADMIN` users: role demotion/suspension of the final active admin is rejected.
+- **Role tiers, fixed in v1.** Global `ADMIN`/`MODERATOR` are staff. Group OWNER/MODERATOR stay group-scoped.
+- **Guards, not metadata.** Every guarded operation carries `@UseGuards(JwtAuthGuard, RolesGuard)` explicitly; the admin resolver applies it at class level with per-method `@Roles`. **[ADM-1]**
+- **Global staff moderate any group** (approved). The group service threads the actor's global role so staff bypass membership; a new staff-only `adminGroups` query lists all groups including private. See "Store moderation". **[ADM-4]**
+- **All book admin mutations are staff-only** (approved). The owner-based path in `assertCanManageBookPublic` is removed for these endpoints: `uploadBook` = ADMIN; `updateBook`/`deleteBook`/`retryBookConversion`/`uploadPdf` = ADMIN or MODERATOR. This closes the live gap rather than half-closing it. **[ADM-1]**
+- **Suspension ends *all* access.** Reject non-`ACTIVE` in `jwt.strategy`, reject `SUSPENDED` in local login, block OAuth token minting for `SUSPENDED` users, revoke all refresh families for the user, and revoke all reading sessions for the user; reader session resolution also re-checks status. **[ADM-5]**
+- **`AuditModule` is `@Global()`**, matching the real precedents `PrismaModule` and `StorageModule` (not Azure, which is explicitly imported — **[ADM-7]**). Audit is infrastructure; `@Global()` avoids per-domain imports. `AuditService` always uses the root `PrismaService`, never a transaction handle.
+- **Audit is post-commit and best-effort.** `record()` is called *after* the business mutation resolves — never inside its transaction. A failed audit insert is caught and logged at error level; it never fails the business action, and a business rollback never silently discards an audit row. **[ADM-8]**
+- **Analytics computed on read** from `PageView` + `BookProgress`; no rollup tables. **[ADM-3]**
+- **`status` becomes an enum**, `UserStatus { ACTIVE SUSPENDED }`. Existing values are non-uniform (`"active"` default vs `"ACTIVE"` in tests) → case-tolerant `USING` cast. **[ADM-9]**
+- **Console is UX-gated, server-enforced.** Role is read per request from the DB; no caching, so role changes take effect immediately.
+- **Last-admin protection** with an exact predicate in a serializable transaction with `P2034` retry. **[ADM-10]**
 
 ## Authorization Matrix
 
 | Capability | ADMIN | MODERATOR | Group OWNER/MOD | Member |
 |---|---|---|---|---|
-| Console access | ✅ full | ✅ limited | ✅ their groups only (via existing group UI) | ❌ |
+| Console access | ✅ full | ✅ limited | ❌ (uses group UI) | ❌ |
 | `uploadBook` | ✅ | ❌ | ❌ | ❌ |
-| `updateBook` / `deleteBook` / `retryBookConversion` | ✅ | ✅ | ❌ | ❌ |
-| Announcements (compose/schedule/publish/unpublish/delete) | ✅ | ✅ | ❌ | ❌ |
-| User role change, suspend/reactivate | ✅ | ❌ | ❌ | ❌ |
-| Group approvals / kick / ban / unban / member-role | ✅ any group | ✅ any group | ✅ own groups (existing) | ❌ |
+| `updateBook` / `deleteBook` / `retryBookConversion` / `uploadPdf` | ✅ | ✅ | ❌ | ❌ |
+| Announcements (all) | ✅ | ✅ | ❌ | ❌ |
+| User role change | ✅ | ❌ | ❌ | ❌ |
+| User suspend / reactivate | ✅ | ❌ | ❌ | ❌ |
+| View any group (incl. private) | ✅ | ✅ | own groups | ❌ |
+| Approve / kick / ban / unban member | ✅ | ✅ | ✅ own groups | ❌ |
+| Change member role | ✅ | ❌ | ✅ own groups (owner only) | ❌ |
+| Delete group | ✅ | ❌ | ✅ own groups (owner only) | ❌ |
 | Audit log read | ✅ | ✅ | ❌ | ❌ |
 | Analytics read | ✅ | ✅ | ❌ | ❌ |
 
-Enforcement points:
+## Store moderation (resolves [ADM-4])
 
-- **Global-staff actions** → `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(...)`.
-- **Group-scoped actions** → unchanged `assertCanModerate`/`assertCanManageGroup` service checks.
-- **RolesGuard** (`roles.guard.ts:8-21`) reads `ROLES_KEY` metadata and checks `requiredRoles.includes(user.role)`.
+`GroupsService` changes (existing files):
+
+- `assertCanModerate(groupId, actorId, actorRole?)` — if `actorRole === ADMIN` return a synthetic actor (bypass); if `actorRole === MODERATOR` bypass too, but **do not** allow actions against an `OWNER` target or role changes (enforced by the calling method). Existing member-based path unchanged.
+- `listMembers(groupId, requesterId, requesterRole?)` — global staff bypass `canView` and see all statuses.
+- New `adminGroups(filter?, page, pageSize)` — staff-only; all non-deleted groups (private included) with active member counts and pending counts; paginated.
+- `updateMemberRole` — unchanged owner-only check for group actors; global ADMIN may change roles in any group; global MODERATOR may not.
+- `deleteGroup` — unchanged; global ADMIN allowed via `assertCanManageGroup`'s existing ADMIN branch; global MODERATOR not.
+
+Resolver changes (`groups.resolver.ts`): pass `user.role` into the above; expose `adminGroups` with `@UseGuards(JwtAuthGuard, RolesGuard) @Roles(ADMIN, MODERATOR)`.
+
+**Global-staff OWNER protection stays:** staff cannot remove/ban/change the role of a group `OWNER` (existing guards), and staff moderation is additive, never destructive to group ownership.
 
 ## Data Model (Prisma changes)
 
@@ -76,83 +85,82 @@ enum UserStatus {
 }
 
 model User {
-  // was: status String @default("active")
+  // was: status String @default("active")   (schema.prisma:26)
   status UserStatus @default(ACTIVE)
-  // existing: @@index([role, status])
+  // existing @@index([role, status]) — rebuilt automatically by ALTER COLUMN TYPE
+  auditLogs AuditLog[]   // existing back-relation
 }
 
-model AuditLog {                        // additions only
-  // existing fields unchanged:
-  // id, userId, action, targetType, targetId, payload, ipAddress, userAgent, createdAt
-  @@index([targetType, targetId])       // NEW — viewer filters by target
+model AuditLog {                       // additions only
+  @@index([targetType, targetId])      // NEW
 }
 ```
 
-Migration notes:
+Migration mechanics (**[ADM-9]**, **[ADM-11]**):
 
-- **The existing `status` values are not uniform.** The Prisma default is the lowercase string `"active"` (`schema.prisma:25`), which is what seeded/unset rows hold, but tests elsewhere use `"ACTIVE"` (`users.service.spec.ts:217` vs `auth.service.spec.ts:40`). The `USING` cast must therefore tolerate **both** casings: `CASE WHEN lower(status) = 'active' THEN 'ACTIVE'::"UserStatus" ELSE 'SUSPENDED'::"UserStatus" END`. There are no other expected values, so no data loss.
-- The migration must be written so the repository's destructive-SQL guard recognizes it as a safe enum conversion (explicit `USING` cast), and the existing `@@index([role, status])` is recreated against the enum.
-- `AuditLog` gains one index only. No structural change; the table already exists with all needed columns.
+- Postgres enum conversion: `ALTER COLUMN status TYPE "UserStatus" USING (CASE WHEN lower(status) = 'active' THEN 'ACTIVE'::"UserStatus" ELSE 'SUSPENDED'::"UserStatus" END)`. The generated migration must also `DROP DEFAULT` before and `SET DEFAULT 'ACTIVE'` after, and must be written so the repo's destructive-SQL guard passes (that guard matches `DROP TABLE|DROP COLUMN|TRUNCATE|DELETE FROM`; an `ALTER … TYPE … USING` does not match).
+- **Do not hand-write index recreation** — Postgres rebuilds the dependent `@@index([role, status])` on type change.
+- **Preflight:** `SELECT DISTINCT lower(status) FROM users;` and map each observed value explicitly. The `ELSE 'SUSPENDED'` branch silently suspends unknown values, so the preflight result must be recorded in the migration note.
+- `ALTER COLUMN TYPE` takes an ACCESS EXCLUSIVE lock and rewrites the table; schedule accordingly.
 
-`User` already has the `auditLogs AuditLog[]` back-relation (`DB_DESIGN.md`), and the existing model relationships are unchanged.
+### GraphQL contract change (breaking) — **[ADM-12]**
 
-### GraphQL contract change (breaking)
+`User.status` is exposed as `String!` (`schema.gql:758`, `auth/models/auth.model.ts:27`). Converting to `UserStatus` changes it to `UserStatus!`. Blast radius (verified): **no web or `packages/graphql` operation selects `User.status`**, and the shared `GraphQLUser` (`packages/shared/src/types/graphql.ts:2-11`) has no `status` field. Required work:
 
-`User.status` is currently exposed as `status: String!` (`schema.gql:758`, declared in `auth/models/auth.model.ts:27`). Converting the column to `UserStatus` changes the GraphQL type to `UserStatus!`, so the spec must include:
+- `registerEnumType(UserStatus, { name: 'UserStatus' })` in `auth/models/auth.model.ts` (next to `UserRole`, L4).
+- Add `UserStatus` to `packages/shared/src/enums.ts` **and** to the explicit re-export list in `packages/shared/src/index.ts` (otherwise it is not exported).
+- Regenerate the canonical SDL with `pnpm --filter @transformlit/api run graphql:schema:export`; CI compares SDL bytes and `graphql:schema:check` refuses to mutate.
+- Rebuild `packages/graphql` codegen.
+- Re-verify (no change expected): REST `AuthResponse.status: string` (`auth.controller.ts:47-58`) and `PUBLIC_USER_SELECT` (`auth.service.ts:28-38`).
 
-- `registerEnumType(UserStatus, { name: 'UserStatus' })` alongside the existing `UserRole` registration (`auth.models/auth.model.ts:4`).
-- Add `UserStatus` to `packages/shared/src/enums.ts` (mirroring `UserRole`) and to the shared GraphQL types (`packages/shared/src/types/graphql.ts`).
-- Update any web-side consumer of `GraphQLUser.status` and regenerate `packages/graphql` codegen + `apps/api/src/schema.gql`.
-
-This is a schema-contract change but not a data-contract regression: the only current reader of `User.status` outside the DB is the `me`/auth payload, and the values remain `ACTIVE`/`SUSPENDED`. Treat `User.status` (global account) and `GroupMember.status` (membership) as distinct — only the former changes.
+`User.status` (account) and `GroupMember.status` (membership) are distinct; only the former changes.
 
 ## Backend Components
 
-### New: `apps/api/src/audit/` (`@Global()`)
+### New: `apps/api/src/audit/` (`@Global()`, precedent: Prisma/Storage)
 
 | File | Responsibility |
 |---|---|
-| `audit.module.ts` | Declares `AuditService`; exported globally. Follows the `azure` module shape. |
-| `audit.service.ts` | `record(...)` best-effort append; `list(filters, pagination)`. |
-| `audit-actions.ts` | Frozen action-name constants (single source of truth). |
+| `audit.module.ts` | `@Global()`; provides + exports `AuditService`. |
+| `audit.service.ts` | `record(...)` post-commit append via root `PrismaService`; `list(filters, pagination)`. |
+| `audit-actions.ts` | Frozen action constants. |
 | `audit.service.spec.ts` | Unit tests. |
 
-`record` input: `{ actorId, action, targetType?, targetId?, payload?, ip?, userAgent? }`. `list` filters: `{ action?, actorId?, targetType?, targetId?, from?, to? }` with `page`/`pageSize`, ordered `createdAt DESC`, hard-capped `pageSize`.
+`record({ actorId, action, targetType?, targetId?, payload?, ip?, userAgent? })`. `list({ action?, actorId?, targetType?, targetId?, from?, to? }, page, pageSize)` ordered `createdAt DESC`, `pageSize` hard-capped.
 
-Action taxonomy (v1): `LOGIN`, `LOGOUT`, `REFRESH_REUSE_DETECTED`, `USER_ROLE_CHANGED`, `USER_STATUS_CHANGED`, `BOOK_UPLOADED`, `BOOK_UPDATED`, `BOOK_DELETED`, `ANNOUNCEMENT_PUBLISHED`, `ANNOUNCEMENT_UNPUBLISHED`, `ANNOUNCEMENT_DELETED`, `GROUP_DELETED`, `GROUP_MEMBER_APPROVED`, `GROUP_MEMBER_KICKED`, `GROUP_MEMBER_BANNED`, `GROUP_MEMBER_UNBANNED`, `GROUP_MEMBER_ROLE_CHANGED`. Chat messages and page views are explicitly **not** audited (per `DB_DESIGN.md`, audit is for sensitive actions only).
+Action taxonomy v1 (only actions with a real call site): `LOGIN`, `LOGOUT`, `REFRESH_REUSE_DETECTED`, `USER_ROLE_CHANGED`, `USER_STATUS_CHANGED`, `BOOK_UPLOADED`, `BOOK_UPDATED`, `BOOK_DELETED`, `ANNOUNCEMENT_PUBLISHED`, `ANNOUNCEMENT_UNPUBLISHED`, `ANNOUNCEMENT_DELETED`, `GROUP_MEMBER_APPROVED`, `GROUP_MEMBER_KICKED`, `GROUP_MEMBER_BANNED`, `GROUP_MEMBER_UNBANNED`, `GROUP_MEMBER_ROLE_CHANGED`.
+
+Call-site rules (**[ADM-8]**): post-commit only; `REFRESH_REUSE_DETECTED` emitted only when the stored token actually has `revokedAt` set (not on plain expiry); `LOGOUT` actor is derived from the stored refresh-token row's `userId` (the controller is `@Public`); `ip`/`userAgent` are threaded from the controller request or left null.
 
 ### New: `apps/api/src/admin/`
 
 | File | Responsibility |
 |---|---|
-| `admin.module.ts` | Imports `AuthModule`; providers: `AdminUsersService`, `AdminAnalyticsService`, resolver. |
-| `admin-users.service.ts` | `list`, `findOne`, `setRole`, `setStatus` with last-admin guard and refresh-family revocation. |
-| `admin-analytics.service.ts` | `platformOverview`, `bookStats` aggregates. |
-| `admin.resolver.ts` | GraphQL surface, fully role-guarded. |
-| `models/admin.model.ts` | `AdminUser`, `AuditLogEntry`, `AdminPlatformOverview`, `AdminBookStats`, filter inputs. |
-| `dto/*.input.ts` | `AdminUsersFilter`, `AuditLogFilter`, `SetUserRoleInput`, `SetUserStatusInput` with class-validator + shared Zod parity. |
-| `*.spec.ts` | Service + resolver unit tests. |
+| `admin.module.ts` | Imports `AuthModule`; providers `AdminUsersService`, `AdminAnalyticsService`, resolver. |
+| `admin-users.service.ts` | `list`, `setRole`, `setStatus` with last-admin guard + revoke-all. |
+| `admin-analytics.service.ts` | `platformOverview`, `bookStats`. |
+| `admin.resolver.ts` | Class-level `@UseGuards(JwtAuthGuard, RolesGuard)`; per-method `@Roles`. |
+| `models/admin.model.ts` | Object types + `@InputType` filters (plain `@InputType`, matching existing convention — no class-validator/Zod ceremony, **[ADM-14]**). |
+| `*.spec.ts` | Service + resolver tests. |
 
-Register `AdminModule` in `app.module.ts` next to the other domain modules; register `AuditModule` alongside `PrismaModule`.
+Register `AdminModule` and `AuditModule` in `app.module.ts`.
 
-**No group-moderation service changes** — `GroupsService` already exposes approve/kick/ban/unban/role with correct checks. The web console calls the existing `approveGroupMember`, `removeGroupMember`, `banGroupMember`, `unbanGroupMember`, `updateGroupMemberRole` operations.
+### Auth changes (resolves [ADM-5], [ADM-8])
 
-### Guard changes (existing files)
+- `jwt.strategy.ts:20-26` — reject `deletedAt != null` **or** `status !== ACTIVE`.
+- `auth.service.ts` local login — reject `SUSPENDED` with a typed error.
+- `auth.service.ts findOrCreateOAuthUser` (L183-206) — check `deletedAt`/`status` before `generateTokens`; a `SUSPENDED` user must not mint a new token pair.
+- New `AuthService.revokeAllSessionsForUser(userId)` — revoke **all** refresh-token families for the user (there is no such method today; logout only revokes one presented token's family).
+- `ReaderSessionService` — add `revokeAllForUser(userId)`; and `resolve()` (or `books.controller.ts authorizePage`) re-checks the user's `status === ACTIVE` before returning a session.
 
-- `books.resolver.ts` — `uploadBook` (L70): add `@Roles(UserRole.ADMIN)`. `updateBook` (L79), `deleteBook` (L116), `retryBookConversion` (L59): add `@Roles(UserRole.ADMIN, UserRole.MODERATOR)`.
-- `feed.resolver.ts` — no change; announcements are already `@Roles(ADMIN, MODERATOR)`.
-- `groups.resolver.ts` — no change; keep group-scoped service checks.
+### Book admin changes (resolves [ADM-1], [ADM-6])
 
-### Auth changes
-
-- `jwt.strategy.ts` — reject `status !== ACTIVE` in `validate`.
-- `auth.service.ts` — no change to login flow required, but login should also reject `SUSPENDED` users with a typed error (defense in depth so a suspended user cannot obtain a fresh token pair).
-- Audit `LOGIN`/`LOGOUT` are recorded from `auth.service`/`auth.controller`; `REFRESH_REUSE_DETECTED` where reuse is already detected.
-- `admin-users.service.setStatus(SUSPENDED)` revokes the user's refresh-token family (reuse the existing family-revocation logic).
+- `books.resolver.ts` — `uploadBook`: `@UseGuards(JwtAuthGuard, RolesGuard) @Roles(ADMIN)`; `updateBook`, `deleteBook`, `retryBookConversion`, `uploadPdf`: `@UseGuards(JwtAuthGuard, RolesGuard) @Roles(ADMIN, MODERATOR)`.
+- `books.service.ts` — remove the owner path from `assertCanManageBookPublic` for these endpoints (staff-only).
+- **Upload plumbing** (net-new, was assumed to exist): add `graphqlUploadExpress()` to `apps/api/src/main.ts` (dep `graphql-upload-ts` is already installed but not wired); add a multipart upload link to the web Apollo client (none exists). v1 is **PDF-only** — `uploadBookFile` rejects EPUB today.
+- **Completion writer** (resolves [ADM-3]): in the reader progress mutation (`reader-mutations.service.ts`), set `BookProgress.completedAt = now()` when progress reaches the book's page count (`pageCount` when READY, else `totalPages`), and clear it if progress regresses below. This makes `completed`/`completionRate` real.
 
 ## GraphQL API
-
-All operations are JWT-guarded and role-guarded on the resolver.
 
 ### Types
 
@@ -173,6 +181,7 @@ type AdminUser {
 
 type AuditLogEntry {
   id: ID!
+  actorId: ID
   actor: User
   action: String!
   targetType: String
@@ -185,7 +194,7 @@ type AuditLogEntry {
 
 type AdminPlatformOverview {
   totalUsers: Int!
-  activeUsers: Int!          # ACTIVE status
+  activeUsers: Int!
   suspendedUsers: Int!
   totalBooks: Int!
   publishedBooks: Int!
@@ -196,11 +205,11 @@ type AdminPlatformOverview {
 type AdminBookStats {
   bookId: ID!
   title: String!
-  readers: Int!              # distinct users with a BookProgress row
-  completed: Int!            # BookProgress.completedAt NOT NULL
-  completionRate: Int!       # completed / readers, clamped 0..100 (0 when readers = 0)
-  totalPageViews: Int!
-  avgPagesPerReader: Int!
+  readers: Int!            # distinct PageView.userId
+  completed: Int!          # distinct BookProgress.userId with completedAt != null (subset of readers)
+  completionRate: Int!     # round(completed / readers * 100); 0 when readers = 0
+  totalPageViews: Int!     # PageView count for the book
+  avgPagesPerReader: Int!  # round(totalPageViews / readers); 0 when readers = 0
 }
 
 type AdminUserPage { items: [AdminUser!]!, total: Int!, page: Int!, pageSize: Int! }
@@ -212,10 +221,10 @@ type AuditLogPage { items: [AuditLogEntry!]!, total: Int!, page: Int!, pageSize:
 ```graphql
 type Query {
   adminUsers(filter: AdminUsersFilter, page: Int = 1, pageSize: Int = 25): AdminUserPage!
-  adminUser(id: ID!): AdminUser
   auditLogs(filter: AuditLogFilter, page: Int = 1, pageSize: Int = 25): AuditLogPage!
   adminPlatformOverview: AdminPlatformOverview!
   adminBookStats(bookId: ID!): AdminBookStats!
+  adminGroups(filter: AdminGroupsFilter, page: Int = 1, pageSize: Int = 25): AdminGroupPage!
 }
 
 type Mutation {
@@ -224,104 +233,108 @@ type Mutation {
 }
 
 input AdminUsersFilter { role: UserRole, status: UserStatus, query: String }
-input AuditLogFilter {
-  action: String
-  actorId: ID
-  targetType: String
-  targetId: String
-  from: DateTime
-  to: DateTime
-}
+input AuditLogFilter { action: String, actorId: ID, targetType: String, targetId: String, from: DateTime, to: DateTime }
+input AdminGroupsFilter { query: String, visibility: GroupVisibility }
 input AdminSetUserRoleInput { userId: ID!, role: UserRole! }
 input AdminSetUserStatusInput { userId: ID!, status: UserStatus! }
 ```
 
+`adminUser(id)` is **not** included — the list already returns everything the console needs (**[ADM-14]**).
+
 ### Behavior
 
-- **`adminUsers`** — `ADMIN, MODERATOR`. Includes `email` and `status` (the public `listUsers` deliberately strips both via `PUBLIC_USER_SELECT`). `query` matches `displayName`/`emailNormalized` case-insensitively.
-- **`adminUser(id)`** — `ADMIN, MODERATOR`.
-- **`adminSetUserRole`** — `ADMIN` only. Rejects changing the **last ACTIVE ADMIN** away from `ADMIN`. Records `USER_ROLE_CHANGED`.
-- **`adminSetUserStatus`** — `ADMIN` only. Rejects suspending the **last ACTIVE ADMIN**. On `SUSPENDED`, revokes the target's refresh-token family. Records `USER_STATUS_CHANGED`. Self-suspension is allowed only if another active admin remains.
-- **`auditLogs`** — `ADMIN, MODERATOR`. Ordered `createdAt DESC`; `pageSize` clamped to a server maximum.
-- **`adminPlatformOverview`** — `ADMIN, MODERATOR`. Counts via `count()`; `publishedBooks` = `status = PUBLISHED AND deletedAt IS NULL`.
-- **`adminBookStats`** — `ADMIN, MODERATOR`. `readers` = distinct `BookProgress.userId` for the book; `completionRate` guarded against divide-by-zero; `avgPagesPerReader` = `PageView` count / readers (0 when readers = 0).
+- **`adminUsers`** — `ADMIN, MODERATOR`. Includes `email` and `status` (the public `listUsers` strips both). `query` matches `displayName`/`emailNormalized` case-insensitively. `groupCount` is batched via a single `groupBy` over `GroupMember` for the page (**[ADM-14]**).
+- **`adminSetUserRole`** — `ADMIN`. In a serializable transaction: count `role = ADMIN AND status = ACTIVE AND deletedAt IS NULL`; if the target is the last active admin and the new role ≠ ADMIN, reject. Retry on Prisma `P2034` up to a bounded number of attempts. Record `USER_ROLE_CHANGED`. **[ADM-10]**
+- **`adminSetUserStatus`** — `ADMIN`. Same predicate/transaction/retry; reject suspending the last active admin. On `SUSPENDED`: `revokeAllSessionsForUser(userId)` (refresh families) **and** `readerSession.revokeAllForUser(userId)`. Record `USER_STATUS_CHANGED`. **[ADM-5]**, **[ADM-10]**
+- **`auditLogs`** — `ADMIN, MODERATOR`. `actor` is batch-resolved (one `findMany` per page), not per row. **[ADM-14]**
+- **`adminPlatformOverview`** — `ADMIN, MODERATOR`. `count()` calls; `publishedBooks` = `status = PUBLISHED AND deletedAt IS NULL`.
+- **`adminBookStats`** — `ADMIN, MODERATOR`. Definitions as in the type comments; all divisions guarded.
+- **`adminGroups`** — `ADMIN, MODERATOR`. All non-deleted groups incl. private, with active + pending member counts.
 
 ## Frontend Surface
 
-UI implementation is routed to the `@designer` lane; this section defines intent and constraints, not final visual decisions. The orchestrator reviews and fixes user-facing copy after design work without altering visual or interaction intent.
+UI implementation is routed to the `@designer` lane; this section defines intent and constraints, not final visual decisions. The orchestrator reviews and fixes copy after design, preserving visual/interaction intent.
 
 ### A. Route + guard
 
-- Route group: `apps/web/src/app/(app)/admin/` with `layout.tsx` + `page.tsx` (dashboard) and nested `books`, `announcements`, `users`, `groups`, `audit` segments.
-- New `useRequireRole(...roles)` hook beside `useRequireAuth` (`lib/hooks/use-require-auth.ts:35-57`), built on the same hydration/persist logic. Non-staff users are redirected to `/feed`; unauthenticated users to `/login`.
-- The role is available client-side as `GraphQLUser.role` (`packages/shared/src/types/graphql.ts:8`, held in `store/auth.ts:11`). The guard is UX only; the server remains authoritative.
+- `apps/web/src/app/(app)/admin/` with `layout.tsx` + `page.tsx` (dashboard) and nested `books`, `announcements`, `users`, `groups`, `audit`.
+- New `useRequireRole(...roles)` beside `useRequireAuth` (`lib/hooks/use-require-auth.ts:35-57`). Non-staff → `/feed`; unauthenticated → `/login`. UX-only; tests must assert **server** denial, not just redirect (a stale persisted role can show the shell but every query fails). **[ADM-15]**
 
-### B. Navigation entry
+### B. Navigation
 
-- Add a role-filtered `Admin` item to `SIDEBAR_NAV_ITEMS` (`lib/constants.ts:79-87`), rendered only when `user.role` is `ADMIN` or `MODERATOR`. Because `BOTTOM_NAV_ITEMS` aliases the same constant (`lib/constants.ts:89`), the mobile bottom nav is filtered by the same rule or the Admin item is desktop-sidebar-only (final call to @designer).
+- Add an Admin entry rendered only for `ADMIN`/`MODERATOR`. **Sidebar-only** — do not inherit into `BOTTOM_NAV_ITEMS` (`lib/constants.ts:89` aliases the sidebar list). `apps/web/src/lib/constants.spec.ts:13-15` asserts exactly 7 nav items, so that spec is updated in the same change. **[ADM-16]**
 
 ### C. Tabs
 
 | Tab | Contents | Backing operations |
 |---|---|---|
-| **Dashboard** | Overview stat cards; recent audit entries | `adminPlatformOverview`, `auditLogs` (small page) |
-| **Books** | Catalog table (status, access level, conversion status); upload dialog (PDF/EPUB); edit/retire; retry conversion; per-book stats drawer | existing `books`/`uploadBook`/`updateBook`/`deleteBook`/`retryBookConversion`, `adminBookStats` |
-| **Announcements** | List with status; composer (title, body, category, `publishAt`, `expiresAt`); publish/unpublish/delete | existing feed operations |
-| **Users** | Table (email, display name, role, status, groups, last login); role dropdown; suspend/reactivate | `adminUsers`, `adminUser`, `adminSetUserRole`, `adminSetUserStatus` |
-| **Groups** | Group list; member table per group; pending-approval queue; kick/ban/unban; member-role change | existing group queries + moderation mutations |
+| **Dashboard** | Overview stat cards; recent audit entries | `adminPlatformOverview`, `auditLogs` |
+| **Books** | Catalog table (status, access, conversion); PDF upload; edit/retire; retry conversion; stats drawer | `books`/`uploadBook`/`uploadPdf`/`updateBook`/`deleteBook`/`retryBookConversion`, `adminBookStats` |
+| **Announcements** | List + composer (title, body, category, `publishAt`, `expiresAt`); publish/unpublish/delete | existing feed operations |
+| **Users** | Table (email, name, role, status, groups, last login); role dropdown; suspend/reactivate | `adminUsers`, `adminSetUserRole`, `adminSetUserStatus` |
+| **Groups** | All-groups list (incl. private); member table; pending queue; kick/ban/unban; member-role (ADMIN) | `adminGroups` + existing group queries + moderation mutations |
 | **Audit Log** | Filterable table (action, actor, target, date range) with pagination | `auditLogs` |
 
-Reuse `AuthenticatedLayout`/`AppShell`, MD3 tokens, existing table/card/`Sheet` patterns, and the toast system. Loading/empty/error states are required for every tab.
+Reuse `AuthenticatedLayout`/`AppShell`, MD3 tokens, existing table/card/`Sheet` patterns, toasts. Loading/empty/error states required per tab. **[ADM-6]** PDF-only upload dialog in v1.
 
 ### D. Destructive-action confirmation
 
-Role changes, suspension, ban, delete, and unpublish must present a confirmation with the target's identity. Delete is soft-delete (existing behavior); the copy must say so.
+Role changes, suspension, ban, delete, unpublish: confirm with the target's identity. Delete is soft-delete; copy must say so.
 
 ## Offline & Error Handling
 
-- The console is an **online-only** surface; offline it shows a shell-level error, consistent with other authenticated pages. No offline caching.
-- Mutations surface typed GraphQL errors inline (e.g. last-admin rejection, invalid date range).
-- A failed audit `record` never blocks the business mutation; it is logged at error level and the mutation still succeeds.
-- Optimistic UI only for unambiguous toggles (e.g. status pills); tables refetch after mutation.
+- Online-only surface; offline shows a shell-level error. No offline caching.
+- Mutations surface typed GraphQL errors inline (last-admin rejection, invalid date range, EPUB rejection).
+- Failed audit `record` never blocks the mutation.
+- Optimistic UI only for unambiguous toggles; tables refetch after mutation.
 
-## Testing Plan
+## Testing Plan (resolves [ADM-17])
 
-Aligned with `docs/superpowers/specs/2026-06-29-testing-strategy-design.md`.
+Aligned with `docs/superpowers/specs/2026-06-29-testing-strategy-design.md`. Resolver unit tests call methods directly and **do not execute guards**, so authorization must be proven at the GraphQL/HTTP layer.
 
-1. **API unit — `audit.service.spec.ts`**: `record` maps all fields and never throws on DB failure; `list` applies every filter, orders `createdAt DESC`, applies pagination and the `pageSize` cap.
-2. **API unit — `admin-users.service.spec.ts`**: `setRole` rejects demoting the last active admin; `setStatus(SUSPENDED)` rejects suspending the last active admin, revokes the refresh family on success, and records audit; list filter by role/status/query.
-3. **API unit — `admin-analytics.service.spec.ts`**: `platformOverview` counts; `bookStats` distinct readers, completion rate with zero readers (no divide-by-zero), average with zero readers.
-4. **API unit — auth**: `jwt.strategy.validate` rejects a `SUSPENDED` user; login rejects a `SUSPENDED` user; `REFRESH_REUSE_DETECTED` writes an audit row.
-5. **Resolver guard tests**: `admin*` operations reject `MEMBER`; `adminSetUserRole`/`adminSetUserStatus` reject `MODERATOR`; `uploadBook` rejects `MEMBER` and `MODERATOR`; `updateBook`/`deleteBook`/`retryBookConversion` reject `MEMBER`.
-6. **Integration (testcontainers, existing pattern)**: ADMIN changes a user's role → reflected on that user's next `me`; suspend → their existing access token is rejected and refresh fails; upload as MEMBER → denied; each audited action writes exactly one `AuditLog` row with the right `action`/`target`.
-7. **Web unit**: `useRequireRole` redirects non-staff; each tab renders empty/loading/error/data; role dropdown and confirmation flows.
-8. **E2E (Playwright, existing harness)**: MEMBER cannot reach `/admin` (redirect); ADMIN can, and a role change made in the UI is visible after reload.
+1. **API unit** — `audit.service`: field mapping; never throws on DB failure; `list` filters/order/pagination/cap; reuse audit only when `revokedAt` set.
+2. **API unit** — `admin-users.service`: last-admin predicate exact; `P2034` retry; suspend revokes refresh families + reading sessions; audit per action; list filters.
+3. **API unit** — `admin-analytics.service`: counts; readers from `PageView`; completion-rate/avg with zero readers (no divide-by-zero); rounding.
+4. **API unit** — auth: `jwt.strategy` rejects `SUSPENDED`; local login rejects `SUSPENDED`; `findOrCreateOAuthUser` does not mint tokens for `SUSPENDED`; reader-session `resolve` rejects a suspended user.
+5. **API unit** — groups: `assertCanModerate` bypass for global ADMIN/MODERATOR; MODERATOR cannot change roles or delete; OWNER targets still protected.
+6. **API **integration** (testcontainers + supertest, GraphQL layer)** — for each guarded operation, a MEMBER/MODERATOR/ADMIN matrix that actually exercises `RolesGuard`: `uploadBook` (ADMIN only), `uploadPdf`/`updateBook`/`deleteBook`/`retryBookConversion` (staff), `admin*` (staff; role/status mutations ADMIN-only), `adminGroups` (staff). These new spec files **must be added to the hardcoded integration list** in `.github/workflows/opencode-review.yml:162-171` or CI will not run them.
+7. **API integration** — role change reflected on the target's next `me`; suspend → existing access token rejected, refresh fails, reader cookie rejected mid-read; concurrent last-admin demote+suspend cannot reach zero admins; each audited action writes exactly one row.
+8. **Web unit** — `useRequireRole`; tab states; role dropdown/confirmation; `constants.spec.ts` updated.
+9. **E2E (Playwright)** — MEMBER cannot reach `/admin`; ADMIN can; a role change made in the UI appears after reload.
 
 ## Build Order
 
-Schema (`UserStatus` + `AuditLog` index) → `AuditModule` + write path wired into existing mutations → `jwt.strategy`/login suspension enforcement → `admin` module (`AdminUsersService` → `AdminAnalyticsService` → resolver + guards) → `@Roles` on books endpoints → web `useRequireRole` + `/admin` shell + nav → designer-built tabs → verification throughout.
+1. **`@Roles` + `@UseGuards` on books endpoints** (closes the live security gap; no dependency on schema) — **[ADM-18]**.
+2. Schema: `UserStatus` enum + `AuditLog` index; shared enum + `index.ts` barrel; SDL export; codegen.
+3. `AuditModule` + post-commit call sites; `REFRESH_REUSE_DETECTED` and `LOGOUT` actor correctness.
+4. Auth suspension: `jwt.strategy`, local login, `findOrCreateOAuthUser`, `revokeAllSessionsForUser`, `ReaderSessionService.revokeAllForUser` + status re-check.
+5. Group service: threaded global role + `adminGroups`.
+6. `admin` module: `AdminUsersService` → `AdminAnalyticsService` → resolver.
+7. Completion writer in `reader-mutations.service`.
+8. Upload plumbing: `graphqlUploadExpress`, web upload link.
+9. Web: `useRequireRole`, `/admin` shell, sidebar-only nav, `constants.spec` update.
+10. Designer-built tabs; verification throughout.
 
 ## Risks & Follow-ups
 
-- **Enum migration on a populated table.** Rows are `"active"`/`"ACTIVE"` (not uniform), so the migration must carry the case-tolerant explicit `USING` cast so it is recognized as safe and lossless. Verify on a restored copy before deploy.
-- **Audit volume.** High-traffic events are deliberately excluded. `AuditLog` still grows; a retention/prune job is a follow-up, not v1.
-- **`PageView` aggregates on B1ms.** `adminBookStats` scans `PageView` per book. Acceptable at current volume; add an index on `PageView.bookId` (already present) and revisit with a rollup if stats become a hot path.
-- **Role change latency.** `jwt.strategy.validate` re-loads `{ id, role }` from the DB on every request and `RolesGuard` does not cache, so a role change takes effect on the next request with no token revocation required.
-- **Last-admin guard is not a distributed lock.** Two concurrent demotions could each pass the check. Mitigation in v1: perform the check-and-write in a single serializable transaction.
-- **Suspended users with open WebSockets.** Suspension revokes the refresh family and blocks new requests; an already-open subscription may persist until the connection drops. Accepted for v1; documented.
+- **Enum migration**: case-tolerant `USING` cast, `DROP/SET DEFAULT`, no manual index recreation, preflight recorded; ACCESS EXCLUSIVE lock. Verify on a restored copy.
+- **Concurrent last-admin**: serializable + `P2034` retry; integration test the racing pair.
+- **Audit growth**: retention/prune is a follow-up. `AuditLog.user` is `onDelete: Cascade`, so if hard-delete ever lands, audit history for that user vanishes — follow-up.
+- **`PageView` aggregates on B1ms**: `@@index([bookId, viewedAt])` exists; revisit with a rollup if stats become hot.
+- **Suspension of an open WebSocket**: new requests are blocked and tokens revoked; an already-open subscription may persist until the socket drops. Accepted v1.
+- **Staff moderation breadth**: global MODERATOR can now see private groups and act on members but not change roles or delete; owner protection is preserved. Revisit if that is too broad.
+- **OAuth token churn**: a suspended OAuth user no longer mints tokens, but an existing pre-suspension refresh family is revoked by `revokeAllSessionsForUser`.
 
 ## SonarQube Compliance
 
 Per `docs/SONAR-GUIDELINES.md`:
 
-- No `window` references in client code (use `globalThis`).
-- No array index in React keys — tables key by `id`.
-- Cognitive complexity ≤ 15 per function — analytics aggregation and audit filter building extracted into helpers.
-- No nested ternaries (S6644) — status/role label selection extracted to helpers.
-- Props marked `readonly`.
-- Zod validation must avoid deprecated APIs (S6665–S6690): use `.gte()`/`.lte()`, not `.min()`/`.max()`.
-- Native `<progress>`/`<output>` where a progress indicator is used.
-- Any finding surfaced during review is appended to `docs/SONAR-GUIDELINES.md` **in the same change**.
+- No `window` (use `globalThis`); no array-index keys (key by `id`).
+- Cognitive complexity ≤ 15 — aggregate and filter building extracted to helpers.
+- No nested ternaries (S6644) — status/role label selection extracted.
+- Props `readonly`; native `<progress>`/`<output>`.
+- Zod/validation avoids deprecated APIs (use `.gte()`/`.lte()`).
+- Every AI-review finding recorded in `docs/SONAR-GUIDELINES.md` **in the same change** — the design-review findings are recorded now as `ADM-1`…`ADM-18`.
 
 ---
 
@@ -329,5 +342,5 @@ Per `docs/SONAR-GUIDELINES.md`:
 
 This document is the design of record. No implementation starts until:
 
-1. This written spec is reviewed and approved, then
+1. This revised spec is reviewed and approved, then
 2. The implementation plan (via the `writing-plans` skill) is reviewed and an execution method is selected.
