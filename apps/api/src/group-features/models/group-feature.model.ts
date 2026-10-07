@@ -47,7 +47,7 @@ export class GroupReadingPlan {
   book: Book;
 
   @Field({ nullable: true })
-  title?: string | null;
+  title?: string;
 
   @Field()
   startDate: Date;
@@ -59,7 +59,7 @@ export class GroupReadingPlan {
   status: ReadingPlanStatus;
 
   @Field(() => ID, { nullable: true })
-  createdById?: string | null;
+  createdById?: string;
 
   @Field()
   createdAt: Date;
@@ -92,10 +92,10 @@ export class SharedHighlight {
   text: string;
 
   @Field({ nullable: true })
-  note?: string | null;
+  note?: string;
 
   @Field({ nullable: true })
-  color?: string | null;
+  color?: string;
 }
 
 @ObjectType()
@@ -125,7 +125,7 @@ export class CreateGroupReadingPlanInput {
   bookId: string;
 
   @Field({ nullable: true })
-  title?: string | null;
+  title?: string;
 
   @Field()
   startDate: Date;
