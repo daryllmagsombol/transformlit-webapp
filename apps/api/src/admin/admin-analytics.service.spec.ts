@@ -93,7 +93,7 @@ describe('AdminAnalyticsService', () => {
       const result = await service.bookStats('book-1');
 
       expect(prisma.book.findUnique).toHaveBeenCalledWith({
-        where: { id: 'book-1' },
+        where: { id: 'book-1', deletedAt: null },
         select: { id: true, title: true },
       });
       expect(prisma.pageView.findMany).toHaveBeenCalledWith({
@@ -151,6 +151,24 @@ describe('AdminAnalyticsService', () => {
       expect(result.completed).toBe(0);
       expect(result.completionRate).toBe(0);
       expect(result.avgPagesPerReader).toBe(0);
+    });
+
+    it('intersects completers with readers so completed cannot exceed readers', async () => {
+      const prisma = makePrisma();
+      prisma.book.findUnique.mockResolvedValue({ id: 'book-4', title: 'Sync' });
+      prisma.pageView.findMany.mockResolvedValue([{ userId: 'u1' }]);
+      prisma.bookProgress.findMany.mockResolvedValue([
+        { userId: 'u1' },
+        { userId: 'ghost' },
+      ]);
+      prisma.pageView.count.mockResolvedValue(3);
+
+      const service = new AdminAnalyticsService(prisma as never);
+      const result = await service.bookStats('book-4');
+
+      expect(result.readers).toBe(1);
+      expect(result.completed).toBe(1);
+      expect(result.completionRate).toBe(100);
     });
 
     it('throws NotFoundException when the book does not exist', async () => {

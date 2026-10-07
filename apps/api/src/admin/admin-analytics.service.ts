@@ -67,11 +67,14 @@ export class AdminAnalyticsService {
   /**
    * Engagement for one book. `readers` counts distinct users with a page view;
    * `completed` counts distinct users whose progress row has a completion time
-   * (a subset of readers). Rates are integer-rounded and never divide by zero.
+   * **intersected with the reader set**, so it can never exceed `readers`.
+   * `BookProgress` is written by the offline `PROGRESS_SET` sync path and has no
+   * FK to `PageView`, so a completer with no recorded view is excluded here.
+   * Rates are integer-rounded and never divide by zero.
    */
   async bookStats(bookId: string): Promise<BookStats> {
     const book = await this.prisma.book.findUnique({
-      where: { id: bookId },
+      where: { id: bookId, deletedAt: null },
       select: { id: true, title: true },
     });
     if (!book) throw new NotFoundException('Book not found');
@@ -91,7 +94,10 @@ export class AdminAnalyticsService {
     ]);
 
     const readers = readerRows.length;
-    const completed = completedRows.length;
+    const readerIds = new Set(readerRows.map((row) => row.userId));
+    const completed = completedRows.filter((row) =>
+      readerIds.has(row.userId),
+    ).length;
     const completionRate = this.percentage(completed, readers);
     const avgPagesPerReader = this.roundedRatio(totalPageViews, readers);
 
