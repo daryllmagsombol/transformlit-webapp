@@ -1391,3 +1391,9 @@ Calling a resolver method directly never runs `UseGuards`/`RolesGuard`, and CI r
 
 ❌ `if (filters.action !== undefined) where.action = filters.action;` — a cleared GraphQL filter sends `null`, producing `action IS NULL` or `gte: null`.
 ✅ `const action = filters.action ?? undefined;` then `if (action !== undefined) where.action = action;` for all six fields (`action`, `actorId`, `targetType`, `targetId`, `from`, `to`), and pin it with a test asserting the `where` omits null-valued keys.
+
+### ADM-20 — Analytics counts must not be derived independently when one is defined as a subset
+`AdminAnalyticsService.bookStats` counted `readers` (distinct `PageView.userId`) and `completed` (distinct `BookProgress.userId` with `completedAt != null`) with **separate queries and no intersection**. There is no schema invariant tying `BookProgress` to `PageView` — the completion writer is the offline `PROGRESS_SET` sync path (`reader-mutations.service.ts`), which never writes a `PageView`, while `PageView` is written best-effort by the frame endpoint with swallowed errors. A reader who completes offline (or whose view write failed) therefore has `completedAt` with zero views, making `completed > readers` reachable. The `completionRate` clamp masks it for the rate but not for the returned `completed` count, so the UI can render "5 of 3 completed". Intersect the two sets in memory (both fetches already select `userId`); keep the clamp as defense-in-depth.
+
+❌ `const completed = completedRows.length;` — counts completers independently of the reader set; an offline/sync-only completer inflates `completed` past `readers`.
+✅ `const readerIds = new Set(readerRows.map((row) => row.userId)); const completed = completedRows.filter((row) => readerIds.has(row.userId)).length;` and pin it with a test where `pageView.findMany → ['u1']` and `bookProgress.findMany → ['u1', 'ghost']` asserts `completed === 1`.
