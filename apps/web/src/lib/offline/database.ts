@@ -234,7 +234,7 @@ export function openOfflineDatabase(): Promise<IDBDatabase> {
 
 function openDatabaseAttempt(): Promise<IDBDatabase> {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    if (typeof globalThis.indexedDB === 'undefined') {
+    if (globalThis.indexedDB === undefined) {
       reject(new StorageUnavailableError());
       return;
     }
@@ -424,15 +424,17 @@ function assertRecordSubject(subject: string, record: unknown): void {
  * transaction that writes, so a fenced operation rolls back entirely.
  */
 export class OfflineDatabase {
-  private dbPromise: Promise<IDBDatabase> | null;
+  private readonly injectedDatabase: IDBDatabase | null;
+  private dbPromise: Promise<IDBDatabase> | null = null;
 
   constructor(db?: IDBDatabase) {
-    // No asynchronous work in the constructor (Sonar S7059): the database is
-    // opened lazily on first use. A caller-provided connection is used as-is.
-    this.dbPromise = db ? Promise.resolve(db) : null;
+    // No asynchronous work in the constructor (Sonar S7059): a caller-provided
+    // connection is only stored; the database opens lazily on first use.
+    this.injectedDatabase = db ?? null;
   }
 
   private db(): Promise<IDBDatabase> {
+    if (this.injectedDatabase) return Promise.resolve(this.injectedDatabase);
     this.dbPromise ??= openOfflineDatabase();
     return this.dbPromise;
   }

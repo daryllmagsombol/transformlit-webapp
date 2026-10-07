@@ -232,7 +232,7 @@ describe('SharedHighlightsService', () => {
       await service.list('user-1', 'group-1');
       expect(prisma.groupHighlight.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { groupId: 'group-1', deletedAt: null },
+          where: { groupId: 'group-1', deletedAt: null, highlight: { deletedAt: null } },
           orderBy: { createdAt: 'desc' },
           include: {
             highlight: { include: { book: { select: { title: true } } } },

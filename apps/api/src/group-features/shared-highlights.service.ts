@@ -3,8 +3,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { GroupsService } from '../groups/groups.service.js';
+
+/** True for a Prisma unique-constraint violation (P2002). */
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
 
 export interface ShareHighlightInput {
   groupId: string;
@@ -69,14 +75,32 @@ export class SharedHighlightsService {
         include: GROUP_HIGHLIGHT_INCLUDE,
       });
     }
-    return this.prisma.groupHighlight.create({
-      data: {
-        groupId: input.groupId,
-        highlightId: input.highlightId,
-        sharedById: userId,
-      },
-      include: GROUP_HIGHLIGHT_INCLUDE,
-    });
+    try {
+      return await this.prisma.groupHighlight.create({
+        data: {
+          groupId: input.groupId,
+          highlightId: input.highlightId,
+          sharedById: userId,
+        },
+        include: GROUP_HIGHLIGHT_INCLUDE,
+      });
+    } catch (error) {
+      // A concurrent share of the same (groupId, highlightId) can win the
+      // unique constraint between our findUnique and create; re-read the
+      // winner so the operation stays idempotent instead of returning a 500.
+      if (!isUniqueViolation(error)) throw error;
+      const winner = await this.prisma.groupHighlight.findUnique({
+        where: {
+          groupId_highlightId: {
+            groupId: input.groupId,
+            highlightId: input.highlightId,
+          },
+        },
+        include: GROUP_HIGHLIGHT_INCLUDE,
+      });
+      if (winner) return winner;
+      throw error;
+    }
   }
 
   /** Soft-delete a share. Allowed for the sharer or a group owner/moderator. */
@@ -103,7 +127,9 @@ export class SharedHighlightsService {
     const safeOffset = Math.max(0, Math.min(offset, MAX_PAGE_OFFSET));
     const safeTake = Math.min(Math.max(limit, 1), MAX_PAGE_LIMIT);
     return this.prisma.groupHighlight.findMany({
-      where: { groupId, deletedAt: null },
+      // A share whose source highlight was later deleted must not be served:
+      // `share()` already rejects a deleted highlight, so the feed must match.
+      where: { groupId, deletedAt: null, highlight: { deletedAt: null } },
       include: GROUP_HIGHLIGHT_INCLUDE,
       orderBy: { createdAt: 'desc' },
       skip: safeOffset,

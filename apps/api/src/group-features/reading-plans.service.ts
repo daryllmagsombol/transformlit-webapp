@@ -1,12 +1,19 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { GroupsService } from '../groups/groups.service.js';
 import { expectedPercent, isOnPace, memberPercent } from './progress.js';
+
+/** True for a Prisma unique-constraint violation (P2002). */
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
 
 /** Input accepted by {@link ReadingPlansService.create}. */
 export interface CreateReadingPlanInput {
@@ -47,6 +54,13 @@ export class ReadingPlansService {
     if (input.targetDate.getTime() <= input.startDate.getTime()) {
       throw new BadRequestException('targetDate must be after startDate');
     }
+    const book = await this.prisma.book.findUnique({
+      where: { id: input.bookId },
+      select: { id: true, deletedAt: true },
+    });
+    if (!book || book.deletedAt !== null) {
+      throw new NotFoundException('Book not found');
+    }
 
     return this.prisma.$transaction(async (tx) => {
       await tx.groupReadingPlan.updateMany({
@@ -73,6 +87,13 @@ export class ReadingPlansService {
         expectedPercent: expectedPercent(plan.startDate, plan.targetDate, new Date()),
         members: [] as PlanMemberProgress[],
       };
+    }).catch((error: unknown) => {
+      // A partial unique index (one ACTIVE plan per group) can lose a race to a
+      // concurrent create; surface a clear conflict instead of a raw P2002.
+      if (isUniqueViolation(error)) {
+        throw new ConflictException('Another plan was just created for this group');
+      }
+      throw error;
     });
   }
 
@@ -112,18 +133,21 @@ export class ReadingPlansService {
     if (!plan) return null;
 
     const expected = expectedPercent(plan.startDate, plan.targetDate, new Date());
-    const [members, progressRows] = await Promise.all([
-      this.prisma.groupMember.findMany({
-        where: { groupId, status: 'ACTIVE' },
-        include: {
-          user: { select: { id: true, displayName: true, avatarUrl: true } },
-        },
-        orderBy: { joinedAt: 'asc' },
-      }),
-      this.prisma.bookProgress.findMany({
-        where: { bookId: plan.bookId },
-      }),
-    ]);
+    const members = await this.prisma.groupMember.findMany({
+      where: { groupId, status: 'ACTIVE' },
+      include: {
+        user: { select: { id: true, displayName: true, avatarUrl: true } },
+      },
+      orderBy: { joinedAt: 'asc' },
+    });
+    // Scope progress to this group's members only — a popular book may have
+    // thousands of unrelated readers, and only member rows are rendered.
+    const memberIds = members.map((member) => member.userId);
+    const progressRows = memberIds.length
+      ? await this.prisma.bookProgress.findMany({
+          where: { bookId: plan.bookId, userId: { in: memberIds } },
+        })
+      : [];
 
     const progressByUser = new Map(
       progressRows.map((row) => [row.userId, row.currentPage]),

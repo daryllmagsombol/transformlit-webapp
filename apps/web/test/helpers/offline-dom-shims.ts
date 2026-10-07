@@ -26,7 +26,7 @@ if (globalThis.Blob === undefined || typeof globalThis.Blob.prototype.arrayBuffe
   Object.defineProperty(globalThis, 'Blob', { writable: true, value: NodeBlob });
 }
 // `crypto.subtle` is used to hash download assets; jsdom has no WebCrypto.
-if (globalThis.crypto === undefined || !globalThis.crypto?.subtle) {
+if (!globalThis.crypto?.subtle) {
   Object.defineProperty(globalThis, 'crypto', { writable: true, value: webcrypto });
 }
 

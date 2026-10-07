@@ -1,9 +1,11 @@
 /// <reference types="jest" />
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ReadingPlansService } from './reading-plans.service';
 
 const planBook = { id: 'book-1', title: 'Dune', totalPages: 100 };
@@ -52,6 +54,9 @@ describe('ReadingPlansService', () => {
       bookProgress: {
         findMany: jest.fn().mockResolvedValue([{ userId: 'user-1', currentPage: 95 }]),
       },
+      book: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'book-1', deletedAt: null }),
+      },
       $transaction: jest.fn(),
     };
 
@@ -70,6 +75,7 @@ describe('ReadingPlansService', () => {
     prisma.groupReadingPlan.updateMany.mockResolvedValue({ count: 1 });
     prisma.groupMember.findMany.mockResolvedValue([memberA, memberB]);
     prisma.bookProgress.findMany.mockResolvedValue([{ userId: 'user-1', currentPage: 95 }]);
+    prisma.book.findUnique.mockResolvedValue({ id: 'book-1', deletedAt: null });
     prisma.$transaction.mockImplementation((cb: any) => cb(prisma));
     groups.assertCanModerate.mockResolvedValue(activeMember);
     groups.getMembershipFor.mockResolvedValue(activeMember);
@@ -97,6 +103,28 @@ describe('ReadingPlansService', () => {
         service.create('user-1', { ...input, targetDate: input.startDate }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('should reject a missing or soft-deleted book before creating', async () => {
+      prisma.book.findUnique.mockResolvedValue(null);
+      await expect(service.create('user-1', input)).rejects.toThrow(NotFoundException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+
+      prisma.book.findUnique.mockResolvedValue({ id: 'book-1', deletedAt: new Date() });
+      await expect(service.create('user-1', input)).rejects.toThrow(NotFoundException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('should surface a P2002 (one ACTIVE plan per group) as a conflict', async () => {
+      const unique = Object.assign(
+        new Prisma.PrismaClientKnownRequestError('unique', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+        {},
+      );
+      prisma.groupReadingPlan.create.mockRejectedValue(unique);
+      await expect(service.create('user-1', input)).rejects.toThrow(ConflictException);
     });
 
     it('should archive the prior ACTIVE plan before creating the new one', async () => {
@@ -250,11 +278,11 @@ describe('ReadingPlansService', () => {
       expect(result!.members[0].percent).toBe(0);
     });
 
-    it('should query progress for the plan book only (no N+1)', async () => {
+    it('should query progress scoped to this group\'s members (no N+1, no whole-book scan)', async () => {
       await service.getActive('user-1', 'group-1');
       expect(prisma.bookProgress.findMany).toHaveBeenCalledTimes(1);
       expect(prisma.bookProgress.findMany).toHaveBeenCalledWith({
-        where: { bookId: 'book-1' },
+        where: { bookId: 'book-1', userId: { in: ['user-1', 'user-2'] } },
       });
       expect(prisma.groupMember.findMany).toHaveBeenCalledTimes(1);
     });
