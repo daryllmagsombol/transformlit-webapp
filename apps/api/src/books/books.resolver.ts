@@ -4,6 +4,8 @@ import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { BooksService, ReadableBookFacts } from './books.service.js';
 import { ReaderMutationsService } from './reader-mutations.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
+import { RolesGuard } from '../auth/guards/roles.guard.js';
+import { Roles } from '../common/decorators/roles.decorator.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import {
   Book, BookProgress, Bookmark, Highlight, BookTocEntry,
@@ -57,7 +59,8 @@ export class BooksResolver {
   }
 
   @Mutation(() => Book, { name: 'retryBookConversion' })
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MODERATOR)
   async retryBookConversion(
     @CurrentUser() user: { id: string; role: UserRole },
     @Args('bookId') bookId: string,
@@ -68,7 +71,8 @@ export class BooksResolver {
   }
 
   @Mutation(() => Book, { name: 'uploadBook' })
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
   async uploadBook(
     @CurrentUser() user: { id: string },
     @Args('input') input: UploadBookInput,
@@ -77,7 +81,8 @@ export class BooksResolver {
   }
 
   @Mutation(() => Book, { name: 'updateBook' })
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MODERATOR)
   async updateBook(
     @CurrentUser() user: { id: string; role: UserRole },
     @Args('id') id: string,
@@ -87,7 +92,8 @@ export class BooksResolver {
   }
 
   @Mutation(() => Book, { name: 'uploadPdf' })
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MODERATOR)
   async uploadPdf(
     @CurrentUser() user: { id: string; role: UserRole },
     @Args('bookId') bookId: string,
@@ -114,7 +120,8 @@ export class BooksResolver {
   }
 
   @Mutation(() => Boolean, { name: 'deleteBook' })
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MODERATOR)
   async deleteBook(
     @CurrentUser() user: { id: string; role: UserRole },
     @Args('id') id: string,
