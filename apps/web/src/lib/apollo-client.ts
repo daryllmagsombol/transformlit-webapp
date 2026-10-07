@@ -294,6 +294,56 @@ const httpLink = new HttpLink({
   credentials: 'include',
 });
 
+/**
+ * Operations that carry a file variable and must go through the GraphQL
+ * multipart transport. Everything else keeps the proven JSON `HttpLink`.
+ */
+const UPLOAD_OPERATION_NAMES = new Set(['UploadPdf', 'UploadBookFile']);
+
+/**
+ * `apollo-upload-client@20` ships ESM-only, so it is imported lazily at the
+ * moment an upload runs rather than at module load. This keeps the multipart
+ * transport out of every non-upload code path (and out of the Jest/CJS module
+ * graph, where the `.mjs` source cannot be parsed) while still giving uploads a
+ * real terminating link built from the same GraphQL URL and credentials.
+ */
+let uploadTransport: ApolloLink | null = null;
+
+async function getUploadTransport(): Promise<ApolloLink> {
+  if (!uploadTransport) {
+    const { default: UploadHttpLink } = await import('apollo-upload-client/UploadHttpLink.mjs');
+    uploadTransport = new UploadHttpLink({
+      uri: httpUrl,
+      credentials: 'include',
+      // Multipart bodies drop the JSON `content-type` that normally makes
+      // Apollo Server treat a request as preflighted. Without this header the
+      // server's CSRF prevention rejects the upload with a 400 before it ever
+      // reaches the mutation. Scoped to the upload-only link.
+      headers: { 'apollo-require-preflight': 'true' },
+    });
+  }
+  return uploadTransport;
+}
+
+const uploadLink = new ApolloLink((operation, forward) =>
+  new Observable((subscriber) => {
+    getUploadTransport()
+      .then((transport) => transport.request(operation, forward).subscribe(subscriber))
+      .catch((error) => subscriber.error(error));
+  }),
+);
+
+/**
+ * Routes only named upload operations through the multipart link; every other
+ * HTTP operation keeps the JSON `HttpLink`. `operationName` is undefined for
+ * anonymous operations, which are never uploads.
+ */
+const httpOrUploadLink = ApolloLink.split(
+  ({ operationName }) => UPLOAD_OPERATION_NAMES.has(operationName ?? ''),
+  uploadLink,
+  httpLink,
+);
+
 const authLink = new SetContextLink((prevContext, _operation) => {
   const token = isServer ? null : getAccessToken();
   return {
@@ -406,13 +456,13 @@ const wsLink = isServer
 
 const splitLink =
   isServer || wsLink === null
-    ? httpLink
+    ? httpOrUploadLink
     : ApolloLink.split(
         ({ operationType }) => {
           return operationType === OperationTypeNode.SUBSCRIPTION;
         },
         wsLink,
-        httpLink,
+        httpOrUploadLink,
       );
 
 export const apolloClient = new ApolloClient({
