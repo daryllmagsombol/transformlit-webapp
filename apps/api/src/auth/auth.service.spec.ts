@@ -9,6 +9,8 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { AuditAction } from '../audit/audit-actions';
 
 jest.mock('argon2', () => ({
   hash: jest.fn(),
@@ -62,6 +64,7 @@ describe('AuthService', () => {
   let service: AuthService;
   let prisma: any;
   let jwtService: any;
+  let audit: { record: jest.Mock };
 
   const mockTx = {
     refreshToken: {
@@ -95,19 +98,26 @@ describe('AuthService', () => {
       sign: jest.fn(() => 'mock-access-token'),
     };
 
+    const mockAudit = {
+      record: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: JwtService, useValue: mockJwtService },
+        { provide: AuditService, useValue: mockAudit },
       ],
     }).compile();
 
     service = module.get<AuthService>(AuthService);
     prisma = module.get(PrismaService);
     jwtService = module.get(JwtService);
+    audit = module.get(AuditService);
 
     jest.clearAllMocks();
+    audit.record.mockResolvedValue(undefined);
     prisma.user.create.mockResolvedValue(mockUser);
     prisma.user.findUnique.mockResolvedValue(mockUser);
     prisma.user.update.mockResolvedValue(mockUser);
@@ -300,6 +310,19 @@ describe('AuthService', () => {
       });
       expect(jwtService.sign).toHaveBeenCalledWith({ sub: 'user-1' });
     });
+
+    it('records a LOGIN audit row after a successful login', async () => {
+      await service.loginLocal(input);
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ actorId: 'user-1', action: AuditAction.LOGIN }),
+      );
+    });
+
+    it('does not record LOGIN when the password is invalid', async () => {
+      (argon2.verify as jest.Mock).mockResolvedValue(false);
+      await expect(service.loginLocal(input)).rejects.toThrow(UnauthorizedException);
+      expect(audit.record).not.toHaveBeenCalled();
+    });
   });
 
   describe('refreshTokens', () => {
@@ -415,6 +438,43 @@ describe('AuthService', () => {
         user: publicUser,
       });
     });
+
+    it('records REFRESH_REUSE_DETECTED when the stored token was already revoked', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        ...validStored,
+        revokedAt: new Date(),
+      });
+      await expect(service.refreshTokens('revoked-token')).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: 'user-1',
+          action: AuditAction.REFRESH_REUSE_DETECTED,
+        }),
+      );
+    });
+
+    it('does not record REFRESH_REUSE_DETECTED on a plain expiry', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        ...validStored,
+        expiresAt: new Date(Date.now() - 86400000),
+      });
+      await expect(service.refreshTokens('expired-token')).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(audit.record).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: AuditAction.REFRESH_REUSE_DETECTED }),
+      );
+    });
+
+    it('does not record REFRESH_REUSE_DETECTED for an unknown token', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue(null);
+      await expect(service.refreshTokens('bad-token')).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(audit.record).not.toHaveBeenCalled();
+    });
   });
 
   describe('logout', () => {
@@ -456,6 +516,25 @@ describe('AuthService', () => {
         where: { familyId: 'family-1', revokedAt: null },
         data: { revokedAt: expect.any(Date) },
       });
+    });
+
+    it('records a LOGOUT row with the actor derived from the stored token row', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue(live);
+      await service.logout('raw-refresh-token');
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ actorId: 'user-1', action: AuditAction.LOGOUT }),
+      );
+    });
+
+    it('does not record LOGOUT when no credential is presented', async () => {
+      await service.logout('');
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('does not record LOGOUT for an unknown token', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue(null);
+      await service.logout('unknown-token');
+      expect(audit.record).not.toHaveBeenCalled();
     });
   });
 
@@ -501,6 +580,17 @@ describe('AuthService', () => {
         refreshToken: expect.any(String),
         user: publicUser,
       });
+    });
+
+    it('records a LOGIN row for an existing identity', async () => {
+      const existingIdentity = { id: 'id-1', userId: 'user-1', user: mockUser };
+      prisma.identity.findUnique.mockResolvedValue(existingIdentity);
+
+      await service.findOrCreateOAuthUser(profile);
+
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ actorId: 'user-1', action: AuditAction.LOGIN }),
+      );
     });
 
     it('should create new user + identity when identity not found', async () => {

@@ -14,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import type { Request, Response } from 'express';
-import { AuthService } from './auth.service.js';
+import { AuthService, type AuditRequestContext } from './auth.service.js';
 import { Public } from '../common/decorators/public.decorator.js';
 import {
   GoogleOAuthStartGuard,
@@ -68,14 +68,21 @@ export class AuthController {
   @Public()
   @Post('login')
   @HttpCode(200)
-  async login(@Body() body: any, @Res({ passthrough: true }) res: Response) {
+  async login(
+    @Body() body: any,
+    @Res({ passthrough: true }) res: Response,
+    @Req() req?: Request,
+  ) {
     const email = typeof body?.email === 'string' ? body.email.trim() : '';
     const password = typeof body?.password === 'string' ? body.password : '';
     if (!email || !password) {
       throw new BadRequestException('Email and password are required');
     }
 
-    const tokens = await this.authService.loginLocal({ email, password });
+    const tokens = await this.authService.loginLocal(
+      { email, password },
+      this.auditContext(req),
+    );
     this.setRefreshCookie(res, tokens.refreshToken);
     return { accessToken: tokens.accessToken, user: tokens.user } as AuthResponse;
   }
@@ -106,7 +113,10 @@ export class AuthController {
     }
 
     try {
-      const tokens = await this.authService.refreshTokens(raw);
+      const tokens = await this.authService.refreshTokens(
+        raw,
+        this.auditContext(req),
+      );
       this.setRefreshCookie(res, tokens.refreshToken);
       return { accessToken: tokens.accessToken, user: tokens.user } as AuthResponse;
     } catch (error) {
@@ -144,7 +154,7 @@ export class AuthController {
       // Revoke the refresh family server-side so a captured token cannot be
       // rotated after sign-out. An unknown/already-revoked cookie is a
       // successful no-op inside the service.
-      await this.authService.logout(raw);
+      await this.authService.logout(raw, this.auditContext(req));
     } catch (error) {
       // A failed revocation is NOT a successful logout: the old session may
       // still be live. Signal it so the client persists a durable
@@ -206,6 +216,18 @@ export class AuthController {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
+
+  /**
+   * Best-effort audit request metadata. `ip`/`userAgent` are optional context
+   * only — never required, and never trusted for authorization.
+   */
+  private auditContext(req?: Request): AuditRequestContext {
+    const userAgent = req?.headers?.['user-agent'];
+    return {
+      ip: req?.ip,
+      userAgent: typeof userAgent === 'string' ? userAgent : undefined,
+    };
+  }
 
   private cookieBase() {
     return {

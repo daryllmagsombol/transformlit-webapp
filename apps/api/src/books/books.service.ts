@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
@@ -11,6 +12,8 @@ import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { BlobService } from '../azure/blob.service.js';
 import { STORAGE_ADAPTER, StorageAdapter } from '../storage/storage-adapter.js';
+import { AuditService } from '../audit/audit.service.js';
+import { AuditAction } from '../audit/audit-actions.js';
 import {
   UploadBookInput,
   UpdateBookInput,
@@ -36,6 +39,7 @@ export class BooksService {
     private readonly prisma: PrismaService,
     private readonly blob: BlobService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   async listBooks() {
@@ -97,7 +101,14 @@ export class BooksService {
     actorRole: UserRole,
   ) {
     await this.assertCanManageBookPublic(id, actorId, actorRole);
-    return this.prisma.book.update({ where: { id }, data: input });
+    const book = await this.prisma.book.update({ where: { id }, data: input });
+    await this.audit?.record({
+      actorId,
+      action: AuditAction.BOOK_UPDATED,
+      targetType: 'BOOK',
+      targetId: id,
+    });
+    return book;
   }
 
   async uploadPdf(
@@ -146,8 +157,8 @@ export class BooksService {
 
     // Persist the PENDING book and enqueue its conversion job in a single
     // transaction so a crash can never leave a PENDING book with no job.
-    return this.prisma.$transaction(async (tx) => {
-      const book = await tx.book.update({
+    const book = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.book.update({
         where: { id: bookId },
         data: {
           blobPath: storageKey,
@@ -159,8 +170,17 @@ export class BooksService {
         },
       });
       await tx.bookConversionJob.create({ data: { bookId, status: 'PENDING' } });
-      return book;
+      return updated;
     });
+
+    // Post-commit only: the book row and conversion job are already durable.
+    await this.audit?.record({
+      actorId,
+      action: AuditAction.BOOK_UPLOADED,
+      targetType: 'BOOK',
+      targetId: bookId,
+    });
+    return book;
   }
 
   async streamPdf(bookId: string, userId: string) {
@@ -296,7 +316,17 @@ export class BooksService {
 
   async deleteBook(id: string, actorId: string, actorRole: UserRole) {
     await this.assertCanManageBookPublic(id, actorId, actorRole);
-    return this.prisma.book.update({ where: { id }, data: { deletedAt: new Date() } });
+    const book = await this.prisma.book.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+    await this.audit?.record({
+      actorId,
+      action: AuditAction.BOOK_DELETED,
+      targetType: 'BOOK',
+      targetId: id,
+    });
+    return book;
   }
 
   async assertCanManageBookPublic(

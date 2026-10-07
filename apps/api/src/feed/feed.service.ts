@@ -5,10 +5,15 @@ import {
   PublishAnnouncementInput,
   UpdateAnnouncementInput,
 } from './models/feed.model.js';
+import { AuditService } from '../audit/audit.service.js';
+import { AuditAction } from '../audit/audit-actions.js';
 
 @Injectable()
 export class FeedService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async getAnnouncements() {
     return this.prisma.announcement.findMany({
@@ -73,26 +78,47 @@ export class FeedService {
     if (!isStaff) {
       throw new ForbiddenException('Only staff can publish');
     }
-    return this.prisma.announcement.update({
+    const announcement = await this.prisma.announcement.update({
       where: { id },
       data: { status: 'PUBLISHED', publishedAt: new Date(), publishedById: userId },
     });
+    await this.audit.record({
+      actorId: userId,
+      action: AuditAction.ANNOUNCEMENT_PUBLISHED,
+      targetType: 'ANNOUNCEMENT',
+      targetId: id,
+    });
+    return announcement;
   }
 
   async unpublishAnnouncement(id: string, actorId: string, actorRole: UserRole) {
     await this.assertCanManageAnnouncement(id, actorId, actorRole);
-    return this.prisma.announcement.update({
+    const announcement = await this.prisma.announcement.update({
       where: { id },
       data: { status: 'DRAFT', publishedAt: null },
     });
+    await this.audit.record({
+      actorId,
+      action: AuditAction.ANNOUNCEMENT_UNPUBLISHED,
+      targetType: 'ANNOUNCEMENT',
+      targetId: id,
+    });
+    return announcement;
   }
 
   async deleteAnnouncement(id: string, actorId: string, actorRole: UserRole) {
     await this.assertCanManageAnnouncement(id, actorId, actorRole);
-    return this.prisma.announcement.update({
+    const announcement = await this.prisma.announcement.update({
       where: { id },
       data: { deletedAt: new Date() },
     });
+    await this.audit.record({
+      actorId,
+      action: AuditAction.ANNOUNCEMENT_DELETED,
+      targetType: 'ANNOUNCEMENT',
+      targetId: id,
+    });
+    return announcement;
   }
 
   private async assertCanManageAnnouncement(

@@ -11,6 +11,8 @@ import { BlobService } from '../azure/blob.service';
 import { STORAGE_ADAPTER } from '../storage/storage-adapter';
 import { buildTestPdf } from '../../test/fixtures/build-pdf';
 import { BookAccessLevel, UserRole } from '@transformlit/shared';
+import { AuditService } from '../audit/audit.service';
+import { AuditAction } from '../audit/audit-actions';
 
 const mockBook = {
   id: 'book-1',
@@ -65,6 +67,7 @@ describe('BooksService', () => {
   let prisma: any;
   let blob: any;
   let storage: any;
+  let audit: { record: jest.Mock };
 
   beforeEach(async () => {
     const mockPrisma = {
@@ -106,12 +109,17 @@ describe('BooksService', () => {
       put: jest.fn().mockResolvedValue(undefined),
     };
 
+    const mockAudit = {
+      record: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BooksService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: BlobService, useValue: mockBlob },
         { provide: STORAGE_ADAPTER, useValue: mockStorage },
+        { provide: AuditService, useValue: mockAudit },
       ],
     }).compile();
 
@@ -119,7 +127,9 @@ describe('BooksService', () => {
     prisma = module.get(PrismaService);
     blob = module.get(BlobService);
     storage = module.get(STORAGE_ADAPTER);
+    audit = module.get(AuditService);
     jest.clearAllMocks();
+    audit.record.mockResolvedValue(undefined);
 
     prisma.book.findMany.mockResolvedValue([]);
     prisma.book.findUnique.mockResolvedValue(mockBook);
@@ -261,6 +271,26 @@ describe('BooksService', () => {
       await expect(
         service.updateBook('missing', input, 'user-1', UserRole.MEMBER),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('records BOOK_UPDATED after the update commits', async () => {
+      await service.updateBook('book-1', input, 'user-1', UserRole.MEMBER);
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: 'user-1',
+          action: AuditAction.BOOK_UPDATED,
+          targetType: 'BOOK',
+          targetId: 'book-1',
+        }),
+      );
+    });
+
+    it('does not record BOOK_UPDATED when the mutation throws', async () => {
+      prisma.book.findUnique.mockResolvedValue(null);
+      await expect(
+        service.updateBook('missing', input, 'user-1', UserRole.MEMBER),
+      ).rejects.toThrow(NotFoundException);
+      expect(audit.record).not.toHaveBeenCalled();
     });
   });
 
