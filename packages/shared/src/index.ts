@@ -6,6 +6,7 @@ export * from './types/index.js';
 // Explicit enum re-exports (TS 6 compat)
 export {
   UserRole,
+  UserStatus,
   GroupVisibility,
   GroupMemberRole,
   GroupMemberStatus,
