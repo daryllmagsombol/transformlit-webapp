@@ -1,7 +1,11 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { GroupsResolver } from './groups.resolver';
 import { GroupsService } from './groups.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { ROLES_KEY } from '../common/decorators/roles.decorator';
 import type { Group } from './models/group.model';
 import { GroupMemberRole, UserRole, type GroupCategory, type GroupVisibility } from '@transformlit/shared';
 
@@ -43,6 +47,12 @@ describe('GroupsResolver', () => {
       findById: jest.fn().mockResolvedValue(mockGroup),
       searchGroups: jest.fn().mockResolvedValue([mockGroup]),
       listMembers: jest.fn().mockResolvedValue([mockMember]),
+      adminGroups: jest.fn().mockResolvedValue({
+        items: [mockGroup],
+        total: 1,
+        page: 1,
+        pageSize: 25,
+      }),
       create: jest.fn().mockResolvedValue({ ...mockGroup, memberCount: 1, myRole: 'OWNER' }),
       join: jest.fn().mockResolvedValue(mockMember),
       leave: jest.fn().mockResolvedValue(true),
@@ -145,10 +155,43 @@ describe('GroupsResolver', () => {
   // ── groupMembers query ──────────────────────────────────────────────────────
 
   describe('groupMembers', () => {
-    it('should delegate to listMembers with groupId and user id', async () => {
+    it('should delegate to listMembers with groupId, user id, and role', async () => {
       const result = await resolver.groupMembers('group-1', mockUser);
-      expect(service.listMembers).toHaveBeenCalledWith('group-1', 'user-1');
+      expect(service.listMembers).toHaveBeenCalledWith('group-1', 'user-1', 'MEMBER');
       expect(result).toEqual([mockMember]);
+    });
+  });
+
+  // ── adminGroups query ───────────────────────────────────────────────────────
+
+  describe('adminGroups', () => {
+    it('should delegate to adminGroups with filter and pagination defaults', async () => {
+      const result = await resolver.adminGroups();
+      expect(service.adminGroups).toHaveBeenCalledWith({}, 1, 25);
+      expect(result).toEqual(expect.objectContaining({ total: 1, page: 1, pageSize: 25 }));
+    });
+
+    it('should pass an explicit filter, page, and pageSize through', async () => {
+      await resolver.adminGroups(
+        { query: 'book', visibility: 'PRIVATE' as GroupVisibility },
+        2,
+        10,
+      );
+      expect(service.adminGroups).toHaveBeenCalledWith(
+        { query: 'book', visibility: 'PRIVATE' as GroupVisibility },
+        2,
+        10,
+      );
+    });
+
+    it('is guarded by JwtAuthGuard + RolesGuard and restricted to staff', () => {
+      const guards =
+        Reflect.getMetadata(GUARDS_METADATA, GroupsResolver.prototype.adminGroups) ?? [];
+      expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard, RolesGuard]));
+      expect(Reflect.getMetadata(ROLES_KEY, GroupsResolver.prototype.adminGroups)).toEqual([
+        UserRole.ADMIN,
+        UserRole.MODERATOR,
+      ]);
     });
   });
 
@@ -212,9 +255,9 @@ describe('GroupsResolver', () => {
   // ── approveGroupMember mutation ─────────────────────────────────────────────
 
   describe('approveGroupMember', () => {
-    it('should delegate to approveMember with groupId, user id, and target userId', async () => {
+    it('should delegate to approveMember with groupId, user id, target userId, and role', async () => {
       const result = await resolver.approveGroupMember(mockUser, 'group-1', 'user-2');
-      expect(service.approveMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2');
+      expect(service.approveMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2', 'MEMBER');
       expect(result).toEqual(expect.objectContaining({ status: 'ACTIVE' }));
     });
   });
@@ -222,9 +265,9 @@ describe('GroupsResolver', () => {
   // ── removeGroupMember mutation ──────────────────────────────────────────────
 
   describe('removeGroupMember', () => {
-    it('should delegate to removeMember with groupId, user id, and target userId', async () => {
+    it('should delegate to removeMember with groupId, user id, target userId, and role', async () => {
       const result = await resolver.removeGroupMember(mockUser, 'group-1', 'user-2');
-      expect(service.removeMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2');
+      expect(service.removeMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2', 'MEMBER');
       expect(result).toBe(true);
     });
   });
@@ -232,9 +275,9 @@ describe('GroupsResolver', () => {
   // ── banGroupMember mutation ─────────────────────────────────────────────────
 
   describe('banGroupMember', () => {
-    it('should delegate to banMember with groupId, user id, and target userId', async () => {
+    it('should delegate to banMember with groupId, user id, target userId, and role', async () => {
       const result = await resolver.banGroupMember(mockUser, 'group-1', 'user-2');
-      expect(service.banMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2');
+      expect(service.banMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2', 'MEMBER');
       expect(result).toEqual(expect.objectContaining({ status: 'BANNED' }));
     });
   });
@@ -242,9 +285,9 @@ describe('GroupsResolver', () => {
   // ── unbanGroupMember mutation ───────────────────────────────────────────────
 
   describe('unbanGroupMember', () => {
-    it('should delegate to unbanMember with groupId, user id, and target userId', async () => {
+    it('should delegate to unbanMember with groupId, user id, target userId, and role', async () => {
       const result = await resolver.unbanGroupMember(mockUser, 'group-1', 'user-2');
-      expect(service.unbanMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2');
+      expect(service.unbanMember).toHaveBeenCalledWith('group-1', 'user-1', 'user-2', 'MEMBER');
       expect(result).toEqual(expect.objectContaining({ status: 'ACTIVE' }));
     });
   });
@@ -252,15 +295,15 @@ describe('GroupsResolver', () => {
   // ── updateGroupMemberRole mutation ──────────────────────────────────────────
 
   describe('updateGroupMemberRole', () => {
-    it('should delegate to updateMemberRole with MODERATOR role', async () => {
+    it('should delegate to updateMemberRole with MODERATOR role and actor role', async () => {
       const result = await resolver.updateGroupMemberRole(mockUser, 'group-1', 'user-2', GroupMemberRole.MODERATOR);
-      expect(service.updateMemberRole).toHaveBeenCalledWith('group-1', 'user-1', 'user-2', 'MODERATOR');
+      expect(service.updateMemberRole).toHaveBeenCalledWith('group-1', 'user-1', 'user-2', 'MODERATOR', 'MEMBER');
       expect(result).toEqual(expect.objectContaining({ role: 'MODERATOR' }));
     });
 
-    it('should delegate to updateMemberRole with MEMBER role', async () => {
+    it('should delegate to updateMemberRole with MEMBER role and actor role', async () => {
       await resolver.updateGroupMemberRole(mockUser, 'group-1', 'user-2', GroupMemberRole.MEMBER);
-      expect(service.updateMemberRole).toHaveBeenCalledWith('group-1', 'user-1', 'user-2', 'MEMBER');
+      expect(service.updateMemberRole).toHaveBeenCalledWith('group-1', 'user-1', 'user-2', 'MEMBER', 'MEMBER');
     });
   });
 });

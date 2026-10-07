@@ -60,6 +60,7 @@ describe('GroupsService', () => {
         findUnique: jest.fn().mockResolvedValue(mockGroup),
         create: jest.fn().mockResolvedValue(mockGroup),
         update: jest.fn().mockResolvedValue(mockGroup),
+        count: jest.fn().mockResolvedValue(0),
       },
       groupMember: {
         count: jest.fn().mockResolvedValue(3),
@@ -70,6 +71,7 @@ describe('GroupsService', () => {
         findUnique: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue(mockMember),
         delete: jest.fn().mockResolvedValue(mockMember),
+        groupBy: jest.fn().mockResolvedValue([]),
       },
     };
 
@@ -841,6 +843,252 @@ describe('GroupsService', () => {
       prisma.groupMember.findMany.mockResolvedValue([]);
       const result = await service.listMembers('group-1', 'user-1');
       expect(result).toEqual([]);
+    });
+  });
+
+  // ── global staff moderation ─────────────────────────────────────────────────
+
+  describe('assertCanModerate', () => {
+    it('bypasses membership for a global ADMIN and returns a synthetic moderator', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      const actor = await service.assertCanModerate('group-1', 'admin-1', UserRole.ADMIN);
+      expect(actor.role).toBe('MODERATOR');
+    });
+
+    it('bypasses membership for a global MODERATOR and returns a synthetic moderator', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      const actor = await service.assertCanModerate('group-1', 'mod-1', UserRole.MODERATOR);
+      expect(actor.role).toBe('MODERATOR');
+    });
+
+    it('still rejects a non-member when no global staff role is supplied', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      await expect(service.assertCanModerate('group-1', 'user-1')).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('still rejects a global MEMBER with no group role', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      await expect(
+        service.assertCanModerate('group-1', 'user-1', UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('keeps returning the ACTIVE membership for an existing group owner', async () => {
+      prisma.groupMember.findUnique.mockResolvedValue({ role: 'OWNER', status: 'ACTIVE' });
+      const actor = await service.assertCanModerate('group-1', 'owner-1');
+      expect(actor.role).toBe('OWNER');
+    });
+  });
+
+  describe('updateMemberRole (global staff)', () => {
+    it('lets a global ADMIN change roles without a membership', async () => {
+      prisma.groupMember.findUnique
+        .mockResolvedValueOnce(null) // actor has no membership
+        .mockResolvedValueOnce({ role: 'MEMBER', status: 'ACTIVE' }); // target
+      prisma.groupMember.update.mockResolvedValue({ role: 'MODERATOR' });
+      const result = await service.updateMemberRole(
+        'g1',
+        'admin-1',
+        'user-2',
+        'MODERATOR',
+        UserRole.ADMIN,
+      );
+      expect(result.role).toBe('MODERATOR');
+    });
+
+    it('rejects a global MODERATOR who is not a group owner', async () => {
+      prisma.groupMember.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.updateMemberRole('g1', 'mod-1', 'user-2', 'MODERATOR', UserRole.MODERATOR),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.groupMember.update).not.toHaveBeenCalled();
+    });
+
+    it('still lets a global MODERATOR who is the group OWNER change roles', async () => {
+      prisma.groupMember.findUnique
+        .mockResolvedValueOnce({ role: 'OWNER', status: 'ACTIVE' })
+        .mockResolvedValueOnce({ role: 'MEMBER', status: 'ACTIVE' });
+      prisma.groupMember.update.mockResolvedValue({ role: 'MODERATOR' });
+      const result = await service.updateMemberRole(
+        'g1',
+        'mod-1',
+        'user-2',
+        'MODERATOR',
+        UserRole.MODERATOR,
+      );
+      expect(result.role).toBe('MODERATOR');
+    });
+
+    it('protects the OWNER target even for a global ADMIN', async () => {
+      prisma.groupMember.findUnique
+        .mockResolvedValueOnce(null) // actor has no membership
+        .mockResolvedValueOnce({ role: 'OWNER', status: 'ACTIVE' }); // target
+      await expect(
+        service.updateMemberRole('g1', 'admin-1', 'owner-2', 'MEMBER', UserRole.ADMIN),
+      ).rejects.toThrow('Cannot change the owner role');
+      expect(prisma.groupMember.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('member management (global staff)', () => {
+    it('lets a global ADMIN remove a regular member without a membership', async () => {
+      prisma.groupMember.findUnique
+        .mockResolvedValueOnce(null) // actor has no membership
+        .mockResolvedValueOnce({ role: 'MEMBER', status: 'ACTIVE' }); // target
+      await expect(service.removeMember('g1', 'admin-1', 'user-2', UserRole.ADMIN)).resolves.toBe(
+        true,
+      );
+      expect(prisma.groupMember.delete).toHaveBeenCalled();
+    });
+
+    it('still blocks removing an OWNER target for global staff', async () => {
+      prisma.groupMember.findUnique
+        .mockResolvedValueOnce(null) // actor has no membership
+        .mockResolvedValueOnce({ role: 'OWNER', status: 'ACTIVE' }); // target
+      await expect(
+        service.removeMember('g1', 'admin-1', 'owner-2', UserRole.ADMIN),
+      ).rejects.toThrow('Cannot remove the group owner');
+      expect(prisma.groupMember.delete).not.toHaveBeenCalled();
+    });
+
+    it('lets a global MODERATOR ban a regular member without a membership', async () => {
+      prisma.groupMember.findUnique
+        .mockResolvedValueOnce(null) // actor has no membership
+        .mockResolvedValueOnce({ role: 'MEMBER', status: 'ACTIVE' }); // target
+      prisma.groupMember.update.mockResolvedValue({ status: 'BANNED' });
+      await service.banMember('g1', 'mod-1', 'user-2', UserRole.MODERATOR);
+      expect(prisma.groupMember.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: 'BANNED' } }),
+      );
+    });
+
+    it('does not let a global MODERATOR remove another group moderator', async () => {
+      prisma.groupMember.findUnique
+        .mockResolvedValueOnce(null) // actor has no membership
+        .mockResolvedValueOnce({ role: 'MODERATOR', status: 'ACTIVE' }); // target
+      await expect(
+        service.removeMember('g1', 'mod-1', 'mod-2', UserRole.MODERATOR),
+      ).rejects.toThrow('Moderators cannot remove other moderators');
+      expect(prisma.groupMember.delete).not.toHaveBeenCalled();
+    });
+
+    it('lets a global ADMIN remove another group moderator', async () => {
+      prisma.groupMember.findUnique
+        .mockResolvedValueOnce(null) // actor has no membership
+        .mockResolvedValueOnce({ role: 'MODERATOR', status: 'ACTIVE' }); // target
+      await expect(service.removeMember('g1', 'admin-1', 'mod-2', UserRole.ADMIN)).resolves.toBe(
+        true,
+      );
+    });
+  });
+
+  // ── adminGroups ─────────────────────────────────────────────────────────────
+
+  describe('adminGroups', () => {
+    it('includes PRIVATE groups when no visibility filter is supplied', async () => {
+      prisma.group.findMany.mockResolvedValue([groupWithCount(privateGroup, 2)]);
+      prisma.group.count.mockResolvedValue(1);
+      const result = await service.adminGroups({}, 1, 25);
+      expect(prisma.group.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { deletedAt: null } }),
+      );
+      expect(result.items[0].visibility).toBe('PRIVATE');
+      expect(result.total).toBe(1);
+      expect(result.page).toBe(1);
+      expect(result.pageSize).toBe(25);
+    });
+
+    it('filters by visibility and name query with pagination', async () => {
+      prisma.group.findMany.mockResolvedValue([]);
+      await service.adminGroups({ query: 'book', visibility: 'PRIVATE' as GroupVisibility }, 2, 10);
+      expect(prisma.group.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            deletedAt: null,
+            visibility: 'PRIVATE',
+            name: { contains: 'book', mode: 'insensitive' },
+          },
+          skip: 10,
+          take: 10,
+        }),
+      );
+    });
+
+    it('attaches active and pending member counts batched via groupBy', async () => {
+      prisma.group.findMany.mockResolvedValue([groupWithCount(mockGroup)]);
+      prisma.groupMember.groupBy.mockResolvedValue([
+        { groupId: 'group-1', status: 'ACTIVE', _count: { _all: 5 } },
+        { groupId: 'group-1', status: 'PENDING', _count: { _all: 2 } },
+      ]);
+      const result = await service.adminGroups({}, 1, 25);
+      expect(prisma.groupMember.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          by: ['groupId', 'status'],
+          where: {
+            groupId: { in: ['group-1'] },
+            status: { in: ['ACTIVE', 'PENDING'] },
+          },
+        }),
+      );
+      expect(result.items[0].activeMemberCount).toBe(5);
+      expect(result.items[0].pendingMemberCount).toBe(2);
+    });
+
+    it('defaults missing counts to zero', async () => {
+      prisma.group.findMany.mockResolvedValue([groupWithCount(mockGroup)]);
+      prisma.groupMember.groupBy.mockResolvedValue([]);
+      const result = await service.adminGroups({}, 1, 25);
+      expect(result.items[0].activeMemberCount).toBe(0);
+      expect(result.items[0].pendingMemberCount).toBe(0);
+    });
+
+    it('clamps out-of-range pagination', async () => {
+      prisma.group.findMany.mockResolvedValue([]);
+      const result = await service.adminGroups({}, 0, 500);
+      expect(prisma.group.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 0, take: 100 }),
+      );
+      expect(result.page).toBe(1);
+      expect(result.pageSize).toBe(100);
+    });
+
+    it('does not query groupBy when the page is empty', async () => {
+      prisma.group.findMany.mockResolvedValue([]);
+      await service.adminGroups({}, 1, 25);
+      expect(prisma.groupMember.groupBy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── listMembers (global staff) ──────────────────────────────────────────────
+
+  describe('listMembers (global staff)', () => {
+    it('lets global staff list all statuses of a PRIVATE group they do not belong to', async () => {
+      prisma.group.findUnique.mockResolvedValue({ ...mockGroup, visibility: 'PRIVATE' });
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      await service.listMembers('group-1', 'staff-1', UserRole.MODERATOR);
+      expect(prisma.groupMember.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { groupId: 'group-1' } }),
+      );
+    });
+
+    it('lets a global ADMIN list all statuses of a PRIVATE group', async () => {
+      prisma.group.findUnique.mockResolvedValue({ ...mockGroup, visibility: 'PRIVATE' });
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      await service.listMembers('group-1', 'admin-1', UserRole.ADMIN);
+      expect(prisma.groupMember.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { groupId: 'group-1' } }),
+      );
+    });
+
+    it('still forbids a non-member non-staff from listing a PRIVATE group', async () => {
+      prisma.group.findUnique.mockResolvedValue({ ...mockGroup, visibility: 'PRIVATE' });
+      prisma.groupMember.findUnique.mockResolvedValue(null);
+      await expect(
+        service.listMembers('group-1', 'user-1', UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.groupMember.findMany).not.toHaveBeenCalled();
     });
   });
 
