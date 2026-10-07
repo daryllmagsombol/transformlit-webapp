@@ -53,7 +53,7 @@ export class ReadingPlansService {
         where: { groupId: input.groupId, status: 'ACTIVE' },
         data: { status: 'ARCHIVED' },
       });
-      return tx.groupReadingPlan.create({
+      const plan = await tx.groupReadingPlan.create({
         data: {
           groupId: input.groupId,
           bookId: input.bookId,
@@ -65,6 +65,14 @@ export class ReadingPlansService {
         },
         include: { book: true },
       });
+      // Attach the derived fields a brand-new plan has, so the GraphQL field
+      // resolvers do not fall back to a second `getActive` read (3 more queries)
+      // just to render the mutation result. Members start with no rows.
+      return {
+        ...plan,
+        expectedPercent: expectedPercent(plan.startDate, plan.targetDate, new Date()),
+        members: [] as PlanMemberProgress[],
+      };
     });
   }
 

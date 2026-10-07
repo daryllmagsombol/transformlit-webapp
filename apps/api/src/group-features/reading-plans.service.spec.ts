@@ -134,9 +134,15 @@ describe('ReadingPlansService', () => {
       );
     });
 
-    it('should return the created plan', async () => {
+    it('should return the created plan with derived pacing fields attached', async () => {
       const result = await service.create('user-1', input);
-      expect(result).toEqual(mockPlan);
+      // The derived fields are attached so the GraphQL field resolvers do not
+      // need a second `getActive` read for the mutation result.
+      expect(result).toEqual({
+        ...mockPlan,
+        expectedPercent: expect.any(Number),
+        members: [],
+      });
     });
   });
 

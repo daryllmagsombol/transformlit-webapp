@@ -520,6 +520,18 @@ return { accessToken, refreshToken, user };
 
 ---
 
+## Group features (reading plans + shared highlights) — review decisions
+
+Recorded from the 2026-10 group-features branch review, so these choices are not re-litigated.
+
+- **Auth is reused, never reimplemented.** `GroupsService.getMembershipFor(groupId, userId)` and `GroupsService.assertCanModerate(groupId, actorId)` are the ONLY authorization paths for group-owned content. `assertCanModerate` was changed from `private` to `public` so sibling domains (e.g. `GroupFeaturesService`) reuse it. Do not duplicate membership/role checks — and never authorize against a client-supplied groupId; load the entity and check its own `groupId`.
+- **Group-scoped GraphQL args are `String!`, not `ID!`.** This matches the existing groups API (`group(id: String!)`, `groupPosts(groupId: String!)`). The spec may write `ID!`; the schema emits `String!`. Functionally identical; keep `String!` for consistency.
+- **Derived fields must be attached at the write site.** A mutation that returns a type with `@ResolveField`-derived fields (`expectedPercent`, `members`) must attach them to its result, or each field resolver performs its own extra read. ❌ `return createdRow` (forces a second `getActive` = N more queries). ✅ `return { ...createdRow, expectedPercent, members: [] }`.
+- **Nested non-null GraphQL fields must be flattened on every path.** If a service returns a Prisma join row (`{ highlight: { book: { title } }, sharedBy }`) but the GraphQL type exposes `highlight.bookTitle`, every return path (query AND mutation) must map through the same flatten helper. ❌ returning the raw row from a mutation → `Cannot return null for non-nullable field SharedHighlight.bookTitle`. ✅ map via `toGroupHighlight()` on both.
+- **`$transaction` + "archive the old active row, then create the new one" is the one-active-per-group pattern.** Default isolation (READ COMMITTED) has a narrow race where two concurrent creates both succeed; acceptable for v1 (recoverable by archiving). A partial unique index `WHERE status = 'ACTIVE'` or `Serializable` would harden it — deferred, not a defect.
+
+---
+
 ## Cleanup / Reliability Rules (from the 2026-10 SonarQube backlog)
 
 These appeared en masse on legacy files. Each is mechanical; fix in the same style everywhere.
