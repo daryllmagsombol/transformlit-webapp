@@ -1385,3 +1385,9 @@ Calling a resolver method directly never runs `UseGuards`/`RolesGuard`, and CI r
 
 ❌ Sequence the urgent guard fix after schema and module work.
 ✅ Guard the books endpoints first, then schema → audit → auth → admin → web.
+
+### ADM-19 — Normalize nullable GraphQL filter `null`s before building a Prisma `where`
+`AuditService.list` accepted `AuditFilters` and guarded each optional field with `!== undefined`. GraphQL nullable inputs (`AuditLogFilter`) deliver explicit `null` for cleared fields, so `where.action = null` became `action IS NULL` (silently empty page) and `createdAt: { gte: null }` was a Prisma validation error. Normalize every optional filter `null` → `undefined` before building the `where`, and accept `| null` in the filter type.
+
+❌ `if (filters.action !== undefined) where.action = filters.action;` — a cleared GraphQL filter sends `null`, producing `action IS NULL` or `gte: null`.
+✅ `const action = filters.action ?? undefined;` then `if (action !== undefined) where.action = action;` for all six fields (`action`, `actorId`, `targetType`, `targetId`, `from`, `to`), and pin it with a test asserting the `where` omits null-valued keys.
