@@ -6,6 +6,11 @@ export enum UserRole {
   MEMBER = 'MEMBER',
 }
 
+export enum UserStatus {
+  ACTIVE = 'ACTIVE',
+  SUSPENDED = 'SUSPENDED',
+}
+
 export enum GroupVisibility {
   PUBLIC = 'PUBLIC',
   PRIVATE = 'PRIVATE',

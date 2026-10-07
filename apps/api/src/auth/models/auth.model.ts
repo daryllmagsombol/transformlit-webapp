@@ -1,7 +1,8 @@
 import { Field, ObjectType, InputType, ID, registerEnumType } from '@nestjs/graphql';
-import { UserRole } from '@transformlit/shared';
+import { UserRole, UserStatus } from '@transformlit/shared';
 
 registerEnumType(UserRole, { name: 'UserRole' });
+registerEnumType(UserStatus, { name: 'UserStatus' });
 
 @ObjectType()
 export class User {
@@ -23,8 +24,8 @@ export class User {
   @Field(() => UserRole)
   role: UserRole;
 
-  @Field()
-  status: string;
+  @Field(() => UserStatus)
+  status: UserStatus;
 
   @Field({ nullable: true })
   lastLoginAt?: Date;

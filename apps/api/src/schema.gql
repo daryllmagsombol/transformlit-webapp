@@ -755,7 +755,7 @@ type User {
   id: ID!
   lastLoginAt: DateTime
   role: UserRole!
-  status: String!
+  status: UserStatus!
 }
 
 type UserProfile {
@@ -772,6 +772,11 @@ enum UserRole {
   ADMIN
   MEMBER
   MODERATOR
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
 }
 
 type VerseOfDay {
