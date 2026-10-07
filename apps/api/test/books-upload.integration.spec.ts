@@ -119,9 +119,11 @@ describe('Books upload (GraphQL multipart)', () => {
     }).compile();
     app = moduleFixture.createNestApplication();
     // Mirror main.ts: the multipart middleware must be registered before the
-    // Apollo route so `graphql-upload-ts` can rewrite the request body.
+    // Apollo route so `graphql-upload-ts` can rewrite the request body, and it
+    // must be path-scoped to `/graphql` so it does not intercept other
+    // multipart routes (e.g. `POST /uploads`).
     app.use(cookieParser());
-    app.use(graphqlUploadExpress({ maxFileSize: MAX_FILE_SIZE_BYTES }));
+    app.use('/graphql', graphqlUploadExpress({ maxFileSize: MAX_FILE_SIZE_BYTES }));
     await app.init();
 
     prisma = moduleFixture.get<PrismaService>(PrismaService);
@@ -203,10 +205,27 @@ describe('Books upload (GraphQL multipart)', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.body.errors).toBeDefined();
+    // Assert the specific authorization failure so an unrelated error (e.g. a
+    // transport/CSRF failure) cannot satisfy this test.
     expect(response.body.data?.uploadPdf ?? null).toBeNull();
+    expect(response.body.errors).toHaveLength(1);
+    expect(response.body.errors[0].extensions?.code).toBe('FORBIDDEN');
     const stored = await prisma.book.findUnique({ where: { id: bookId } });
     expect(stored?.format).toBeNull();
+  });
+
+  it('does not intercept a non-GraphQL multipart route', async () => {
+    // `POST /uploads` is a plain multipart image endpoint. If the GraphQL
+    // multipart middleware were mounted globally it would reject this body for
+    // missing `operations`/`map` with a 400 *before* the JWT guard runs. With
+    // the middleware path-scoped to `/graphql`, the request reaches the guard
+    // and fails auth instead (401).
+    const response = await request(app.getHttpServer() as never)
+      .post('/uploads')
+      .attach('file', buildTestPdf(['not an image']), 'cover.pdf');
+
+    expect(response.status).toBe(401);
+    expect(JSON.stringify(response.body)).not.toContain('operations');
   });
 
   it('rejects an EPUB with the typed "coming next release" message', async () => {

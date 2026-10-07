@@ -66,7 +66,12 @@ async function bootstrap() {
   // `uploadPdf` mutation consumes. Registered before listen()/init() so it sits
   // ahead of Nest's JSON body parser and the Apollo route; non-multipart
   // requests fall through untouched.
+  //
+  // Path-scoped to `/graphql` on purpose: the middleware rejects any multipart
+  // body lacking GraphQL `operations`/`map` fields, which would otherwise break
+  // unrelated multipart routes (e.g. `POST /uploads` for group/post images).
   app.use(
+    '/graphql',
     graphqlUploadExpress({
       maxFileSize: MAX_FILE_SIZE_BYTES,
       // Nest handles the response lifecycle; keep the default override off.

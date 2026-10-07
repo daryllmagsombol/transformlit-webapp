@@ -297,8 +297,31 @@ const httpLink = new HttpLink({
 /**
  * Operations that carry a file variable and must go through the GraphQL
  * multipart transport. Everything else keeps the proven JSON `HttpLink`.
+ * Only real schema operations belong here — an unknown name would silently
+ * route a normal operation through multipart.
  */
-const UPLOAD_OPERATION_NAMES = new Set(['UploadPdf', 'UploadBookFile']);
+export const UPLOAD_OPERATION_NAMES = new Set(['UploadPdf']);
+
+/**
+ * Routing decision for `ApolloLink.split`. `operationName` is undefined for
+ * anonymous operations, which are never uploads. Exported so a unit test can
+ * assert the exact operation names that switch transports.
+ */
+export function isUploadOperation(operationName: string | undefined): boolean {
+  return operationName !== undefined && UPLOAD_OPERATION_NAMES.has(operationName);
+}
+
+/**
+ * Config for the multipart link. Multipart bodies drop the JSON `content-type`
+ * that normally makes Apollo Server treat a request as preflighted, so the
+ * server's CSRF prevention rejects the upload with a 400 before it reaches the
+ * mutation unless this preflight header is present. Exported so a unit test
+ * guards the contract.
+ */
+export const UPLOAD_LINK_OPTIONS = {
+  credentials: 'include' as const,
+  headers: { 'apollo-require-preflight': 'true' },
+};
 
 /**
  * `apollo-upload-client@20` ships ESM-only, so it is imported lazily at the
@@ -312,37 +335,45 @@ let uploadTransport: ApolloLink | null = null;
 async function getUploadTransport(): Promise<ApolloLink> {
   if (!uploadTransport) {
     const { default: UploadHttpLink } = await import('apollo-upload-client/UploadHttpLink.mjs');
-    uploadTransport = new UploadHttpLink({
-      uri: httpUrl,
-      credentials: 'include',
-      // Multipart bodies drop the JSON `content-type` that normally makes
-      // Apollo Server treat a request as preflighted. Without this header the
-      // server's CSRF prevention rejects the upload with a 400 before it ever
-      // reaches the mutation. Scoped to the upload-only link.
-      headers: { 'apollo-require-preflight': 'true' },
-    });
+    uploadTransport = new UploadHttpLink(getUploadTransportOptions());
   }
   return uploadTransport;
 }
 
-const uploadLink = new ApolloLink((operation, forward) =>
-  new Observable((subscriber) => {
-    getUploadTransport()
-      .then((transport) => transport.request(operation, forward).subscribe(subscriber))
-      .catch((error) => subscriber.error(error));
-  }),
-);
+/**
+ * Options passed to `UploadHttpLink`. Exported so a unit test can prove the
+ * construction path keeps the preflight header (see `UPLOAD_LINK_OPTIONS`).
+ */
+export function getUploadTransportOptions() {
+  return { uri: httpUrl, ...UPLOAD_LINK_OPTIONS };
+}
 
 /**
- * Routes only named upload operations through the multipart link; every other
- * HTTP operation keeps the JSON `HttpLink`. `operationName` is undefined for
- * anonymous operations, which are never uploads.
+ * Builds the split link that routes upload operations to the multipart
+ * transport and everything else to `jsonLink`. The transport getter and JSON
+ * link are injectable so a unit test can prove routing without parsing the
+ * ESM-only multipart module or issuing real network requests.
  */
-const httpOrUploadLink = ApolloLink.split(
-  ({ operationName }) => UPLOAD_OPERATION_NAMES.has(operationName ?? ''),
-  uploadLink,
-  httpLink,
-);
+export function createHttpOrUploadLink(
+  transportFactory: () => Promise<ApolloLink> = getUploadTransport,
+  jsonLink: ApolloLink = httpLink,
+): ApolloLink {
+  const uploadLink = new ApolloLink((operation, forward) =>
+    new Observable((subscriber) => {
+      transportFactory()
+        .then((transport) => transport.request(operation, forward).subscribe(subscriber))
+        .catch((error) => subscriber.error(error));
+    }),
+  );
+
+  return ApolloLink.split(
+    ({ operationName }) => isUploadOperation(operationName),
+    uploadLink,
+    jsonLink,
+  );
+}
+
+const httpOrUploadLink = createHttpOrUploadLink();
 
 const authLink = new SetContextLink((prevContext, _operation) => {
   const token = isServer ? null : getAccessToken();
