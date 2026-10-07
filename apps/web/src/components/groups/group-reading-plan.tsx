@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { GraphQLBook, GraphQLGroupReadingPlan } from '@transformlit/shared';
-import { useToast } from '../ui';
-import { LoadingSpinner } from '../ui';
+import { useToast, LoadingSpinner } from '../ui';
 import {
   fetchGroupReadingPlan,
   fetchBooksForPlan,

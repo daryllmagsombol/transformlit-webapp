@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { GraphQLGroupHighlight } from '@transformlit/shared';
 import { useAuthStore } from '../../store';
-import { useToast } from '../ui';
-import { LoadingSpinner } from '../ui';
+import { useToast, LoadingSpinner } from '../ui';
 import {
   fetchGroupHighlights,
   UNSHARE_HIGHLIGHT_MUTATION,
