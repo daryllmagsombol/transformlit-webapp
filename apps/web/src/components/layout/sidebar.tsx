@@ -3,11 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  MyProgressDocument,
-  type MyProgressQuery,
-  type MyProgressQueryVariables,
-} from '@transformlit/graphql';
+import { MyProgressDocument, type MyProgressQuery } from '@transformlit/graphql';
 import { useUIStore } from '../../store';
 import { useChatStore } from '../../store/chat-store';
 import { apolloClient } from '../../lib/apollo-client';

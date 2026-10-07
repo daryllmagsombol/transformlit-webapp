@@ -14,6 +14,7 @@ import { StorageModule } from './storage/storage.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { GroupsModule } from './groups/groups.module.js';
+import { GroupFeaturesModule } from './group-features/group-features.module.js';
 import { FriendsModule } from './friends/friends.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { BooksModule } from './books/books.module.js';
@@ -140,6 +141,7 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
     AuthModule,
     UsersModule,
     GroupsModule,
+    GroupFeaturesModule,
     FriendsModule,
     ChatModule,
     BooksModule,

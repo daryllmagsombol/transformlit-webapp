@@ -1,5 +1,8 @@
-import type { AccountOwner } from '../offline/contracts';
-import { OfflineStorageError, type BibleChapterRecord } from '../offline/contracts';
+import {
+  OfflineStorageError,
+  type AccountOwner,
+  type BibleChapterRecord,
+} from '../offline/contracts';
 import type { OfflineDatabase } from '../offline/database';
 import type { BibleChapter, ChapterContent, ChapterFootnote, TranslationBook } from './types';
 

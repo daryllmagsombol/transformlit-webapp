@@ -5,6 +5,7 @@ import type { PdfTextItem } from '../../lib/reader/api';
 import type { BookmarkRecord, HighlightRecord } from '../../lib/offline/contracts';
 import { annotationProvenance } from '../../lib/offline/conflicts';
 import type { ReaderSaveResult } from '../../lib/offline/reader-records';
+import { ShareHighlightButton } from './share-highlight-button';
 
 /**
  * The local-first mutation surface the panel drives. It is the reader record
@@ -426,6 +427,10 @@ export function AnnotationPanel({
                 ) : null}
               </div>
               <div className="flex shrink-0 gap-2">
+                <ShareHighlightButton
+                  highlightServerId={highlight.serverEntityId}
+                  highlightLabel={highlight.text}
+                />
                 <button
                   type="button"
                   onClick={() => beginEdit(highlight)}

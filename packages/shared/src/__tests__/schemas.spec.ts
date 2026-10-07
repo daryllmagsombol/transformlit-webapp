@@ -18,6 +18,8 @@ import {
   cursorPaginationSchema,
   recordActivitySchema,
   setReadingGoalSchema,
+  createGroupReadingPlanSchema,
+  shareHighlightSchema,
 } from '../schemas/index.js';
 
 describe('registerLocalSchema', () => {
@@ -809,5 +811,121 @@ describe('setReadingGoalSchema', () => {
     expect(() =>
       setReadingGoalSchema.parse({ year: 2026, targetKind: 'DAYS', targetValue: 400 }),
     ).toThrow();
+  });
+});
+
+describe('createGroupReadingPlanSchema', () => {
+  const valid = {
+    groupId: '550e8400-e29b-41d4-a716-446655440000',
+    bookId: '550e8400-e29b-41d4-a716-446655440001',
+    startDate: '2026-07-01',
+    targetDate: '2026-08-01',
+  };
+
+  it('accepts a minimal valid payload', () => {
+    const result = createGroupReadingPlanSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an optional title up to 200 characters', () => {
+    const result = createGroupReadingPlanSchema.safeParse({
+      ...valid,
+      title: 'a'.repeat(200),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a title longer than 200 characters', () => {
+    const result = createGroupReadingPlanSchema.safeParse({
+      ...valid,
+      title: 'a'.repeat(201),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an invalid groupId', () => {
+    const result = createGroupReadingPlanSchema.safeParse({
+      ...valid,
+      groupId: 'not-a-uuid',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an invalid bookId', () => {
+    const result = createGroupReadingPlanSchema.safeParse({
+      ...valid,
+      bookId: 'not-a-uuid',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects missing fields', () => {
+    const result = createGroupReadingPlanSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an invalid startDate', () => {
+    const result = createGroupReadingPlanSchema.safeParse({
+      ...valid,
+      startDate: '07/01/2026',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an invalid targetDate', () => {
+    const result = createGroupReadingPlanSchema.safeParse({
+      ...valid,
+      targetDate: '2026-13-01',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a targetDate equal to startDate', () => {
+    const result = createGroupReadingPlanSchema.safeParse({
+      ...valid,
+      targetDate: valid.startDate,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a targetDate before startDate', () => {
+    const result = createGroupReadingPlanSchema.safeParse({
+      ...valid,
+      targetDate: '2026-06-01',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('shareHighlightSchema', () => {
+  const valid = {
+    groupId: '550e8400-e29b-41d4-a716-446655440000',
+    highlightId: '550e8400-e29b-41d4-a716-446655440002',
+  };
+
+  it('accepts a valid payload', () => {
+    const result = shareHighlightSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an invalid groupId', () => {
+    const result = shareHighlightSchema.safeParse({
+      ...valid,
+      groupId: 'not-a-uuid',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an invalid highlightId', () => {
+    const result = shareHighlightSchema.safeParse({
+      ...valid,
+      highlightId: 'not-a-uuid',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects missing fields', () => {
+    const result = shareHighlightSchema.safeParse({});
+    expect(result.success).toBe(false);
   });
 });

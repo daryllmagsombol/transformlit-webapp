@@ -12,13 +12,13 @@ const VISIBILITY_ICONS: Record<string, string> = {
   PRIVATE: 'lock',
 };
 
-const TABS = ['posts', 'members', 'settings'] as const;
+const TABS = ['posts', 'plan', 'highlights', 'members', 'settings'] as const;
 
 interface GroupHeaderProps {
   readonly group: GraphQLGroup;
   readonly onChanged: () => void;
-  readonly onTabChange: (tab: 'posts' | 'members' | 'settings') => void;
-  readonly activeTab: 'posts' | 'members' | 'settings';
+  readonly onTabChange: (tab: 'posts' | 'plan' | 'highlights' | 'members' | 'settings') => void;
+  readonly activeTab: 'posts' | 'plan' | 'highlights' | 'members' | 'settings';
 }
 
 export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupHeaderProps) {
@@ -173,6 +173,7 @@ export function GroupHeader({ group, onChanged, onTabChange, activeTab }: GroupH
       <div className="bg-surface-container rounded-full p-1 inline-flex w-full md:w-auto">
         {TABS.map((tab) => {
           function isTabDisabled(): boolean {
+            if (tab === 'plan' || tab === 'highlights') return !isActiveMember && !isOwner && group.myRole !== 'MODERATOR';
             if (tab === 'members') return !isActiveMember && !isOwner && group.myRole !== 'MODERATOR';
             if (tab === 'settings') return !isOwner;
             return false;

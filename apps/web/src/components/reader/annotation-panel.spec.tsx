@@ -2,6 +2,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AnnotationPanel, anchorForItem, pageTextLayer, textForAnchor } from './annotation-panel';
 import type { PdfTextItem } from '../../lib/reader/api';
 
+// The share control performs its own network work; this suite covers the panel,
+// so the child is stubbed. Its own behavior is covered by
+// share-highlight-button.spec.tsx.
+jest.mock('./share-highlight-button', () => ({
+  ShareHighlightButton: () => null,
+}));
+
 const ITEMS: PdfTextItem[] = [
   { t: 'Hello', x: 0.1, y: 0.1, w: 0.2, h: 0.02 },
   { t: 'world', x: 0.35, y: 0.1, w: 0.2, h: 0.02 },

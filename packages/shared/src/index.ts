@@ -19,6 +19,7 @@ export {
   NotificationType,
   ActivityType,
   GoalKind,
+  ReadingPlanStatus,
 } from './enums.js';
 export type {
   RegisterLocalInput,
@@ -40,5 +41,7 @@ export type {
   CursorPaginationInput,
   RecordActivityInput,
   SetReadingGoalInput,
+  CreateGroupReadingPlanInput,
+  ShareHighlightInput,
 } from './schemas/index.js';
 

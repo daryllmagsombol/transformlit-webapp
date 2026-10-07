@@ -48,8 +48,11 @@ export interface BookmarkAddInput {
   readonly bookId: string;
   readonly contentVersion: number;
   readonly page: number;
-  /** Bookmark anchor is nullable (see contracts). */
-  readonly anchor: unknown | null;
+  /**
+   * Bookmark anchor is nullable (see contracts). `unknown` already subsumes
+   * `null`, so it is the coherent arm (Sonar S6571).
+   */
+  readonly anchor: unknown;
 }
 
 export interface BookmarkRemoveInput {

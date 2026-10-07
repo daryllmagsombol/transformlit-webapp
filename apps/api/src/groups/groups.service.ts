@@ -236,7 +236,8 @@ export class GroupsService {
     });
   }
 
-  private async assertCanModerate(groupId: string, actorId: string) {
+  /** Public so sibling domains (e.g. group-features) reuse the same owner/mod gate. */
+  async assertCanModerate(groupId: string, actorId: string) {
     const membership = await this.getMembershipFor(groupId, actorId);
     if (
       membership?.status !== 'ACTIVE' ||

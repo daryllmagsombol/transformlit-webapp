@@ -34,11 +34,8 @@ export function longestStreakFromDays(days: string[]): number {
   let longest = 1;
   let run = 1;
   for (let index = 1; index < sorted.length; index += 1) {
-    if (sorted[index] === shiftDayKey(sorted[index - 1], 1)) {
-      run += 1;
-    } else {
-      run = 1;
-    }
+    const continuesRun = sorted[index] === shiftDayKey(sorted[index - 1], 1);
+    run = continuesRun ? run + 1 : 1;
     longest = Math.max(longest, run);
   }
   return longest;

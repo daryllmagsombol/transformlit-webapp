@@ -106,7 +106,7 @@ const DEFAULT_CONCURRENCY = 4;
  */
 function trimTrailingSlashes(value: string): string {
   let end = value.length;
-  while (end > 0 && value.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  while (end > 0 && (value.codePointAt(end - 1) ?? 0) === 47 /* '/' */) end -= 1;
   return end === value.length ? value : value.slice(0, end);
 }
 

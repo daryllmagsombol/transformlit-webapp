@@ -520,6 +520,23 @@ return { accessToken, refreshToken, user };
 
 ---
 
+## Group features (reading plans + shared highlights) — review decisions
+
+Recorded from the 2026-10 group-features branch review, so these choices are not re-litigated.
+
+- **Auth is reused, never reimplemented.** `GroupsService.getMembershipFor(groupId, userId)` and `GroupsService.assertCanModerate(groupId, actorId)` are the ONLY authorization paths for group-owned content. `assertCanModerate` was changed from `private` to `public` so sibling domains (e.g. `GroupFeaturesService`) reuse it. Do not duplicate membership/role checks — and never authorize against a client-supplied groupId; load the entity and check its own `groupId`.
+- **Group-scoped GraphQL args are `String!`, not `ID!`.** This matches the existing groups API (`group(id: String!)`, `groupPosts(groupId: String!)`). The spec may write `ID!`; the schema emits `String!`. Functionally identical; keep `String!` for consistency.
+- **Derived fields must be attached at the write site.** A mutation that returns a type with `@ResolveField`-derived fields (`expectedPercent`, `members`) must attach them to its result, or each field resolver performs its own extra read. ❌ `return createdRow` (forces a second `getActive` = N more queries). ✅ `return { ...createdRow, expectedPercent, members: [] }`.
+- **Nested non-null GraphQL fields must be flattened on every path.** If a service returns a Prisma join row (`{ highlight: { book: { title } }, sharedBy }`) but the GraphQL type exposes `highlight.bookTitle`, every return path (query AND mutation) must map through the same flatten helper. ❌ returning the raw row from a mutation → `Cannot return null for non-nullable field SharedHighlight.bookTitle`. ✅ map via `toGroupHighlight()` on both.
+- **`$transaction` + "archive the old active row, then create the new one" needs a partial unique index.** Default isolation (READ COMMITTED) has a race where two concurrent creates both succeed. Enforce it in the database and map the violation to a typed error: `CREATE UNIQUE INDEX ... ON "group_reading_plans" ("groupId") WHERE "status" = 'ACTIVE';` then catch P2002 → `ConflictException`. ❌ relying on the `updateMany` alone.
+- **Validate a referenced foreign key before inserting.** A `create({ data: { bookId } })` with an unknown/soft-deleted id surfaces a raw Prisma FK error (P2003) as a 500. Look the row up first and throw `NotFoundException`. ❌ no existence check. ✅ `findUnique({ select: { id, deletedAt } })` then reject.
+- **Scope a bulk read to the caller's actual rows.** Deriving member progress must query `bookProgress` with `userId: { in: memberIds }`, not every reader of the book; only group-member rows are rendered and a popular book can have thousands of unrelated readers. ❌ `where: { bookId }`. ✅ `where: { bookId, userId: { in: memberIds } }`.
+- **A concurrency-loser must be idempotent, not a 500.** `findUnique`-then-`create` against a unique key can lose a race; catch P2002 on the create and **re-read the winner** so a duplicate `share` returns the existing row instead of erroring.
+- **A feed must not serve rows whose source was deleted.** `list()` filtering only the join row's `deletedAt` still serves a share whose `Highlight` was soft-deleted. Filter the relation too: `where: { deletedAt: null, highlight: { deletedAt: null } }`.
+- **`.dockerignore` must not exclude workspace package output.** Adding `**/dist` (or `**/.next`) prunes `packages/shared/dist` and `packages/graphql/dist` from the Docker build context, so the API image build fails with `Module '@transformlit/shared' has no exported member ...`. Keep the bare root `dist`/`.next` entries (they match the context root only). This broke the PWA harness `docker build` on CI.
+
+---
+
 ## Cleanup / Reliability Rules (from the 2026-10 SonarQube backlog)
 
 These appeared en masse on legacy files. Each is mechanical; fix in the same style everywhere.
@@ -544,6 +561,7 @@ These appeared en masse on legacy files. Each is mechanical; fix in the same sty
 | `S7718` | catch param naming | Name a used catch param `error_` (or a descriptive name); use bare `catch` when unused. |
 | `S4624` | Nested template literals | Extract the inner literal/expression to a variable. |
 | `S6594`/`S4030` | `Set` for membership | Use `new Set([...])` + `.has()` instead of array `.includes()`. |
+| `S7758` | "Prefer `String#codePointAt()` over `String#charCodeAt()`" | For a single BMP code-unit comparison, `charCodeAt(i)` → `codePointAt(i)`; it returns `undefined` past the end, so guard the type: ❌ `value.charCodeAt(end - 1) === 47` ✅ `(value.codePointAt(end - 1) ?? 0) === 47`. |
 
 **Never "fix" one of these by changing behavior.** If the asserted type, the pushed order, or the constructor's async timing is load-bearing, stop and report it instead.
 
