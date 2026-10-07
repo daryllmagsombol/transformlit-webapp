@@ -256,7 +256,7 @@ export class ReaderMutationsService {
     }
 
     const receiptId = randomUUID();
-    const result = await this.dispatch(tx, subject, input, receiptId);
+    const result = await this.dispatch(tx, subject, input, receiptId, access.effectivePageCount);
     if (result.kind === 'APPLIED' || result.kind === 'CONFLICT') {
       await tx.readerOperationReceipt.create({
         data: { id: receiptId, subject, operationId: input.operationId, payloadHash, result: result as unknown as Prisma.InputJsonValue },
@@ -309,11 +309,11 @@ export class ReaderMutationsService {
     tx: Prisma.TransactionClient,
     bookId: string,
     subject: string,
-  ): Promise<{ allowed: boolean; reason: string; supportedContentVersions: number[] }> {
+  ): Promise<{ allowed: boolean; reason: string; supportedContentVersions: number[]; effectivePageCount: number | null }> {
     const book = await tx.book.findUnique({ where: { id: bookId } });
-    if (!book || book.deletedAt) return { allowed: false, reason: 'Book not available', supportedContentVersions: [] };
+    if (!book || book.deletedAt) return { allowed: false, reason: 'Book not available', supportedContentVersions: [], effectivePageCount: null };
     const allowed = await this.books.canRead(book, subject, tx);
-    if (!allowed) return { allowed: false, reason: 'You do not have access to this book', supportedContentVersions: [] };
+    if (!allowed) return { allowed: false, reason: 'You do not have access to this book', supportedContentVersions: [], effectivePageCount: null };
 
     const versions = await tx.bookContentVersion.findMany({
       where: { bookId },
@@ -321,7 +321,8 @@ export class ReaderMutationsService {
     });
     const supported = new Set<number>(versions.map((row) => row.contentVersion));
     supported.add(book.contentVersion);
-    return { allowed: true, reason: '', supportedContentVersions: [...supported].sort((a, b) => a - b) };
+    const effectivePageCount = book.conversionStatus === 'READY' ? book.pageCount : book.totalPages;
+    return { allowed: true, reason: '', supportedContentVersions: [...supported].sort((a, b) => a - b), effectivePageCount: effectivePageCount ?? null };
   }
 
   private async dispatch(
@@ -329,10 +330,11 @@ export class ReaderMutationsService {
     subject: string,
     input: NormalizedOperation,
     receiptId: string,
+    effectivePageCount: number | null,
   ): Promise<OperationResultPayload> {
     switch (input.kind) {
       case OperationKind.PROGRESS_SET:
-        return this.applyProgress(tx, subject, input, receiptId);
+        return this.applyProgress(tx, subject, input, receiptId, effectivePageCount);
       case OperationKind.BOOKMARK_ADD:
         return this.applyBookmarkAdd(tx, subject, input, receiptId);
       case OperationKind.BOOKMARK_REMOVE:
@@ -355,8 +357,10 @@ export class ReaderMutationsService {
     subject: string,
     input: NormalizedOperation,
     receiptId: string,
+    effectivePageCount: number | null,
   ): Promise<OperationResultPayload> {
     const baseRevision = input.baseRevision;
+    const completedAt = this.completedAtFor(input.currentPage, effectivePageCount);
     const existing = await tx.bookProgress.findUnique({
       where: { userId_bookId: { userId: subject, bookId: input.bookId } },
     });
@@ -368,7 +372,7 @@ export class ReaderMutationsService {
       // Conditional create: a concurrent create loses the (userId, bookId)
       // unique constraint and is reconciled through the receipt replay path.
       const created = await tx.bookProgress.create({
-        data: { userId: subject, bookId: input.bookId, currentPage: input.currentPage, scrollY: input.scrollY, revision: 1 },
+        data: { userId: subject, bookId: input.bookId, currentPage: input.currentPage, scrollY: input.scrollY, completedAt, revision: 1 },
       });
       return { kind: 'APPLIED', entityId: created.id, revision: created.revision, receiptId };
     }
@@ -380,11 +384,21 @@ export class ReaderMutationsService {
     // DB-conditional write: only advances if the revision is still baseRevision.
     const result = await tx.bookProgress.updateMany({
       where: { id: existing.id, userId: subject, revision: baseRevision },
-      data: { currentPage: input.currentPage, scrollY: input.scrollY, lastReadAt: new Date(), revision: { increment: 1 } },
+      data: { currentPage: input.currentPage, scrollY: input.scrollY, lastReadAt: new Date(), completedAt, revision: { increment: 1 } },
     });
     if (result.count === 0) return this.staleProgressConflict(tx, subject, input);
 
     return { kind: 'APPLIED', entityId: existing.id, revision: baseRevision + 1, receiptId };
+  }
+
+  /**
+   * Completion marker for a progress write: `now()` once the reader reaches the
+   * effective page count, cleared on a later regression below it, and null when
+   * the book has no known page count (so completion stats never guess).
+   */
+  private completedAtFor(currentPage: number | null, effectivePageCount: number | null): Date | null {
+    if (effectivePageCount === null || currentPage === null) return null;
+    return currentPage >= effectivePageCount ? new Date() : null;
   }
 
   private async staleProgressConflict(

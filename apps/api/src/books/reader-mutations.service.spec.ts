@@ -285,6 +285,54 @@ describe('ReaderMutationsService', () => {
     });
   });
 
+  describe('completion tracking (completedAt)', () => {
+    it('sets completedAt when a write reaches the effective page count', async () => {
+      const { service, state } = build();
+      state.book[BOOK_ID].pageCount = 10;
+      const outcome = await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 0, currentPage: 10, scrollY: null } as never));
+      expect(outcome.result.kind).toBe('APPLIED');
+      expect(state.bookProgress[0].completedAt).toBeInstanceOf(Date);
+    });
+
+    it('clears completedAt when a later write lowers currentPage below the count', async () => {
+      const { service, state } = build();
+      state.book[BOOK_ID].pageCount = 10;
+      await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 0, currentPage: 10, scrollY: null } as never));
+      expect(state.bookProgress[0].completedAt).toBeInstanceOf(Date);
+      await service.applyOperation(SUBJECT, {
+        ...baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 1, currentPage: 4, scrollY: null } as never),
+        operationId: OTHER_CLIENT_ID,
+      } as never);
+      expect(state.bookProgress[0].completedAt).toBeNull();
+    });
+
+    it('leaves completedAt null for a mid-book write', async () => {
+      const { service, state } = build();
+      state.book[BOOK_ID].pageCount = 10;
+      const outcome = await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 0, currentPage: 5, scrollY: null } as never));
+      expect(outcome.result.kind).toBe('APPLIED');
+      expect(state.bookProgress[0].completedAt).toBeNull();
+    });
+
+    it('leaves completedAt null when the book has no page count', async () => {
+      const { service, state } = build();
+      delete state.book[BOOK_ID].pageCount;
+      delete state.book[BOOK_ID].totalPages;
+      const outcome = await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 0, currentPage: 999, scrollY: null } as never));
+      expect(outcome.result.kind).toBe('APPLIED');
+      expect(state.bookProgress[0].completedAt).toBeNull();
+    });
+
+    it('uses totalPages as the effective count when conversion is not READY', async () => {
+      const { service, state } = build();
+      state.book[BOOK_ID].conversionStatus = 'PROCESSING';
+      state.book[BOOK_ID].pageCount = 99;
+      state.book[BOOK_ID].totalPages = 8;
+      await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 0, currentPage: 8, scrollY: null } as never));
+      expect(state.bookProgress[0].completedAt).toBeInstanceOf(Date);
+    });
+  });
+
   describe('idempotency and receipts', () => {
     it('returns the stored result for a replay of the same operation id and payload', async () => {
       const { service, state } = build();
