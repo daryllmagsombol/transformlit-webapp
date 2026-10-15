@@ -1484,4 +1484,12 @@ Review of Task 9 (`apps/api/src/admin/admin.resolver.ts`) accepted two findings 
 ❌ `return { ...pageResult, page, pageSize };` — echoes the raw args, so `pageSize: 500` reports 500 while the service took 100.
 ✅ Echo the effective window (clamp `page = Math.max(page, 1)`, `pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE)` before returning) or explicitly document that the echoed values are the *requested* window, not the applied one.
 
+### ADM-31 — Concurrency tests must assert the invariant, not the winning interleaving
+
+`AdminUsersService.setRole`/`setStatus` enforce the "last active admin" predicate inside a `Serializable` transaction with a single `P2034` retry. An integration test that drives two concurrent demote/suspend attempts **cannot** assert which call wins or which error the loser throws: depending on interleaving the loser either sees `ConflictException` (its predicate re-read happens after the winner committed) or a raw `P2034` serialization abort (both transactions abort and the bounded retry is exhausted). Pinning a specific winner/error type is timing-flaky and would fail spuriously in CI.
+
+❌ `await expect(attemptA).resolves.toBeDefined(); await expect(attemptB).rejects.toBeInstanceOf(ConflictException);` — one interleaving passes, the other rejects with `P2034`.
+
+✅ Drive both with `Promise.allSettled`, then assert the durable invariant only: at least one rejected, at most one fulfilled, and `prisma.user.count({ where: { role: ADMIN, status: ACTIVE, deletedAt: null } }) >= 1` — so the test fails precisely when the invariant is actually violated, never on scheduling. Covered by `apps/api/test/admin-authz.integration.spec.ts` (GraphQL-layer guard proof for ADM-15/ADM-17; still needs registration in the `.github/workflows/opencode-review.yml` hardcoded integration list — Task 12).
+
 
