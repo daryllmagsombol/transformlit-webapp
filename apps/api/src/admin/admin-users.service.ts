@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -75,6 +76,8 @@ export class AdminUsersService {
     private readonly readerSession: ReaderSessionService,
   ) {}
 
+  private readonly logger = new Logger(AdminUsersService.name);
+
   /** Page of admin users (email + status included), newest first. */
   async list(
     filter: AdminUsersFilter,
@@ -135,11 +138,11 @@ export class AdminUsersService {
       this.applyStatusChange(tx, userId, status),
     );
 
-    if (status === UserStatus.SUSPENDED) {
-      await this.authService.revokeAllSessionsForUser(userId);
-      await this.readerSession.revokeAllForUser(userId);
-    }
-
+    // The status change is committed, so its audit row must always be written
+    // *before* any side effect that can fail (ADM-8, ADM-28). Revocation is
+    // security-critical, so a failure is logged and rethrown — never silently
+    // swallowed, which would leave a suspended user with live sessions while
+    // reporting success.
     await this.audit.record({
       actorId,
       action: AuditAction.USER_STATUS_CHANGED,
@@ -148,8 +151,25 @@ export class AdminUsersService {
       payload: { status },
     });
 
+    if (status === UserStatus.SUSPENDED) {
+      await this.revokeUserSessions(userId);
+    }
+
     const [adminUser] = await this.buildAdminUsers([updated]);
     return adminUser;
+  }
+
+  /** Revokes all refresh families and reading sessions for a suspended user. */
+  private async revokeUserSessions(userId: string): Promise<void> {
+    try {
+      await this.authService.revokeAllSessionsForUser(userId);
+      await this.readerSession.revokeAllForUser(userId);
+    } catch (error) {
+      this.logger.error(
+        `Failed to revoke sessions for suspended user ${userId}: ${(error as Error).message}`,
+      );
+      throw error;
+    }
   }
 
   private async applyRoleChange(

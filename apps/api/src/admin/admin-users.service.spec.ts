@@ -138,6 +138,9 @@ describe('AdminUsersService', () => {
 
       await service.setRole('admin-1', UserRole.MEMBER, 'actor-1');
 
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: 'Serializable',
+      });
       expect(tx.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'admin-1' },
@@ -257,6 +260,9 @@ describe('AdminUsersService', () => {
 
       await service.setStatus('user-1', UserStatus.SUSPENDED, 'actor-1');
 
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: 'Serializable',
+      });
       expect(authService.revokeAllSessionsForUser).toHaveBeenCalledWith('user-1');
       expect(readerSession.revokeAllForUser).toHaveBeenCalledWith('user-1');
       expect(audit.record).toHaveBeenCalledWith(
@@ -266,6 +272,36 @@ describe('AdminUsersService', () => {
           targetType: 'USER',
           targetId: 'user-1',
         }),
+      );
+      // The committed status change is audited before any side effect runs.
+      expect(audit.record.mock.invocationCallOrder[0]).toBeLessThan(
+        authService.revokeAllSessionsForUser.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('still records USER_STATUS_CHANGED when revocation fails, then rejects', async () => {
+      const tx = makeTx({
+        activeAdmins: 3,
+        target: { id: 'user-1', role: UserRole.MEMBER, status: UserStatus.ACTIVE },
+        updated: userRow({ id: 'user-1', status: UserStatus.SUSPENDED }),
+      });
+      runTxWith(tx);
+      authService.revokeAllSessionsForUser.mockRejectedValue(
+        new Error('session store down'),
+      );
+
+      await expect(
+        service.setStatus('user-1', UserStatus.SUSPENDED, 'actor-1'),
+      ).rejects.toThrow('session store down');
+
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'USER_STATUS_CHANGED',
+          targetId: 'user-1',
+        }),
+      );
+      expect(audit.record.mock.invocationCallOrder[0]).toBeLessThan(
+        authService.revokeAllSessionsForUser.mock.invocationCallOrder[0],
       );
     });
 
@@ -280,6 +316,7 @@ describe('AdminUsersService', () => {
         service.setStatus('admin-1', UserStatus.SUSPENDED, 'actor-1'),
       ).rejects.toThrow(/last active admin/i);
 
+      expect(tx.user.update).not.toHaveBeenCalled();
       expect(authService.revokeAllSessionsForUser).not.toHaveBeenCalled();
       expect(readerSession.revokeAllForUser).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();

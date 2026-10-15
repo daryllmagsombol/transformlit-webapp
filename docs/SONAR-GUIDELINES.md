@@ -1444,3 +1444,11 @@ Task 14 added `getSidebarNavItems(role)` and a role-restricted `ADMIN_NAV_ITEM`,
 ❌ `const items: AdminUser[] = rows.map((row) => ({ ...row, groupCount }))` where `row.role` is `$Enums.UserRole` and `AdminUser.role` is the shared `UserRole`.
 ✅ Cast at the boundary — the runtime values are identical strings, so the cast only reconciles the two type systems: `{ ...row, role: row.role as UserRole, status: row.status as UserStatus, groupCount }`.
 
+### ADM-28 — Best-effort post-commit work must never gate the audit row for a committed change
+
+`AdminUsersService.setStatus` committed the status write, then ran two session-revocation `updateMany` calls, and wrote the `USER_STATUS_CHANGED` audit row **last**. A revocation failure rejected the mutation although the status was already persisted, left reading sessions live, and skipped the audit row for a change that committed. ADM-8 makes audit best-effort, but "best-effort" means "always attempted after commit", not "conditional on unrelated side effects succeeding". Record the audit row first, then run the post-commit side effects; revocation is security-critical, so log its failure at error level and rethrow (never silently swallow it).
+
+❌ `tx = commit(); await revokeAllSessionsForUser(...); await revokeAllForUser(...); await audit.record(...)` — a revocation throw loses the audit row and reports failure for a persisted suspension.
+✅ `tx = commit(); await audit.record(...); try { revoke... } catch (e) { logger.error(...); throw e; }` — the committed change is always audited; a revocation failure is surfaced, not hidden.
+
+
