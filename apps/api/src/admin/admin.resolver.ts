@@ -9,6 +9,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/guards/roles.guard.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
+import { clampPageWindow } from '../common/pagination.js';
 import {
   AdminUser,
   AdminUserPage,
@@ -58,11 +59,16 @@ export class AdminResolver {
     @Args('page', { type: () => Int, defaultValue: 1 }) page = 1,
     @Args('pageSize', { type: () => Int, defaultValue: 25 }) pageSize = 25,
   ) {
-    const pageResult = await this.adminUsersService.list(filter ?? {}, page, pageSize);
-    // The service returns `{ items, total }`; the GraphQL type declares the
-    // requested page window, so echo it back here rather than widening the
-    // service's return shape (ADM-14).
-    return { ...pageResult, page, pageSize };
+    const window = clampPageWindow(page, pageSize);
+    const pageResult = await this.adminUsersService.list(
+      filter ?? {},
+      window.page,
+      window.pageSize,
+    );
+    // Echo the *effective* window (the services clamp page >= 1, pageSize <=
+    // 100), never the raw request — otherwise a `pageSize: 500` response would
+    // claim 500 while at most 100 items come back (ADM-30b).
+    return { ...pageResult, ...window };
   }
 
   @Query(() => AuditLogPage, { name: 'auditLogs' })
@@ -73,12 +79,12 @@ export class AdminResolver {
     @Args('page', { type: () => Int, defaultValue: 1 }) page = 1,
     @Args('pageSize', { type: () => Int, defaultValue: 25 }) pageSize = 25,
   ) {
-    const { items, total } = await this.audit.list(filter ?? {}, page, pageSize);
+    const window = clampPageWindow(page, pageSize);
+    const { items, total } = await this.audit.list(filter ?? {}, window.page, window.pageSize);
     return {
       items: await this.attachActors(items),
       total,
-      page,
-      pageSize,
+      ...window,
     };
   }
 

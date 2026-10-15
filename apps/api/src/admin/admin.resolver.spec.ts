@@ -161,6 +161,17 @@ describe('AdminResolver', () => {
       await resolver.adminUsers(undefined, 1, 25);
       expect(adminUsers.list).toHaveBeenCalledWith({}, 1, 25);
     });
+
+    it('echoes the effective window, not the raw request (ADM-30b)', async () => {
+      const result = await resolver.adminUsers(undefined, 0, 500);
+      expect(adminUsers.list).toHaveBeenCalledWith({}, 1, 100);
+      expect(result).toEqual({
+        items: [mockAdminUser],
+        total: 1,
+        page: 1,
+        pageSize: 100,
+      });
+    });
   });
 
   describe('auditLogs', () => {
@@ -192,6 +203,13 @@ describe('AdminResolver', () => {
 
       expect(prisma.user.findMany).not.toHaveBeenCalled();
       expect(result.items[0].actor).toBeNull();
+    });
+
+    it('echoes the effective window, not the raw request (ADM-30b)', async () => {
+      const result = await resolver.auditLogs(undefined, 0, 500);
+      expect(audit.list).toHaveBeenCalledWith({}, 1, 100);
+      expect(result.page).toBe(1);
+      expect(result.pageSize).toBe(100);
     });
   });
 

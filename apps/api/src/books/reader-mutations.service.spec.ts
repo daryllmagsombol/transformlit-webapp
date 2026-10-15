@@ -306,6 +306,21 @@ describe('ReaderMutationsService', () => {
       expect(state.bookProgress[0].completedAt).toBeNull();
     });
 
+    it('preserves the first completedAt when a later sync is still at the last page (ADM-38)', async () => {
+      const { service, state } = build();
+      state.book[BOOK_ID].pageCount = 10;
+      await service.applyOperation(SUBJECT, baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 0, currentPage: 10, scrollY: null } as never));
+      const firstCompletion = state.bookProgress[0].completedAt as Date;
+      expect(firstCompletion).toBeInstanceOf(Date);
+
+      await service.applyOperation(SUBJECT, {
+        ...baseInput({ kind: OperationKind.PROGRESS_SET, baseRevision: 1, currentPage: 10, scrollY: 40 } as never),
+        operationId: OTHER_CLIENT_ID,
+      } as never);
+
+      expect(state.bookProgress[0].completedAt).toBe(firstCompletion);
+    });
+
     it('leaves completedAt null for a mid-book write', async () => {
       const { service, state } = build();
       state.book[BOOK_ID].pageCount = 10;

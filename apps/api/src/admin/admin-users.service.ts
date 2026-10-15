@@ -11,8 +11,8 @@ import { AuditService } from '../audit/audit.service.js';
 import { AuditAction } from '../audit/audit-actions.js';
 import { AuthService } from '../auth/auth.service.js';
 import { ReaderSessionService } from '../books/reader-session.service.js';
+import { MAX_PAGE_SIZE } from '../common/pagination.js';
 
-const MAX_PAGE_SIZE = 100;
 /** Retries after the first serialization abort (2 attempts total). */
 const MAX_SERIALIZABLE_RETRIES = 1;
 

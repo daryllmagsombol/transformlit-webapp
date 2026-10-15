@@ -1,8 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { AuditLog, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
-
-const MAX_PAGE_SIZE = 100;
+import { MAX_PAGE_SIZE } from '../common/pagination.js';
 
 export interface RecordAuditInput {
   actorId: string;

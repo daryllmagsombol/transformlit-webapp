@@ -140,6 +140,7 @@ export class AuthService {
     const tokenHash = this.hashToken(refreshToken);
     const stored = await this.prisma.refreshToken.findUnique({
       where: { tokenHash },
+      include: { user: { select: { status: true } } },
     });
 
     if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
@@ -163,6 +164,14 @@ export class AuthService {
         }
       }
       throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    // ADM-29(a): status-gate the rotation so a suspension is enforced even if the
+    // revocation `updateMany` raced with this transaction or failed. This makes
+    // the invariant independent of revocation timing (the access token minted
+    // here would already be inert, but we must not mint at all).
+    if (stored.user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException('Account is suspended');
     }
 
     // Rotate: guard-revoke old + issue new in a single transaction (same family).

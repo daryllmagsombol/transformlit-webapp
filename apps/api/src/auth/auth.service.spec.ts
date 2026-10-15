@@ -345,6 +345,7 @@ describe('AuthService', () => {
       tokenHash: 'mock-token-hash',
       revokedAt: null,
       expiresAt: new Date(Date.now() + 86400000),
+      user: { status: 'ACTIVE' },
     };
 
     beforeEach(() => {
@@ -360,7 +361,21 @@ describe('AuthService', () => {
       await service.refreshTokens('some-refresh-token');
       expect(prisma.refreshToken.findUnique).toHaveBeenCalledWith({
         where: { tokenHash: 'mock-token-hash' },
+        include: { user: { select: { status: true } } },
       });
+    });
+
+    it('rejects a live token whose owner is SUSPENDED (ADM-29a)', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        ...validStored,
+        user: { status: UserStatus.SUSPENDED },
+      });
+      await expect(service.refreshTokens('valid-token')).rejects.toThrow(
+        UnauthorizedException,
+      );
+      // No rotation may occur once the owner is not ACTIVE.
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(mockTx.refreshToken.create).not.toHaveBeenCalled();
     });
 
     it('should throw UnauthorizedException if token not found', async () => {
@@ -855,6 +870,7 @@ describe('AuthService', () => {
         tokenHash: 'mock-token-hash',
         revokedAt: null,
         expiresAt: new Date(Date.now() + 86400000),
+        user: { status: UserStatus.ACTIVE },
       });
       const result = await service.refreshTokens('valid-token');
       assertPublicShape(result.user);

@@ -360,10 +360,16 @@ export class ReaderMutationsService {
     effectivePageCount: number | null,
   ): Promise<OperationResultPayload> {
     const baseRevision = input.baseRevision;
-    const completedAt = this.completedAtFor(input.currentPage, effectivePageCount);
     const existing = await tx.bookProgress.findUnique({
       where: { userId_bookId: { userId: subject, bookId: input.bookId } },
     });
+    // Preserve the FIRST completion time: a later sync that is still at the last
+    // page must not drift `completedAt` forward (ADM-38).
+    const completedAt = this.completedAtFor(
+      input.currentPage,
+      effectivePageCount,
+      existing?.completedAt ?? null,
+    );
 
     if (!existing) {
       if (baseRevision !== 0) {
@@ -392,13 +398,19 @@ export class ReaderMutationsService {
   }
 
   /**
-   * Completion marker for a progress write: `now()` once the reader reaches the
-   * effective page count, cleared on a later regression below it, and null when
-   * the book has no known page count (so completion stats never guess).
+   * Completion marker for a progress write: the first `now()` once the reader
+   * reaches the effective page count (reused on later syncs so it never drifts),
+   * cleared on a later regression below it, and null when the book has no known
+   * page count (so completion stats never guess).
    */
-  private completedAtFor(currentPage: number | null, effectivePageCount: number | null): Date | null {
+  private completedAtFor(
+    currentPage: number | null,
+    effectivePageCount: number | null,
+    previousCompletedAt: Date | null,
+  ): Date | null {
     if (effectivePageCount === null || currentPage === null) return null;
-    return currentPage >= effectivePageCount ? new Date() : null;
+    if (currentPage < effectivePageCount) return null;
+    return previousCompletedAt ?? new Date();
   }
 
   private async staleProgressConflict(
