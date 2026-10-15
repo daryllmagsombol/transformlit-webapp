@@ -311,7 +311,7 @@ describe('BooksResolver', () => {
         bookTocEntry: { findMany: jest.fn().mockResolvedValue(entries) },
       };
       const gatedResolver = new BooksResolver(
-        new BooksService(prisma as never, {} as never, {} as never),
+        new BooksService(prisma as never, {} as never, {} as never, { record: jest.fn() } as never),
         readerMutations as never,
       );
 
@@ -341,7 +341,7 @@ describe('BooksResolver', () => {
         bookTocEntry: { findMany: jest.fn() },
       };
       const gatedResolver = new BooksResolver(
-        new BooksService(prisma as never, {} as never, {} as never),
+        new BooksService(prisma as never, {} as never, {} as never, { record: jest.fn() } as never),
         readerMutations as never,
       );
       const parent = {

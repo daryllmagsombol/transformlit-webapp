@@ -62,10 +62,17 @@ describe('AuthController (REST httpOnly cookie flows)', () => {
     it('sets the refresh httpOnly cookie and returns { accessToken, user } with NO refreshToken', async () => {
       const res = createRes();
       const body = { email: 'test@example.com', password: 'password123' };
+      const req = {
+        ip: '203.0.113.7',
+        headers: { 'user-agent': 'jest-agent' },
+      } as unknown as Request;
 
-      const result = await controller.login(body, res);
+      const result = await controller.login(body, res, req);
 
-      expect(authService.loginLocal).toHaveBeenCalledWith(body);
+      expect(authService.loginLocal).toHaveBeenCalledWith(body, {
+        ip: '203.0.113.7',
+        userAgent: 'jest-agent',
+      });
       expect(res.cookie).toHaveBeenCalledWith(
         REFRESH_COOKIE_NAME,
         'raw-refresh-token-1',
@@ -127,7 +134,10 @@ describe('AuthController (REST httpOnly cookie flows)', () => {
 
       const result = await controller.refresh(req, res);
 
-      expect(authService.refreshTokens).toHaveBeenCalledWith('raw-refresh-token-1');
+      expect(authService.refreshTokens).toHaveBeenCalledWith('raw-refresh-token-1', {
+        ip: undefined,
+        userAgent: undefined,
+      });
       expect(res.cookie).toHaveBeenCalledWith(
         REFRESH_COOKIE_NAME,
         'raw-refresh-token-1',
@@ -176,7 +186,10 @@ describe('AuthController (REST httpOnly cookie flows)', () => {
       } as unknown as Request;
       const result = await controller.logout(req, res);
 
-      expect(authService.logout).toHaveBeenCalledWith('raw-refresh-token-1');
+      expect(authService.logout).toHaveBeenCalledWith('raw-refresh-token-1', {
+        ip: undefined,
+        userAgent: undefined,
+      });
       expect(res.clearCookie).toHaveBeenCalledWith(
         REFRESH_COOKIE_NAME,
         expect.objectContaining({
