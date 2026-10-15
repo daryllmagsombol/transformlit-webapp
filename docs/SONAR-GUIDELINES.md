@@ -1431,3 +1431,8 @@ the linter/compiler rather than leaving unused symbols "for symmetry".
 ❌ Implement `audit.record({ action: BOOK_UPLOADED, ... })` and `{ action: BOOK_DELETED, ... }` but only test `BOOK_UPDATED`.
 ✅ Add assertions that `uploadBookFile`/`deleteBook` record `BOOK_UPLOADED`/`BOOK_DELETED` with the correct `targetType`/`targetId`, and that a throwing mutation records nothing.
 
+### ADM-26 — A role-filtered helper is useless until it is wired into the renderer
+Task 14 added `getSidebarNavItems(role)` and a role-restricted `ADMIN_NAV_ITEM`, but `sidebar.tsx` still mapped the raw `SIDEBAR_NAV_ITEMS`, so every authenticated user — including `MEMBER` — saw the Admin link. A filter that no component consumes defeats the UX gate it implements; the unit-tested helper alone (constants.spec) never proved the rendered sidebar was filtered.
+
+❌ `import { SIDEBAR_NAV_ITEMS } from '../../lib/constants'; ... {SIDEBAR_NAV_ITEMS.map((item) => <NavItem ... />)}` — Admin leaks to all roles even though `getSidebarNavItems` exists and is tested.
+✅ Read the role from the same store the rest of the shell uses and render through the helper: `const role = useAuthStore((s) => s.user?.role); const navItems = getSidebarNavItems(role); ... {navItems.map((item) => <NavItem ... />)}` — plus a component test asserting Admin renders for `ADMIN`/`MODERATOR` and is absent for `MEMBER`/no-user.

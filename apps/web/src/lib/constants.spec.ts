@@ -1,3 +1,11 @@
+// The web Jest harness cannot transform the ESM `@transformlit/shared` dist
+// (existing web specs only ever `import type`). The enum is consumed at runtime
+// here, so it is mocked with its real string values.
+jest.mock('@transformlit/shared', () => ({
+  UserRole: { ADMIN: 'ADMIN', MODERATOR: 'MODERATOR', MEMBER: 'MEMBER' },
+}));
+
+import { UserRole } from '@transformlit/shared';
 import {
   CATEGORY_CONFIG,
   getCategoryConfig,
@@ -7,11 +15,12 @@ import {
   QUICK_TRACK_CHAPTERS,
   SIDEBAR_NAV_ITEMS,
   BOTTOM_NAV_ITEMS,
+  getSidebarNavItems,
 } from './constants';
 
 describe('SIDEBAR_NAV_ITEMS', () => {
-  it('has the expected number of items', () => {
-    expect(SIDEBAR_NAV_ITEMS).toHaveLength(7);
+  it('has the expected number of items including the role-restricted Admin entry', () => {
+    expect(SIDEBAR_NAV_ITEMS).toHaveLength(8);
   });
 
   it.each(SIDEBAR_NAV_ITEMS)('$label has label, href, and icon', (item) => {
@@ -20,15 +29,60 @@ describe('SIDEBAR_NAV_ITEMS', () => {
     expect(item.icon).toBeTruthy();
   });
 
-  it('contains Feed, Bible, Friends, Chat, Groups, Books, and Downloads', () => {
+  it('contains Feed, Bible, Friends, Chat, Groups, Books, Downloads, and Admin', () => {
     const labels = SIDEBAR_NAV_ITEMS.map((i) => i.label);
-    expect(labels).toEqual(['Feed', 'Bible', 'Friends', 'Chat', 'Groups', 'Books', 'Downloads']);
+    expect(labels).toEqual([
+      'Feed',
+      'Bible',
+      'Friends',
+      'Chat',
+      'Groups',
+      'Books',
+      'Downloads',
+      'Admin',
+    ]);
+  });
+
+  it('restricts the Admin entry to ADMIN and MODERATOR', () => {
+    const admin = SIDEBAR_NAV_ITEMS.find((i) => i.href === '/admin');
+    expect(admin).toBeDefined();
+    expect(admin?.roles).toEqual([UserRole.ADMIN, UserRole.MODERATOR]);
   });
 });
 
 describe('BOTTOM_NAV_ITEMS', () => {
-  it('is the same as SIDEBAR_NAV_ITEMS', () => {
-    expect(BOTTOM_NAV_ITEMS).toBe(SIDEBAR_NAV_ITEMS);
+  it('is not an alias of SIDEBAR_NAV_ITEMS and keeps the 7 non-restricted items', () => {
+    expect(BOTTOM_NAV_ITEMS).not.toBe(SIDEBAR_NAV_ITEMS);
+    expect(BOTTOM_NAV_ITEMS).toHaveLength(7);
+  });
+
+  it('does not inherit the sidebar-only Admin entry', () => {
+    expect(BOTTOM_NAV_ITEMS.map((i) => i.href)).not.toContain('/admin');
+  });
+});
+
+describe('getSidebarNavItems', () => {
+  it('includes the Admin entry for an ADMIN', () => {
+    const items = getSidebarNavItems(UserRole.ADMIN);
+    expect(items).toHaveLength(8);
+    expect(items.map((i) => i.href)).toContain('/admin');
+  });
+
+  it('includes the Admin entry for a MODERATOR', () => {
+    const items = getSidebarNavItems(UserRole.MODERATOR);
+    expect(items).toHaveLength(8);
+    expect(items.map((i) => i.href)).toContain('/admin');
+  });
+
+  it('excludes the Admin entry for a MEMBER', () => {
+    const items = getSidebarNavItems(UserRole.MEMBER);
+    expect(items).toHaveLength(7);
+    expect(items.map((i) => i.href)).not.toContain('/admin');
+  });
+
+  it('excludes role-restricted entries when no role is known', () => {
+    expect(getSidebarNavItems()).toHaveLength(7);
+    expect(getSidebarNavItems(null)).toHaveLength(7);
   });
 });
 
