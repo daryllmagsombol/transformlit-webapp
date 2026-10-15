@@ -55,4 +55,16 @@ describe('ReaderSessionService', () => {
     prisma.readingSession.updateMany.mockResolvedValue({ count: 2 });
     expect(await service.revokeAll('user-1', 'book-1')).toBe(2);
   });
+
+  it('revokes every session for a user across all books', async () => {
+    prisma.readingSession.updateMany.mockResolvedValue({ count: 4 });
+
+    const count = await service.revokeAllForUser('user-1');
+
+    expect(prisma.readingSession.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'user-1', revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(count).toBe(4);
+  });
 });

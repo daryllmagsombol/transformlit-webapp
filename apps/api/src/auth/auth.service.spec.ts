@@ -538,6 +538,26 @@ describe('AuthService', () => {
     });
   });
 
+  describe('revokeAllSessionsForUser', () => {
+    it('revokes every live refresh family for the user, regardless of family', async () => {
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 3 });
+
+      const count = await service.revokeAllSessionsForUser('user-1');
+
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+      expect(count).toBe(3);
+    });
+
+    it('is a no-op returning 0 when the user has no live sessions', async () => {
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.revokeAllSessionsForUser('user-1')).resolves.toBe(0);
+    });
+  });
+
   describe('findOrCreateOAuthUser', () => {
     const profile = {
       provider: 'google',

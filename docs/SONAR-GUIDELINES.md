@@ -1436,3 +1436,11 @@ Task 14 added `getSidebarNavItems(role)` and a role-restricted `ADMIN_NAV_ITEM`,
 
 ❌ `import { SIDEBAR_NAV_ITEMS } from '../../lib/constants'; ... {SIDEBAR_NAV_ITEMS.map((item) => <NavItem ... />)}` — Admin leaks to all roles even though `getSidebarNavItems` exists and is tested.
 ✅ Read the role from the same store the rest of the shell uses and render through the helper: `const role = useAuthStore((s) => s.user?.role); const navItems = getSidebarNavItems(role); ... {navItems.map((item) => <NavItem ... />)}` — plus a component test asserting Admin renders for `ADMIN`/`MODERATOR` and is absent for `MEMBER`/no-user.
+
+### ADM-27 — Prisma enum unions are not assignable to the shared TS enums; cast at the projection boundary
+
+`@prisma/client` generates each enum as a string-literal union (`$Enums.UserRole = 'ADMIN' | 'MODERATOR' | 'MEMBER'`), which is **not** assignable to the nominal TypeScript `enum` in `@transformlit/shared`. Writing a shared-enum value into a Prisma `data` input compiles, but projecting a Prisma row into a shared-enum DTO (e.g. `AdminUser.role: UserRole`) fails `tsc` with `Type '"ADMIN"' is not assignable to type 'UserRole'`. Reconcile the generated union with the shared enum explicitly at the persistence boundary instead of widening the DTO to Prisma's types.
+
+❌ `const items: AdminUser[] = rows.map((row) => ({ ...row, groupCount }))` where `row.role` is `$Enums.UserRole` and `AdminUser.role` is the shared `UserRole`.
+✅ Cast at the boundary — the runtime values are identical strings, so the cast only reconciles the two type systems: `{ ...row, role: row.role as UserRole, status: row.status as UserStatus, groupCount }`.
+

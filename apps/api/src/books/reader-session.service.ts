@@ -53,4 +53,13 @@ export class ReaderSessionService {
     });
     return result.count;
   }
+
+  /** Revokes every reading session for a user across all books. */
+  async revokeAllForUser(userId: string): Promise<number> {
+    const result = await this.prisma.readingSession.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return result.count;
+  }
 }

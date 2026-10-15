@@ -211,6 +211,19 @@ export class AuthService {
     });
   }
 
+  /**
+   * Revokes every refresh-token family for a user, invalidating all of their
+   * active sessions. Used when an admin suspends an account. Idempotent: an
+   * account with no live tokens is a successful no-op.
+   */
+  async revokeAllSessionsForUser(userId: string): Promise<number> {
+    const result = await this.prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return result.count;
+  }
+
   async findOrCreateOAuthUser(
     profile: {
       provider: string;
