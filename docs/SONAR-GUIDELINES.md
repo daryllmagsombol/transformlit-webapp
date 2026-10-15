@@ -1492,4 +1492,11 @@ Review of Task 9 (`apps/api/src/admin/admin.resolver.ts`) accepted two findings 
 
 ✅ Drive both with `Promise.allSettled`, then assert the durable invariant only: at least one rejected, at most one fulfilled, and `prisma.user.count({ where: { role: ADMIN, status: ACTIVE, deletedAt: null } }) >= 1` — so the test fails precisely when the invariant is actually violated, never on scheduling. Covered by `apps/api/test/admin-authz.integration.spec.ts` (GraphQL-layer guard proof for ADM-15/ADM-17; still needs registration in the `.github/workflows/opencode-review.yml` hardcoded integration list — Task 12).
 
+### ADM-32 — `beforeEach` must isolate mutable side-effect rows, not just the entity under test
+
+Review of Task 13 found the suspension integration test's "all refresh tokens revoked" assertion was **vacuous**: an earlier test (`restricts adminSetUserStatus to ADMIN`) had already suspended the same member through the same service path, revoking every unrevoked `refreshToken` row. `beforeEach` reset the user's `role`/`status` but never cleared or re-minted `refreshToken` rows, and the suspension test itself minted none. So the assertion passed on rows a *previous* test revoked — a regression that dropped `authService.revokeAllSessionsForUser` (while keeping `readerSession.revokeAllForUser`) would still pass. Reset a mutable side-effect table in `beforeEach` **and** establish the asserted state inside the test with a non-vacuous precondition.
+
+❌ `beforeEach` resets the user but leaves `refreshToken` rows; test asserts `refreshTokens.every((t) => t.revokedAt !== null)` against tokens a prior test already revoked.
+✅ `beforeEach` runs `prisma.refreshToken.deleteMany({ where: { userId: { in: managedUserIds } } })`, then the test mints one token through the real login flow and asserts `expect(row.revokedAt).toBeNull()` *before* the action and `not.toBeNull()` *after* (and `toHaveLength(1)`), so only the code under test can satisfy it. Neutering `revokeAllSessionsForUser` now fails the test.
+
 

@@ -7,6 +7,7 @@ import {
 import request from 'supertest';
 import cookieParser from 'cookie-parser';
 import { graphqlUploadExpress } from 'graphql-upload-ts';
+import { createHash } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { Pool } from 'pg';
 import * as fs from 'node:fs';
@@ -28,6 +29,7 @@ import { buildTestPdf } from './fixtures/build-pdf';
 import { assertOwnedDisposableDatabaseUrl } from './helpers/pwa-disposable-db.js';
 
 const STORAGE_DIR = `${process.cwd()}/.book-storage-admin-authz-test`;
+const MEMBER_PASSWORD = 'Password123!';
 
 /** Shape of a GraphQL HTTP response body, narrowed to what these tests assert. */
 interface GraphQLResponse {
@@ -112,6 +114,7 @@ describe('Admin authorization matrix (GraphQL layer)', () => {
   let moderatorToken: string;
   let memberId: string;
   let memberToken: string;
+  let memberEmail: string;
 
   beforeAll(async () => {
     if (!isDockerAvailable()) {
@@ -175,9 +178,10 @@ describe('Admin authorization matrix (GraphQL layer)', () => {
     moderatorId = moderator.user.id;
     moderatorToken = moderator.accessToken;
 
+    memberEmail = `authz-member-${stamp}@example.com`;
     const member = await authService.registerLocal({
-      email: `authz-member-${stamp}@example.com`,
-      password: 'Password123!',
+      email: memberEmail,
+      password: MEMBER_PASSWORD,
       displayName: 'Authz Member',
     });
     memberId = member.user.id;
@@ -210,6 +214,12 @@ describe('Admin authorization matrix (GraphQL layer)', () => {
     await prisma.readingSession.deleteMany();
     await prisma.book.deleteMany();
     await prisma.auditLog.deleteMany();
+    // Clear refresh-token rows so a prior test's suspension cannot pre-satisfy a
+    // later test's "all tokens revoked" assertion. Access tokens are stateless
+    // JWTs and stay valid, so the fixtures above remain usable.
+    await prisma.refreshToken.deleteMany({
+      where: { userId: { in: [adminId, moderatorId, memberId] } },
+    });
 
     await prisma.user.updateMany({
       where: { id: { in: [adminId, moderatorId, memberId] } },
@@ -456,6 +466,21 @@ describe('Admin authorization matrix (GraphQL layer)', () => {
       const bookId = await createReadyBook(adminId);
       await openReadingSession(memberToken, bookId);
 
+      // Mint a fresh refresh token through the real login flow. `beforeEach`
+      // clears every refresh row and no other step re-mints one, so this is the
+      // member's only refresh token — making the post-suspension assertion
+      // non-vacuous (it can only pass if suspension actually revokes it).
+      const login = await authService.loginLocal({
+        email: memberEmail,
+        password: MEMBER_PASSWORD,
+      });
+      const freshTokenHash = createHash('sha256').update(login.refreshToken).digest('hex');
+      const freshToken = await prisma.refreshToken.findUnique({
+        where: { tokenHash: freshTokenHash },
+      });
+      expect(freshToken).not.toBeNull();
+      expect(freshToken?.revokedAt).toBeNull();
+
       const suspend = await gql(
         adminToken,
         `mutation {
@@ -468,8 +493,13 @@ describe('Admin authorization matrix (GraphQL layer)', () => {
       expect(sessions.length).toBeGreaterThan(0);
       expect(sessions.every((session) => session.revokedAt !== null)).toBe(true);
 
+      const revokedFreshToken = await prisma.refreshToken.findUnique({
+        where: { tokenHash: freshTokenHash },
+      });
+      expect(revokedFreshToken?.revokedAt).not.toBeNull();
+
       const refreshTokens = await prisma.refreshToken.findMany({ where: { userId: memberId } });
-      expect(refreshTokens.length).toBeGreaterThan(0);
+      expect(refreshTokens).toHaveLength(1);
       expect(refreshTokens.every((token) => token.revokedAt !== null)).toBe(true);
     });
   });
