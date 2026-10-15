@@ -236,7 +236,7 @@ describe('BooksService', () => {
     const input = { title: 'Updated Title' };
 
     it('should update book with provided fields', async () => {
-      await service.updateBook('book-1', input, 'user-1', UserRole.MEMBER);
+      await service.updateBook('book-1', input, 'user-1', UserRole.ADMIN);
       expect(prisma.book.update).toHaveBeenCalledWith({
         where: { id: 'book-1' },
         data: input,
@@ -246,7 +246,7 @@ describe('BooksService', () => {
     it('should return updated book', async () => {
       const updated = { ...mockBook, title: 'Updated Title' };
       prisma.book.update.mockResolvedValue(updated);
-      const result = await service.updateBook('book-1', input, 'user-1', UserRole.MEMBER);
+      const result = await service.updateBook('book-1', input, 'user-1', UserRole.ADMIN);
       expect(result).toEqual(updated);
     });
 
@@ -260,21 +260,26 @@ describe('BooksService', () => {
       expect(result).toEqual(mockBook);
     });
 
-    it('should throw ForbiddenException when a non-owner MEMBER updates', async () => {
+    // ADM-1: the owner path was removed, so ownership must NOT grant manage.
+    it.each([
+      ['the owner', 'user-1'],
+      ['a non-owner', 'user-2'],
+    ])('should throw ForbiddenException when %s is a MEMBER', async (_label, actorId) => {
       await expect(
-        service.updateBook('book-1', input, 'user-2', UserRole.MEMBER),
+        service.updateBook('book-1', input, actorId, UserRole.MEMBER),
       ).rejects.toThrow(ForbiddenException);
+      expect(prisma.book.update).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException when book does not exist', async () => {
       prisma.book.findUnique.mockResolvedValue(null);
       await expect(
-        service.updateBook('missing', input, 'user-1', UserRole.MEMBER),
+        service.updateBook('missing', input, 'user-1', UserRole.ADMIN),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('records BOOK_UPDATED after the update commits', async () => {
-      await service.updateBook('book-1', input, 'user-1', UserRole.MEMBER);
+      await service.updateBook('book-1', input, 'user-1', UserRole.ADMIN);
       expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({
           actorId: 'user-1',
@@ -288,7 +293,7 @@ describe('BooksService', () => {
     it('does not record BOOK_UPDATED when the mutation throws', async () => {
       prisma.book.findUnique.mockResolvedValue(null);
       await expect(
-        service.updateBook('missing', input, 'user-1', UserRole.MEMBER),
+        service.updateBook('missing', input, 'user-1', UserRole.ADMIN),
       ).rejects.toThrow(NotFoundException);
       expect(audit.record).not.toHaveBeenCalled();
     });
@@ -301,7 +306,7 @@ describe('BooksService', () => {
     const filename = 'test.pdf';
 
     it('should store the original via the storage adapter at books/${bookId}/<uuid>.pdf', async () => {
-      await service.uploadPdf('book-1', buffer, filename, 'user-1', UserRole.MEMBER);
+      await service.uploadPdf('book-1', buffer, filename, 'user-1', UserRole.ADMIN);
       const storageKey = storage.put.mock.calls[0][0];
       expect(storageKey).toMatch(/^books\/book-1\/[0-9a-f-]{36}\.pdf$/);
       expect(storage.put).toHaveBeenCalledWith(
@@ -312,7 +317,7 @@ describe('BooksService', () => {
     });
 
     it('should update book with blobPath, status PUBLISHED, and publishedAt', async () => {
-      await service.uploadPdf('book-1', buffer, filename, 'user-1', UserRole.MEMBER);
+      await service.uploadPdf('book-1', buffer, filename, 'user-1', UserRole.ADMIN);
       expect(prisma.book.update).toHaveBeenCalledWith({
         where: { id: 'book-1' },
         data: expect.objectContaining({
@@ -323,7 +328,7 @@ describe('BooksService', () => {
     });
 
     it('should set publishedAt to a Date', async () => {
-      await service.uploadPdf('book-1', buffer, filename, 'user-1', UserRole.MEMBER);
+      await service.uploadPdf('book-1', buffer, filename, 'user-1', UserRole.ADMIN);
       const call = prisma.book.update.mock.calls[0][0];
       expect(call.data.publishedAt).toBeInstanceOf(Date);
     });
@@ -335,13 +340,17 @@ describe('BooksService', () => {
         status: 'PUBLISHED',
       };
       prisma.book.update.mockResolvedValue(published);
-      const result = await service.uploadPdf('book-1', buffer, filename, 'user-1', UserRole.MEMBER);
+      const result = await service.uploadPdf('book-1', buffer, filename, 'user-1', UserRole.ADMIN);
       expect(result).toEqual(published);
     });
 
-    it('should throw ForbiddenException when a non-owner MEMBER uploads', async () => {
+    // ADM-1: ownership no longer grants upload rights on this admin endpoint.
+    it.each([
+      ['the owner', 'user-1'],
+      ['a non-owner', 'user-2'],
+    ])('should throw ForbiddenException when %s is a MEMBER', async (_label, actorId) => {
       await expect(
-        service.uploadPdf('book-1', buffer, filename, 'user-2', UserRole.MEMBER),
+        service.uploadPdf('book-1', buffer, filename, actorId, UserRole.MEMBER),
       ).rejects.toThrow(ForbiddenException);
       expect(storage.put).not.toHaveBeenCalled();
     });
@@ -352,7 +361,7 @@ describe('BooksService', () => {
         Buffer.alloc(50 * 1024 * 1024),
       ]);
       await expect(
-        service.uploadPdf('book-1', oversized, filename, 'user-1', UserRole.MEMBER),
+        service.uploadPdf('book-1', oversized, filename, 'user-1', UserRole.ADMIN),
       ).rejects.toThrow(BadRequestException);
       expect(storage.put).not.toHaveBeenCalled();
     });
@@ -360,7 +369,7 @@ describe('BooksService', () => {
     it('should reject buffers that are not PDFs with BadRequestException', async () => {
       const notPdf = Buffer.from('this is definitely not a pdf');
       await expect(
-        service.uploadPdf('book-1', notPdf, filename, 'user-1', UserRole.MEMBER),
+        service.uploadPdf('book-1', notPdf, filename, 'user-1', UserRole.ADMIN),
       ).rejects.toThrow(BadRequestException);
       expect(storage.put).not.toHaveBeenCalled();
     });
@@ -583,7 +592,7 @@ describe('BooksService', () => {
 
   describe('deleteBook', () => {
     it('should soft delete by setting deletedAt', async () => {
-      await service.deleteBook('book-1', 'user-1', UserRole.MEMBER);
+      await service.deleteBook('book-1', 'user-1', UserRole.ADMIN);
       expect(prisma.book.update).toHaveBeenCalledWith({
         where: { id: 'book-1' },
         data: expect.objectContaining({
@@ -595,13 +604,17 @@ describe('BooksService', () => {
     it('should return updated book', async () => {
       const deleted = { ...mockBook, deletedAt: new Date() };
       prisma.book.update.mockResolvedValue(deleted);
-      const result = await service.deleteBook('book-1', 'user-1', UserRole.MEMBER);
+      const result = await service.deleteBook('book-1', 'user-1', UserRole.ADMIN);
       expect(result).toEqual(deleted);
     });
 
-    it('should throw ForbiddenException when a non-owner MEMBER deletes', async () => {
+    // ADM-1: ownership no longer grants delete rights on this admin endpoint.
+    it.each([
+      ['the owner', 'user-1'],
+      ['a non-owner', 'user-2'],
+    ])('should throw ForbiddenException when %s is a MEMBER', async (_label, actorId) => {
       await expect(
-        service.deleteBook('book-1', 'user-2', UserRole.MEMBER),
+        service.deleteBook('book-1', actorId, UserRole.MEMBER),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.book.update).not.toHaveBeenCalled();
     });
@@ -614,12 +627,12 @@ describe('BooksService', () => {
     it('should throw NotFoundException when book does not exist', async () => {
       prisma.book.findUnique.mockResolvedValue(null);
       await expect(
-        service.deleteBook('missing', 'user-1', UserRole.MEMBER),
+        service.deleteBook('missing', 'user-1', UserRole.ADMIN),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('records BOOK_DELETED after the delete commits', async () => {
-      await service.deleteBook('book-1', 'user-1', UserRole.MEMBER);
+      await service.deleteBook('book-1', 'user-1', UserRole.ADMIN);
       expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({
           actorId: 'user-1',
@@ -664,7 +677,7 @@ describe('BooksService', () => {
         localAudit as never,
       );
 
-      const result = await localService.uploadBookFile('book-1', buildTestPdf(['Hello']), 'user-1', UserRole.MEMBER);
+      const result = await localService.uploadBookFile('book-1', buildTestPdf(['Hello']), 'user-1', UserRole.ADMIN);
 
       expect(localStorage.put).toHaveBeenCalledWith(
         expect.stringMatching(/^books\/book-1\/[0-9a-f-]+\.pdf$/),
@@ -683,7 +696,7 @@ describe('BooksService', () => {
     });
 
     it('records BOOK_UPLOADED after the transaction commits', async () => {
-      await service.uploadBookFile('book-1', buildTestPdf(['Hello']), 'user-1', UserRole.MEMBER);
+      await service.uploadBookFile('book-1', buildTestPdf(['Hello']), 'user-1', UserRole.ADMIN);
       expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({
           actorId: 'user-1',
@@ -708,7 +721,7 @@ describe('BooksService', () => {
         { record: jest.fn() } as never,
       );
       await expect(
-        localService.uploadBookFile('book-1', Buffer.from('nope'), 'user-1', UserRole.MEMBER),
+        localService.uploadBookFile('book-1', Buffer.from('nope'), 'user-1', UserRole.ADMIN),
       ).rejects.toThrow(/not a PDF or EPUB/);
     });
 
@@ -729,7 +742,7 @@ describe('BooksService', () => {
       const epub = Buffer.concat([Buffer.from('PK\u0003\u0004'), Buffer.from('application/epub+zip')]);
 
       await expect(
-        localService.uploadBookFile('book-1', epub, 'user-1', UserRole.MEMBER),
+        localService.uploadBookFile('book-1', epub, 'user-1', UserRole.ADMIN),
       ).rejects.toThrow(/EPUB support is coming in the next release/);
       expect(localStorage.put).not.toHaveBeenCalled();
       expect(localPrisma.$transaction).not.toHaveBeenCalled();

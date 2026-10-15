@@ -328,17 +328,24 @@ export class BooksService {
     return book;
   }
 
+  /**
+   * Staff-only manage gate for the admin book endpoints (ADM-1). Ownership is
+   * intentionally NOT honored: all four callers (`updateBook`, `uploadBookFile`,
+   * `deleteBook`, resolver `retryBookConversion`) are admin-managed mutations
+   * already guarded by `@Roles(ADMIN, MODERATOR)`, so an owner-based path here
+   * would only re-open the live gap the roles guard closes. `_actorId` is kept
+   * for call-site symmetry with the audit actor but no longer grants access.
+   */
   async assertCanManageBookPublic(
     bookId: string,
-    actorId: string,
+    _actorId: string,
     actorRole: UserRole,
   ) {
     const book = await this.prisma.book.findUnique({ where: { id: bookId } });
     if (!book) throw new NotFoundException('Book not found');
 
-    const isOwner = book.createdById === actorId;
     const isStaff = actorRole === UserRole.ADMIN || actorRole === UserRole.MODERATOR;
-    if (!isOwner && !isStaff) {
+    if (!isStaff) {
       throw new ForbiddenException('You do not have permission to modify this book');
     }
   }
