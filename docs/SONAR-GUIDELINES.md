@@ -1451,4 +1451,23 @@ Task 14 added `getSidebarNavItems(role)` and a role-restricted `ADMIN_NAV_ITEM`,
 ❌ `tx = commit(); await revokeAllSessionsForUser(...); await revokeAllForUser(...); await audit.record(...)` — a revocation throw loses the audit row and reports failure for a persisted suspension.
 ✅ `tx = commit(); await audit.record(...); try { revoke... } catch (e) { logger.error(...); throw e; }` — the committed change is always audited; a revocation failure is surfaced, not hidden.
 
+### ADM-29 — Suspension residuals: refresh gating, soft-delete, live sockets
+
+Review of Task 6 (suspension enforcement across auth paths) accepted three residual gaps that are **not** closed by that task. They are recorded so they are not mistaken for covered.
+
+**(a) `refreshTokens` is not status-gated** (`apps/api/src/auth/auth.service.ts:139-189`). It trusts a live refresh row and fails only on `revokedAt`/expiry. Two residuals remain: a rotation transaction committing after the suspension's `updateMany` READ COMMITTED snapshot can leave a fresh family token unrevoked; and a revocation failure after the committed status change leaves a live family. Impact is bounded — minted access tokens are inert because `JwtStrategy` re-checks status per request and reader access is dead — but adding a `status` include to the refresh lookup would make the invariant independent of Task 5 timing.
+
+❌ Rely solely on Task 5's `revokeAllSessionsForUser` `updateMany` to stop refresh minting; a token committed from a pre-suspension snapshot (or a failed revocation) still rotates.
+✅ Include `user: { select: { status: true } }` on the refresh-token lookup and reject when the owner is not `ACTIVE`, so the gate does not depend on revocation timing.
+
+**(b) `deletedAt` is not checked on the user lookups added/adjoining this task** (`auth.service.ts:114-116` loginLocal, `auth.service.ts:268-270` OAuth email-link, `reader-session.service.ts:45-48` resolve). No soft-delete writer exists today, so the gap is latent; if user soft-delete is added, these paths would honor a deleted-but-`ACTIVE` user.
+
+❌ Gate only on `status === ACTIVE` and assume `deletedAt` is implied; a future soft-delete leaves deleted users able to log in and read.
+✅ Add `deletedAt: null` to each of these lookups (as `JwtStrategy` and `validateUser` already do) when a soft-delete path lands.
+
+**(c) Chat/notification subscriptions are guarded only at subscribe time** (`chat.resolver.ts:70`, `notifications.resolver.ts:71`); a socket opened pre-suspension keeps receiving pushes until reconnect. This is not one of ADM-5's enumerated paths; noted so it is not mistaken for covered (relevant to Task 13).
+
+❌ Assume ADM-5 suspension silences an already-open chat/notification subscription; the push stream continues until the client reconnects.
+✅ Treat live-socket delivery as a separate concern (Task 13): re-check status per push or close sockets on suspension, and state the accepted residual explicitly if left open.
+
 
