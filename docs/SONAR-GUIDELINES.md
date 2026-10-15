@@ -1507,4 +1507,39 @@ Verification command gotcha found while running the Task 15 quality gate. Passin
 
 ✅ `pnpm --filter @transformlit/api test --runInBand` → `jest --runInBand` → real suites run (Task 15: API `55 passed / 905 tests`, web `143 passed / 1277 tests`). Always confirm the runner reports a non-zero suite count, not just exit code 0.
 
+### ADM-34 — A security fix is not done while the bypass it removes is still in the code (plan defect)
+
+Final whole-branch review of the admin console. Spec rev. 2 (`docs/superpowers/specs/2026-10-07-admin-console-design.md:39`, `:159`) is explicit that "the owner-based path in `assertCanManageBookPublic` is removed for these endpoints … This closes the live gap rather than half-closing it. **[ADM-1]**". The implementation, however, still ran `const isOwner = book.createdById === actorId` (`books.service.ts:339`), so `updateBook`/`uploadBookFile`/`deleteBook`/resolver `retryBookConversion` kept granting an owner manage rights behind the roles guard, and `books.service.spec.ts` pinned the owner-allowed behavior. Adding `@Roles` metadata is a plan step, not the plan: when a spec enumerates a bypass to *delete*, deleting it is the acceptance criterion. **This was a plan defect** — the task instruction failed to carry the "remove the owner path" line into the service work item — caught only by the end-of-branch review.
+
+❌ Keep `!isOwner && !isStaff` in the service after the plan says "remove the owner path"; unit tests assert an owner MEMBER may manage.
+✅ Make the gate staff-only (`actorRole === ADMIN || MODERATOR`) for the admin-managed endpoints, keep the `book` lookup for `NotFoundException`, and flip the owner-allowed specs to owner-denied `it.each` cases. Verified: every caller (`books.service.ts:102,137,317`, `books.resolver.ts:68`) is one of the admin-managed endpoints, and MEMBER denial is still proven at the GraphQL layer in `test/admin-authz.integration.spec.ts`.
+
+### ADM-35 — Near-identical integration harnesses blow the ≤3% new-code duplication budget
+
+Three new specs (`admin-authz`, `admin-user-status`, `books-upload`) each cloned ~50–60 lines of the same bootstrap: docker guard, `DROP TABLE`/`DROP TYPE` reset, migration loop, env setup, `AppModule` + `graphqlUploadExpress` app bootstrap, and the bounded `afterAll` close ceremony. A ~5,000-line epic leaves only ≈150 duplicated lines of budget, so a fourth copy risks failing the gate even though each copy is locally readable. Prefer a shared harness module over copy-paste-and-drift.
+
+❌ `isDockerAvailable()`, `runMigrations()`, env assignment, `Test.createTestingModule`, and the close ceremony re-declared in every integration spec.
+✅ Extract `test/helpers/integration-app.ts` (`startOwnedDatabase`, `applyMigrations`, `createTestApp`, `closeTestApp`, `setIntegrationTestEnv`) and have all three specs import it; reuse the existing `assertOwnedDisposableDatabaseUrl`/`startOwnedDisposableDatabase` so the owned-disposable-DB safety and fail-loud behavior survive. Also delete dead fallbacks (e.g. the unreachable `TEST_DATABASE_URL` branch when `Testcontainers` is null).
+
+### ADM-36 — Clamp a pagination echo to the window the service actually applied
+
+Closes **[ADM-30(b)]**. `adminUsers`/`auditLogs` echoed the raw requested `page`/`pageSize` while the services clamp (`page >= 1`, `pageSize <= 100`). A request of `pageSize: 500` returned a payload claiming `pageSize: 500` while at most 100 items came back — a response that lies about its own window.
+
+❌ `return { ...pageResult, page, pageSize };`
+✅ One source of truth (`common/pagination.ts` `clampPageWindow` + `MAX_PAGE_SIZE`), applied before the service call and echoed back: `const window = clampPageWindow(page, pageSize); … return { ...pageResult, ...window };` plus a focused resolver test asserting `(0, 500) → (1, 100)`.
+
+### ADM-37 — Status-gate `refreshTokens` instead of trusting the revocation `updateMany`
+
+Closes **[ADM-29(a)]**. The refresh lookup trusted a live token row and failed only on `revokedAt`/expiry, so a rotation committing from a pre-suspension READ COMMITTED snapshot — or after a failed revocation — could still mint a family. The invariant must not depend on revocation timing.
+
+❌ `prisma.refreshToken.findUnique({ where: { tokenHash } })` then rotate.
+✅ `include: { user: { select: { status: true } } }` and `if (stored.user.status !== UserStatus.ACTIVE) throw new UnauthorizedException('Account is suspended')` before the rotation transaction, plus a test asserting a live token owned by a SUSPENDED user is rejected and `$transaction` is never entered.
+
+### ADM-38 — Completion timestamps must be write-once, not recomputed on every sync
+
+`applyProgress` recomputed `completedAt = new Date()` on every write that reached the last page, so a later offline sync of the same completed book drifted the "completed at" time forward. `completedAtFor` must reuse the stored value once set.
+
+❌ `return currentPage >= effectivePageCount ? new Date() : null;` — every re-sync at the last page overwrites the first completion time.
+✅ Thread the existing row's value through and prefer it: `return currentPage >= effectivePageCount ? (previousCompletedAt ?? new Date()) : null;` (read `existing` before computing), with a focused test asserting the first `completedAt` is preserved on a later last-page sync and still cleared on regression.
+
 
