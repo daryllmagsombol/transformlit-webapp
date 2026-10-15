@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
+import { UserStatus } from '@transformlit/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 export const READER_COOKIE_NAME = 'transformlit_reader';
@@ -38,6 +39,14 @@ export class ReaderSessionService {
     if (!token) return null;
     const session = await this.prisma.readingSession.findUnique({ where: { tokenHash: this.hash(token) } });
     if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now()) return null;
+
+    // A suspended user must stop receiving pages even with an already-open
+    // reader cookie, so re-check status before sliding the session forward.
+    const user = await this.prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { status: true },
+    });
+    if (user?.status !== UserStatus.ACTIVE) return null;
 
     await this.prisma.readingSession.update({
       where: { id: session.id },

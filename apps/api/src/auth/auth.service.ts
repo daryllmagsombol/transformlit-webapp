@@ -8,6 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { Prisma } from '@prisma/client';
+import { UserStatus } from '@transformlit/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RegisterLocalInput, LoginLocalInput } from './models/auth.model.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -121,6 +122,10 @@ export class AuthService {
     const valid = await argon2.verify(user.passwordHash, input.password);
     if (!valid) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException('Account is suspended');
     }
 
     await this.prisma.user.update({
@@ -245,6 +250,9 @@ export class AuthService {
     });
 
     if (identity) {
+      if (identity.user.status !== UserStatus.ACTIVE) {
+        throw new UnauthorizedException('Account is suspended');
+      }
       await this.prisma.user.update({
         where: { id: identity.userId },
         data: { lastLoginAt: new Date() },
@@ -261,6 +269,9 @@ export class AuthService {
       where: { emailNormalized },
     });
     if (existingUser) {
+      if (existingUser.status !== UserStatus.ACTIVE) {
+        throw new UnauthorizedException('Account is suspended');
+      }
       // Only auto-link to an existing LOCAL account (one with a password) when
       // the provider has verified this email. Otherwise an attacker who can
       // create a provider profile for someone else's address would silently

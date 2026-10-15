@@ -1,12 +1,20 @@
 import { createHash } from 'node:crypto';
+import { UserStatus } from '@transformlit/shared';
 import { ReaderSessionService, READER_SESSION_TTL_MS } from './reader-session.service';
 
 describe('ReaderSessionService', () => {
-  let prisma: { readingSession: { create: jest.Mock; findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock } };
+  let prisma: {
+    readingSession: { create: jest.Mock; findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
+    user: { findUnique: jest.Mock };
+  };
   let service: ReaderSessionService;
 
   beforeEach(() => {
-    prisma = { readingSession: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() } };
+    prisma = {
+      readingSession: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+      user: { findUnique: jest.fn() },
+    };
+    prisma.user.findUnique.mockResolvedValue({ status: UserStatus.ACTIVE });
     service = new ReaderSessionService(prisma as never);
   });
 
@@ -49,6 +57,16 @@ describe('ReaderSessionService', () => {
       id: 'sess-1', userId: 'user-1', bookId: 'book-1', revokedAt: new Date(), expiresAt: new Date(Date.now() + 60000),
     });
     expect(await service.resolve('token')).toBeNull();
+  });
+
+  it('returns null for a suspended user even when the session is live and does not slide expiry', async () => {
+    prisma.readingSession.findUnique.mockResolvedValue({
+      id: 'sess-1', userId: 'user-1', bookId: 'book-1', revokedAt: null, expiresAt: new Date(Date.now() + 60000),
+    });
+    prisma.user.findUnique.mockResolvedValue({ status: UserStatus.SUSPENDED });
+
+    expect(await service.resolve('token')).toBeNull();
+    expect(prisma.readingSession.update).not.toHaveBeenCalled();
   });
 
   it('revokes every session for a user+book', async () => {

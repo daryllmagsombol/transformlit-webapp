@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { UserStatus } from '@transformlit/shared';
 import { JwtStrategy } from './jwt.strategy';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -12,6 +13,7 @@ describe('JwtStrategy', () => {
     id: 'user-1',
     email: 'test@example.com',
     role: 'MEMBER',
+    status: UserStatus.ACTIVE,
     deletedAt: null,
   };
 
@@ -50,6 +52,17 @@ describe('JwtStrategy', () => {
       (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
 
       await expect(strategy.validate({ sub: 'nonexistent' })).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+
+    it('should throw UnauthorizedException when the user is suspended', async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue({
+        ...mockUser,
+        status: UserStatus.SUSPENDED,
+      });
+
+      await expect(strategy.validate({ sub: 'user-1' })).rejects.toThrow(
         UnauthorizedException,
       );
     });

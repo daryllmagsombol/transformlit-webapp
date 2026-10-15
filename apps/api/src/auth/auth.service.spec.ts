@@ -7,6 +7,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { UserStatus } from '@transformlit/shared';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -289,6 +290,17 @@ describe('AuthService', () => {
     it('should throw UnauthorizedException if password is invalid', async () => {
       (argon2.verify as jest.Mock).mockResolvedValue(false);
       await expect(service.loginLocal(input)).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should throw UnauthorizedException and mint no tokens when the user is suspended', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...mockUser,
+        status: UserStatus.SUSPENDED,
+      });
+
+      await expect(service.loginLocal(input)).rejects.toThrow(UnauthorizedException);
+      expect(jwtService.sign).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
     });
 
     it('should update lastLoginAt on successful login', async () => {
@@ -613,6 +625,20 @@ describe('AuthService', () => {
       );
     });
 
+    it('does not mint tokens for a suspended existing-identity user', async () => {
+      prisma.identity.findUnique.mockResolvedValue({
+        id: 'id-1',
+        userId: 'user-1',
+        user: { ...mockUser, status: UserStatus.SUSPENDED },
+      });
+
+      await expect(service.findOrCreateOAuthUser(profile)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(jwtService.sign).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
     it('should create new user + identity when identity not found', async () => {
       prisma.identity.findUnique.mockResolvedValue(null);
       prisma.user.findUnique.mockResolvedValue(null);
@@ -691,6 +717,20 @@ describe('AuthService', () => {
         refreshToken: expect.any(String),
         user: publicUser,
       });
+    });
+
+    it('does not mint tokens for a suspended existing email-linked user', async () => {
+      prisma.identity.findUnique.mockResolvedValue(null);
+      prisma.user.findUnique.mockResolvedValue({
+        ...mockUser,
+        status: UserStatus.SUSPENDED,
+      });
+
+      await expect(
+        service.findOrCreateOAuthUser({ ...profile, emailVerified: true }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(jwtService.sign).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
     });
 
     it('should throw ForbiddenException when linking to an existing local account with an unverified email', async () => {
