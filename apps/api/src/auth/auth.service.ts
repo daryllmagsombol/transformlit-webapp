@@ -8,12 +8,21 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { Prisma } from '@prisma/client';
+import { UserStatus } from '@transformlit/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RegisterLocalInput, LoginLocalInput } from './models/auth.model.js';
+import { AuditService } from '../audit/audit.service.js';
+import { AuditAction } from '../audit/audit-actions.js';
 import { randomBytes, createHash } from 'node:crypto';
 
 const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 128;
+
+/** Request metadata threaded from a controller into best-effort audit rows. */
+export interface AuditRequestContext {
+  ip?: string;
+  userAgent?: string;
+}
 
 /**
  * Public user projection. Auth responses (login/register/refresh/OAuth) are
@@ -58,6 +67,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly audit: AuditService,
   ) {}
 
   async registerLocal(input: RegisterLocalInput) {
@@ -99,7 +109,7 @@ export class AuthService {
     return this.generateTokens(user.id);
   }
 
-  async loginLocal(input: LoginLocalInput) {
+  async loginLocal(input: LoginLocalInput, context?: AuditRequestContext) {
     const emailNormalized = input.email.toLowerCase().trim();
     const user = await this.prisma.user.findUnique({
       where: { emailNormalized },
@@ -114,18 +124,23 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException('Account is suspended');
+    }
+
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
 
-    return this.generateTokens(user.id);
+    return this.mintLoginTokens(user.id, context);
   }
 
-  async refreshTokens(refreshToken: string) {
+  async refreshTokens(refreshToken: string, context?: AuditRequestContext) {
     const tokenHash = this.hashToken(refreshToken);
     const stored = await this.prisma.refreshToken.findUnique({
       where: { tokenHash },
+      include: { user: { select: { status: true } } },
     });
 
     if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
@@ -135,8 +150,28 @@ export class AuthService {
           where: { familyId: stored.familyId, revokedAt: null },
           data: { revokedAt: new Date() },
         });
+        // A token that was already revoked is genuine reuse. A plain expiry is
+        // not, so only emit the audit row when `revokedAt` is actually set.
+        if (stored.revokedAt) {
+          await this.audit.record({
+            actorId: stored.userId,
+            action: AuditAction.REFRESH_REUSE_DETECTED,
+            targetType: 'USER',
+            targetId: stored.userId,
+            ip: context?.ip,
+            userAgent: context?.userAgent,
+          });
+        }
       }
       throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    // ADM-29(a): status-gate the rotation so a suspension is enforced even if the
+    // revocation `updateMany` raced with this transaction or failed. This makes
+    // the invariant independent of revocation timing (the access token minted
+    // here would already be inert, but we must not mint at all).
+    if (stored.user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException('Account is suspended');
     }
 
     // Rotate: guard-revoke old + issue new in a single transaction (same family).
@@ -169,7 +204,7 @@ export class AuthService {
    * is a successful no-op (there is nothing left to invalidate). Used by logout
    * so a captured refresh token cannot be rotated after the user signs out.
    */
-  async logout(refreshToken: string): Promise<void> {
+  async logout(refreshToken: string, context?: AuditRequestContext): Promise<void> {
     if (!refreshToken) return;
     const tokenHash = this.hashToken(refreshToken);
     const stored = await this.prisma.refreshToken.findUnique({ where: { tokenHash } });
@@ -178,15 +213,41 @@ export class AuthService {
       where: { familyId: stored.familyId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    // The controller route is @Public, so the actor must come from the stored
+    // token row (never from a request user, which may not exist).
+    await this.audit.record({
+      actorId: stored.userId,
+      action: AuditAction.LOGOUT,
+      targetType: 'USER',
+      targetId: stored.userId,
+      ip: context?.ip,
+      userAgent: context?.userAgent,
+    });
   }
 
-  async findOrCreateOAuthUser(profile: {
-    provider: string;
-    providerId: string;
-    email: string;
-    displayName: string;
-    emailVerified?: boolean;
-  }) {
+  /**
+   * Revokes every refresh-token family for a user, invalidating all of their
+   * active sessions. Used when an admin suspends an account. Idempotent: an
+   * account with no live tokens is a successful no-op.
+   */
+  async revokeAllSessionsForUser(userId: string): Promise<number> {
+    const result = await this.prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return result.count;
+  }
+
+  async findOrCreateOAuthUser(
+    profile: {
+      provider: string;
+      providerId: string;
+      email: string;
+      displayName: string;
+      emailVerified?: boolean;
+    },
+    context?: AuditRequestContext,
+  ) {
     let identity = await this.prisma.identity.findUnique({
       where: {
         provider_providerId: {
@@ -198,11 +259,14 @@ export class AuthService {
     });
 
     if (identity) {
+      if (identity.user.status !== UserStatus.ACTIVE) {
+        throw new UnauthorizedException('Account is suspended');
+      }
       await this.prisma.user.update({
         where: { id: identity.userId },
         data: { lastLoginAt: new Date() },
       });
-      return this.generateTokens(identity.userId);
+      return this.mintLoginTokens(identity.userId, context);
     }
 
     const emailNormalized = profile.email.toLowerCase().trim();
@@ -214,6 +278,9 @@ export class AuthService {
       where: { emailNormalized },
     });
     if (existingUser) {
+      if (existingUser.status !== UserStatus.ACTIVE) {
+        throw new UnauthorizedException('Account is suspended');
+      }
       // Only auto-link to an existing LOCAL account (one with a password) when
       // the provider has verified this email. Otherwise an attacker who can
       // create a provider profile for someone else's address would silently
@@ -240,7 +307,7 @@ export class AuthService {
         where: { id: existingUser.id },
         data: { lastLoginAt: new Date() },
       });
-      return this.generateTokens(existingUser.id);
+      return this.mintLoginTokens(existingUser.id, context);
     }
 
     // Create user + identity
@@ -261,7 +328,7 @@ export class AuthService {
       },
     });
 
-    return this.generateTokens(user.id);
+    return this.mintLoginTokens(user.id, context);
   }
 
   async validateUser(userId: string) {
@@ -270,6 +337,23 @@ export class AuthService {
       select: PUBLIC_USER_SELECT,
     });
     return user ? toPublicUser(user) : user;
+  }
+
+  /**
+   * Mint tokens, then append a best-effort LOGIN audit row post-commit. Shared
+   * by local login and both OAuth branches so the audit call site cannot drift.
+   */
+  private async mintLoginTokens(userId: string, context?: AuditRequestContext) {
+    const tokens = await this.generateTokens(userId);
+    await this.audit.record({
+      actorId: userId,
+      action: AuditAction.LOGIN,
+      targetType: 'USER',
+      targetId: userId,
+      ip: context?.ip,
+      userAgent: context?.userAgent,
+    });
+    return tokens;
   }
 
   private async generateTokens(

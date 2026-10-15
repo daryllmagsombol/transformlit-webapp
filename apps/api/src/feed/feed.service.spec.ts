@@ -4,6 +4,8 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { UserRole } from '@transformlit/shared';
 import { FeedService } from './feed.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { AuditAction } from '../audit/audit-actions';
 
 const mockAnnouncement = {
   id: 'ann-1',
@@ -31,6 +33,7 @@ const mockVerse = {
 describe('FeedService', () => {
   let service: FeedService;
   let prisma: any;
+  let audit: { record: jest.Mock };
 
   beforeEach(async () => {
     const mockPrisma = {
@@ -50,12 +53,15 @@ describe('FeedService', () => {
       providers: [
         FeedService,
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: AuditService, useValue: { record: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
     service = module.get<FeedService>(FeedService);
     prisma = module.get(PrismaService);
+    audit = module.get(AuditService);
     jest.clearAllMocks();
+    audit.record.mockResolvedValue(undefined);
 
     prisma.announcement.findMany.mockResolvedValue([]);
     prisma.announcement.findUnique.mockResolvedValue(mockAnnouncement);
@@ -316,6 +322,25 @@ describe('FeedService', () => {
         service.publishAnnouncement('ann-1', 'user-1', UserRole.MEMBER),
       ).rejects.toThrow('Only staff can publish');
     });
+
+    it('records ANNOUNCEMENT_PUBLISHED after commit', async () => {
+      await service.publishAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: 'user-1',
+          action: AuditAction.ANNOUNCEMENT_PUBLISHED,
+          targetType: 'ANNOUNCEMENT',
+          targetId: 'ann-1',
+        }),
+      );
+    });
+
+    it('does not record ANNOUNCEMENT_PUBLISHED when the mutation throws', async () => {
+      await expect(
+        service.publishAnnouncement('ann-1', 'user-1', UserRole.MEMBER),
+      ).rejects.toThrow(ForbiddenException);
+      expect(audit.record).not.toHaveBeenCalled();
+    });
   });
 
   // ── unpublishAnnouncement ─────────────────────────────────────────────────
@@ -349,6 +374,18 @@ describe('FeedService', () => {
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.announcement.update).not.toHaveBeenCalled();
     });
+
+    it('records ANNOUNCEMENT_UNPUBLISHED after commit', async () => {
+      await service.unpublishAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: 'user-1',
+          action: AuditAction.ANNOUNCEMENT_UNPUBLISHED,
+          targetType: 'ANNOUNCEMENT',
+          targetId: 'ann-1',
+        }),
+      );
+    });
   });
 
   // ── deleteAnnouncement ────────────────────────────────────────────────────
@@ -381,6 +418,18 @@ describe('FeedService', () => {
         service.deleteAnnouncement('ann-1', 'user-2', UserRole.MEMBER),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.announcement.update).not.toHaveBeenCalled();
+    });
+
+    it('records ANNOUNCEMENT_DELETED after commit', async () => {
+      await service.deleteAnnouncement('ann-1', 'user-1', UserRole.ADMIN);
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: 'user-1',
+          action: AuditAction.ANNOUNCEMENT_DELETED,
+          targetType: 'ANNOUNCEMENT',
+          targetId: 'ann-1',
+        }),
+      );
     });
   });
 

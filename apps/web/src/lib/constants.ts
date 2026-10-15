@@ -1,3 +1,5 @@
+import type { UserRole } from '@transformlit/shared';
+
 // ── Announcement Category Config ────────────────────────────────────────────
 
 type CategoryConfig = {
@@ -76,7 +78,23 @@ export const QUICK_TRACK_CHAPTERS = ['Romans 12', 'Proverbs 12', 'Matthew 5'];
 
 // ── Navigation Items ─────────────────────────────────────────────────────────
 
-export const SIDEBAR_NAV_ITEMS = [
+export type NavItem = {
+  readonly label: string;
+  readonly href: string;
+  readonly icon: string;
+  /**
+   * Roles allowed to see this item. `undefined` means visible to everyone.
+   * Role-restricted items are sidebar-only and must never reach the mobile
+   * bottom nav.
+   */
+  readonly roles?: readonly UserRole[];
+};
+
+/** Staff roles permitted into the admin console. */
+const ADMIN_ROLES = ['ADMIN', 'MODERATOR'] as UserRole[];
+
+/** The unrestricted destinations shared by the sidebar and the mobile bottom nav. */
+const PUBLIC_NAV_ITEMS: readonly NavItem[] = [
   { label: 'Feed', href: '/feed', icon: 'dynamic_feed' },
   { label: 'Bible', href: '/bible', icon: 'auto_stories' },
   { label: 'Friends', href: '/friends', icon: 'group' },
@@ -84,9 +102,37 @@ export const SIDEBAR_NAV_ITEMS = [
   { label: 'Groups', href: '/groups', icon: 'diversity_3' },
   { label: 'Books', href: '/books', icon: 'menu_book' },
   { label: 'Downloads', href: '/offline', icon: 'download' },
-] as const;
+];
 
-export const BOTTOM_NAV_ITEMS = SIDEBAR_NAV_ITEMS;
+/**
+ * Staff-only Admin entry. It is rendered from the full sidebar list but is
+ * deliberately absent from `BOTTOM_NAV_ITEMS`, so it can never inherit into the
+ * mobile bottom nav.
+ */
+const ADMIN_NAV_ITEM: NavItem = {
+  label: 'Admin',
+  href: '/admin',
+  icon: 'admin_panel_settings',
+  roles: ADMIN_ROLES,
+};
+
+/** Full sidebar list, including role-restricted destinations. */
+export const SIDEBAR_NAV_ITEMS: readonly NavItem[] = [...PUBLIC_NAV_ITEMS, ADMIN_NAV_ITEM];
+
+/** Mobile bottom nav: public destinations only; role-restricted entries never inherit. */
+export const BOTTOM_NAV_ITEMS: readonly NavItem[] = [...PUBLIC_NAV_ITEMS];
+
+/**
+ * Sidebar destinations visible to the given global role. Role-restricted items
+ * (e.g. Admin) are included only when the role is explicitly allowed; unknown or
+ * absent roles see the public list. UX-only filter — the server authorizes
+ * independently.
+ */
+export function getSidebarNavItems(role?: UserRole | null): NavItem[] {
+  return SIDEBAR_NAV_ITEMS.filter(
+    (item) => item.roles === undefined || (role != null && item.roles.includes(role)),
+  );
+}
 
 // ── API Configuration ────────────────────────────────────────────────────────
 

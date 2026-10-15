@@ -79,6 +79,66 @@ export class GroupMember {
   user?: User;
 }
 
+@ObjectType()
+export class AdminGroup {
+  @Field(() => ID)
+  id: string;
+
+  @Field()
+  name: string;
+
+  @Field()
+  slug: string;
+
+  @Field({ nullable: true })
+  description?: string;
+
+  @Field(() => GroupVisibility)
+  visibility: GroupVisibility;
+
+  @Field(() => GroupCategory, { nullable: true })
+  category?: GroupCategory;
+
+  @Field({ nullable: true })
+  coverImageUrl?: string;
+
+  @Field()
+  featured: boolean;
+
+  @Field(() => Int)
+  activeMemberCount: number;
+
+  @Field(() => Int)
+  pendingMemberCount: number;
+
+  @Field()
+  createdAt: Date;
+}
+
+@ObjectType()
+export class AdminGroupPage {
+  @Field(() => [AdminGroup])
+  items: AdminGroup[];
+
+  @Field(() => Int)
+  total: number;
+
+  @Field(() => Int)
+  page: number;
+
+  @Field(() => Int)
+  pageSize: number;
+}
+
+@InputType()
+export class AdminGroupsFilter {
+  @Field({ nullable: true })
+  query?: string;
+
+  @Field(() => GroupVisibility, { nullable: true })
+  visibility?: GroupVisibility;
+}
+
 @InputType()
 export class CreateGroupInput {
   @Field() name: string;

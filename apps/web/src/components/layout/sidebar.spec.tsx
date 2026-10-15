@@ -37,6 +37,9 @@ function progressFixture(overrides: Partial<ProgressFixture> = {}): ProgressFixt
 }
 
 var mockSetSidebarOpen: jest.Mock;
+// Mutable so individual tests can choose the signed-in role. `var` matches the
+// hoisted-module-factory pattern already used in this spec.
+var mockAuthUser: Record<string, unknown> | null = null;
 
 jest.mock('next/link', () => {
   return function MockLink({ children, href, className }: Record<string, unknown>) {
@@ -65,16 +68,45 @@ jest.mock('../../store', () => {
   store.getState = () => state;
   return {
     useUIStore: store,
-    useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector({ user: null }),
+    useAuthStore: (selector: (s: Record<string, unknown>) => unknown) => selector({ user: mockAuthUser }),
   };
 });
 
 describe('Sidebar', () => {
   beforeEach(() => {
     useChatStore.getState().reset();
+    mockAuthUser = null;
     // Default the progress query to a pending promise so shell tests stay in
     // the loading state and never emit a post-test state update.
     mockQuery.mockReturnValue(new Promise(() => {}));
+  });
+
+  describe('role-restricted Admin entry', () => {
+    it('renders the Admin item for an ADMIN', () => {
+      mockAuthUser = { id: 'a1', role: 'ADMIN' };
+      render(<Sidebar />);
+      const admin = screen.getByText('Admin').closest('a');
+      expect(admin).toHaveAttribute('href', '/admin');
+    });
+
+    it('renders the Admin item for a MODERATOR', () => {
+      mockAuthUser = { id: 'm1', role: 'MODERATOR' };
+      render(<Sidebar />);
+      expect(screen.getByText('Admin').closest('a')).toHaveAttribute('href', '/admin');
+    });
+
+    it('does NOT render the Admin item for a MEMBER', () => {
+      mockAuthUser = { id: 'u1', role: 'MEMBER' };
+      render(<Sidebar />);
+      expect(screen.queryByText('Admin')).not.toBeInTheDocument();
+      expect(document.querySelector('a[href="/admin"]')).toBeNull();
+    });
+
+    it('does NOT render the Admin item when no user is signed in', () => {
+      mockAuthUser = null;
+      render(<Sidebar />);
+      expect(screen.queryByText('Admin')).not.toBeInTheDocument();
+    });
   });
 
   describe('nav items', () => {

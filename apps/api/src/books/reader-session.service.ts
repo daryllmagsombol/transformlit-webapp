@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
+import { UserStatus } from '@transformlit/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 export const READER_COOKIE_NAME = 'transformlit_reader';
@@ -39,6 +40,14 @@ export class ReaderSessionService {
     const session = await this.prisma.readingSession.findUnique({ where: { tokenHash: this.hash(token) } });
     if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now()) return null;
 
+    // A suspended user must stop receiving pages even with an already-open
+    // reader cookie, so re-check status before sliding the session forward.
+    const user = await this.prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { status: true },
+    });
+    if (user?.status !== UserStatus.ACTIVE) return null;
+
     await this.prisma.readingSession.update({
       where: { id: session.id },
       data: { lastSeenAt: new Date(), expiresAt: new Date(Date.now() + READER_SESSION_TTL_MS) },
@@ -49,6 +58,15 @@ export class ReaderSessionService {
   async revokeAll(userId: string, bookId: string): Promise<number> {
     const result = await this.prisma.readingSession.updateMany({
       where: { userId, bookId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return result.count;
+  }
+
+  /** Revokes every reading session for a user across all books. */
+  async revokeAllForUser(userId: string): Promise<number> {
+    const result = await this.prisma.readingSession.updateMany({
+      where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
     return result.count;

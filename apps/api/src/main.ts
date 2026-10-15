@@ -2,6 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
+import { graphqlUploadExpress } from 'graphql-upload-ts';
+import { MAX_FILE_SIZE_BYTES } from '@transformlit/shared';
 import { AppModule } from './app.module.js';
 
 /**
@@ -58,6 +60,23 @@ async function bootstrap() {
   app.enableShutdownHooks();
   app.useGlobalPipes(
     new ValidationPipe({ transform: true }),
+  );
+
+  // Parse GraphQL multipart/form-data uploads into the `Upload` scalar the
+  // `uploadPdf` mutation consumes. Registered before listen()/init() so it sits
+  // ahead of Nest's JSON body parser and the Apollo route; non-multipart
+  // requests fall through untouched.
+  //
+  // Path-scoped to `/graphql` on purpose: the middleware rejects any multipart
+  // body lacking GraphQL `operations`/`map` fields, which would otherwise break
+  // unrelated multipart routes (e.g. `POST /uploads` for group/post images).
+  app.use(
+    '/graphql',
+    graphqlUploadExpress({
+      maxFileSize: MAX_FILE_SIZE_BYTES,
+      // Nest handles the response lifecycle; keep the default override off.
+      overrideSendResponse: false,
+    }),
   );
 
   const port = Number(process.env.PORT ?? 3005);

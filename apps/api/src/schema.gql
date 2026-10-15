@@ -24,6 +24,87 @@ input AddHighlightInput {
   text: String!
 }
 
+type AdminBookStats {
+  avgPagesPerReader: Int!
+  bookId: ID!
+  completed: Int!
+  completionRate: Int!
+  readers: Int!
+  title: String!
+  totalPageViews: Int!
+}
+
+type AdminGroup {
+  activeMemberCount: Int!
+  category: GroupCategory
+  coverImageUrl: String
+  createdAt: DateTime!
+  description: String
+  featured: Boolean!
+  id: ID!
+  name: String!
+  pendingMemberCount: Int!
+  slug: String!
+  visibility: GroupVisibility!
+}
+
+type AdminGroupPage {
+  items: [AdminGroup!]!
+  page: Int!
+  pageSize: Int!
+  total: Int!
+}
+
+input AdminGroupsFilter {
+  query: String
+  visibility: GroupVisibility
+}
+
+type AdminPlatformOverview {
+  activeUsers: Int!
+  publishedAnnouncements: Int!
+  publishedBooks: Int!
+  suspendedUsers: Int!
+  totalBooks: Int!
+  totalGroups: Int!
+  totalUsers: Int!
+}
+
+input AdminSetUserRoleInput {
+  role: UserRole!
+  userId: ID!
+}
+
+input AdminSetUserStatusInput {
+  status: UserStatus!
+  userId: ID!
+}
+
+type AdminUser {
+  avatarUrl: String
+  createdAt: DateTime!
+  displayName: String!
+  email: String!
+  groupCount: Int!
+  id: ID!
+  lastLoginAt: DateTime
+  role: UserRole!
+  status: UserStatus!
+}
+
+type AdminUserPage {
+  items: [AdminUser!]!
+  page: Int!
+  pageSize: Int!
+  total: Int!
+}
+
+input AdminUsersFilter {
+  query: String
+  role: UserRole
+  status: UserStatus
+}
+
 type Announcement {
   body: String!
   category: AnnouncementCategory!
@@ -46,6 +127,35 @@ enum AnnouncementStatus {
   ARCHIVED
   DRAFT
   PUBLISHED
+}
+
+type AuditLogEntry {
+  action: String!
+  actor: User
+  actorId: ID
+  createdAt: DateTime!
+  id: ID!
+  ipAddress: String
+  payload: JSON
+  targetId: String
+  targetType: String
+  userAgent: String
+}
+
+input AuditLogFilter {
+  action: String
+  actorId: ID
+  from: DateTime
+  targetId: String
+  targetType: String
+  to: DateTime
+}
+
+type AuditLogPage {
+  items: [AuditLogEntry!]!
+  page: Int!
+  pageSize: Int!
+  total: Int!
 }
 
 type AuthPayload {
@@ -395,6 +505,8 @@ type Mutation {
   acceptFriendRequest(friendshipId: String!): Friendship!
   addBookmark(input: AddBookmarkInput!): Bookmark!
   addHighlight(input: AddHighlightInput!): Highlight!
+  adminSetUserRole(input: AdminSetUserRoleInput!): AdminUser!
+  adminSetUserStatus(input: AdminSetUserStatusInput!): AdminUser!
   applyBookReaderOperation(input: ReaderOperationInput!): ReaderOperationResult!
   approveGroupMember(groupId: String!, userId: String!): GroupMember!
   archiveGroupReadingPlan(planId: String!): Boolean!
@@ -530,8 +642,13 @@ input PublishAnnouncementInput {
 }
 
 type Query {
+  adminBookStats(bookId: ID!): AdminBookStats!
+  adminGroups(filter: AdminGroupsFilter, page: Int! = 1, pageSize: Int! = 25): AdminGroupPage!
+  adminPlatformOverview: AdminPlatformOverview!
+  adminUsers(filter: AdminUsersFilter, page: Int! = 1, pageSize: Int! = 25): AdminUserPage!
   announcement(id: String!): Announcement
   announcements: [Announcement!]!
+  auditLogs(filter: AuditLogFilter, page: Int! = 1, pageSize: Int! = 25): AuditLogPage!
   book(id: String!): Book!
   bookReaderAnnotationSnapshot(bookId: ID!): BookReaderAnnotationSnapshot!
   bookToc(bookId: String!): [BookTocEntry!]!
@@ -755,7 +872,7 @@ type User {
   id: ID!
   lastLoginAt: DateTime
   role: UserRole!
-  status: String!
+  status: UserStatus!
 }
 
 type UserProfile {
@@ -772,6 +889,11 @@ enum UserRole {
   ADMIN
   MEMBER
   MODERATOR
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
 }
 
 type VerseOfDay {

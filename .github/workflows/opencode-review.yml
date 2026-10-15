@@ -168,7 +168,10 @@ jobs:
               test/offline-download.integration.spec.ts \
               test/books.integration.spec.ts \
               test/chat-graphql.integration.spec.ts \
-              test/graphql-schema.integration.spec.ts
+              test/graphql-schema.integration.spec.ts \
+              test/admin-user-status.integration.spec.ts \
+              test/books-upload.integration.spec.ts \
+              test/admin-authz.integration.spec.ts
 
   # Production PWA acceptance in a real Chromium against the owned same-origin
   # HTTPS harness (production web/API images + disposable DB + TLS proxy).

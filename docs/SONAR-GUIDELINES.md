@@ -1271,3 +1271,275 @@ For this server's current approved scope, `app.transformlit.com` is active; `tra
 
 ❌ Let a missing `hashlib` import in a failure handler discard the maintenance check’s exit status/stdout/stderr, then claim the public gate passed or guess which route failed.
 ✅ Persist the raw checker result first; parse it second; if recovery runs, record its separate command/result while preserving the initiating failure evidence.
+
+---
+
+## Admin console design review findings — AI review IDs (not Sonar rules)
+
+Findings from the @oracle review of `docs/superpowers/specs/2026-10-07-admin-console-design.md` (2026-10-07). Each ID is referenced from the revised spec.
+
+### ADM-1 — Guard metadata is inert; every guarded op needs `@UseGuards`
+`@Roles(...)` only sets metadata. `RolesGuard` is not a global guard (only `ContextThrottlerGuard` is registered via `APP_GUARD`, `app.module.ts:153`). A method with `@Roles` but no `@UseGuards(JwtAuthGuard, RolesGuard)` is unprotected. Apply the guard on every staff-gated method, and guard **all** mutating siblings (`uploadPdf` was missed, not just `uploadBook`).
+
+❌ Add `@Roles(ADMIN)` to `uploadBook` but leave `uploadPdf` on `JwtAuthGuard` only, so a member can still publish a book.
+✅ Use `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(...)` on `uploadBook`, `uploadPdf`, `updateBook`, `deleteBook`, `retryBookConversion`.
+
+### ADM-2 — A schema table with no code is not a feature
+`AuditLog` existed since the init migration but had no service, writer, or reader. A viewer over an empty table is dead UI. Verify a table has a writer before designing a reader.
+
+❌ Build an audit-log page backed by a table nothing writes to.
+✅ Build the write path (post-commit `AuditService.record`) and the reader together; note `AuditLog.user` is `onDelete: Cascade`.
+
+### ADM-3 — Never ship a metric without a writer
+`BookProgress.completedAt` had no writer anywhere, so `completionRate` would be permanently 0.
+
+❌ Define `completionRate` from `completedAt` while nothing sets it.
+✅ Add the completion writer (set `completedAt` when progress reaches page count) before exposing the metric.
+
+### ADM-4 — Membership checks are not global-staff checks
+`assertCanModerate`/`updateMemberRole`/`canView`/`listMembers` gate on an ACTIVE `GroupMember` row (and group-level `OWNER`). A global ADMIN who is not a member cannot act on an arbitrary group; `listGroups` hides private groups. Do not claim "staff can moderate any group" without threading the actor's global role through these gates.
+
+❌ State "global ADMIN/MODERATOR can moderate any group" and "no service changes" when the service only checks membership.
+✅ Thread `actorRole` into the gates (staff bypass), add a staff-only all-groups query, and preserve owner-protection.
+
+### ADM-5 — Suspension must cover every authentication path
+JWT + refresh revocation is not enough: reader pages use a separate sliding cookie (`ReaderSessionService.resolve`), which never checked user status, and `revokeAll(userId, bookId)` needs a `bookId`. Suspension must also revoke reading sessions and re-check status at resolve time.
+
+❌ Suspend a user, revoke their JWT/refresh, and leave their open reader cookie serving pages indefinitely.
+✅ Add `revokeAllForUser(userId)` (refresh families + reading sessions) and reject non-ACTIVE users in session resolution.
+
+### ADM-6 — Verify plumbing exists before claiming "reuse"
+"Upload dialog reuses existing upload" was false: the web app had no multipart link and `main.ts` had no `graphqlUploadExpress`, and `uploadBookFile` rejects EPUB. Check the transport exists.
+
+❌ Plan a PDF/EPUB upload dialog that reuses upload plumbing that is not wired.
+✅ Wire `graphqlUploadExpress` + the web upload link and scope v1 to PDF.
+
+### ADM-7 — Cite the correct precedent for `@Global()`
+`@Global()` is used by `PrismaModule` and `StorageModule`; the Azure module is explicitly imported. A spec that justifies `@Global()` with the wrong example misleads implementers.
+
+❌ Justify a new global module as "mirroring the azure pattern" (azure is not global).
+✅ Cite Prisma/Storage as the global-infra precedent, or import explicitly.
+
+### ADM-8 — Audit writes go after commit, never inside the business transaction
+A failed insert inside a Postgres transaction poisons it ("current transaction is aborted") and a rollback silently discards the row. Also: only emit `REFRESH_REUSE_DETECTED` when the stored token has `revokedAt` set (not on plain expiry), and derive the logout actor from the refresh-token row (the controller is `@Public`).
+
+❌ Call `audit.record()` inside the same `$transaction` as the mutation, or emit "reuse" for an ordinary expiry.
+✅ Record post-commit via the root `PrismaService`; emit reuse only on a revoked token; take the logout actor from the stored token.
+
+### ADM-9 — Enum conversions must tolerate non-uniform legacy values
+`User.status` defaulted to `"active"` while tests used `"ACTIVE"`. A naive cast silently mis-maps; preflight `SELECT DISTINCT lower(status)` and cast case-tolerantly.
+
+❌ `USING (status::"UserStatus")` and assume every row is `ACTIVE`.
+✅ `USING (CASE WHEN lower(status) = 'active' THEN 'ACTIVE'::"UserStatus" ELSE 'SUSPENDED'::"UserStatus" END)` after recording distinct values.
+
+### ADM-10 — Last-admin guard needs an exact predicate, serializable tx, and `P2034` retry
+Count `role = ADMIN AND status = ACTIVE AND deletedAt IS NULL` in the same transaction as the write; Prisma does not auto-retry serialization aborts.
+
+❌ Run the count and the update in separate statements and return an opaque 500 on `P2034`.
+✅ Check-and-write in one `Serializable` transaction with a bounded retry on `P2034`.
+
+### ADM-11 — Let Postgres rebuild dependent indexes on type change
+`ALTER COLUMN … TYPE` rebuilds dependent indexes; hand-writing index recreation risks drift. Also `DROP DEFAULT` before / `SET DEFAULT` after, and record the ACCESS EXCLUSIVE lock.
+
+❌ Hand-author `DROP INDEX`/`CREATE INDEX` for the enum conversion.
+✅ Emit the type change with `USING` plus default handling; let Postgres rebuild the index.
+
+### ADM-12 — Breaking GraphQL change: check real consumers and regeneration paths
+`User.status` `String!`→`UserStatus!` had no web/codegen consumers (verified), but adding the enum requires the shared barrel re-export and canonical SDL export (CI compares bytes).
+
+❌ Add the enum to `enums.ts` only, then hand-edit `schema.gql`.
+✅ Add the enum, export it from the shared barrel, run `graphql:schema:export`, and rebuild codegen.
+
+### ADM-13 — Don't put actions in a taxonomy that have no call site
+Listing `GROUP_DELETED` in an audit taxonomy while the console has no group-delete UI yields an action that never fires.
+
+❌ Enumerate audit actions the feature cannot emit.
+✅ Limit the taxonomy to actions with a real call site.
+
+### ADM-14 — Avoid N+1 in admin lists and drop ceremony
+Per-row `groupCount`/`actor` resolution caused N+1; `adminUser(id)` duplicated list data; class-validator/Zod on `@InputType` was not the existing convention.
+
+❌ Resolve `groupCount`/`actor` per row and add unused operations.
+✅ Batch counts/actors with `groupBy`/`findMany`; drop unused ops; use plain `@InputType`.
+
+### ADM-15 — Client role gates are UX-only
+`useRequireRole` hides the shell but proves nothing; a stale persisted role can render it.
+
+❌ Test only that a MEMBER is redirected and claim authorization works.
+✅ Assert server denial (403/typed error) for non-staff operations in tests.
+
+### ADM-16 — Nav constant aliasing and specs that assert counts
+`BOTTOM_NAV_ITEMS = SIDEBAR_NAV_ITEMS` means a new sidebar item also lands in mobile nav; `constants.spec.ts` asserts exactly 7 items.
+
+❌ Add an Admin nav item and leave the aliasing and the count assertion untouched.
+✅ Make Admin sidebar-only and update `constants.spec.ts` in the same change.
+
+### ADM-17 — Resolver unit tests do not exercise guards
+Calling a resolver method directly never runs `UseGuards`/`RolesGuard`, and CI runs a hardcoded integration file list.
+
+❌ Prove "MEMBER is rejected" with a resolver unit test that invokes the method directly.
+✅ Add GraphQL-layer integration tests and register them in `.github/workflows/opencode-review.yml`.
+
+### ADM-18 — Fix live security gaps first, ordered by dependency
+`uploadBook` was unguarded; that fix has no dependency on the enum/migration work.
+
+❌ Sequence the urgent guard fix after schema and module work.
+✅ Guard the books endpoints first, then schema → audit → auth → admin → web.
+
+### ADM-19 — Normalize nullable GraphQL filter `null`s before building a Prisma `where`
+`AuditService.list` accepted `AuditFilters` and guarded each optional field with `!== undefined`. GraphQL nullable inputs (`AuditLogFilter`) deliver explicit `null` for cleared fields, so `where.action = null` became `action IS NULL` (silently empty page) and `createdAt: { gte: null }` was a Prisma validation error. Normalize every optional filter `null` → `undefined` before building the `where`, and accept `| null` in the filter type.
+
+❌ `if (filters.action !== undefined) where.action = filters.action;` — a cleared GraphQL filter sends `null`, producing `action IS NULL` or `gte: null`.
+✅ `const action = filters.action ?? undefined;` then `if (action !== undefined) where.action = action;` for all six fields (`action`, `actorId`, `targetType`, `targetId`, `from`, `to`), and pin it with a test asserting the `where` omits null-valued keys.
+
+### ADM-20 — Analytics counts must not be derived independently when one is defined as a subset
+`AdminAnalyticsService.bookStats` counted `readers` (distinct `PageView.userId`) and `completed` (distinct `BookProgress.userId` with `completedAt != null`) with **separate queries and no intersection**. There is no schema invariant tying `BookProgress` to `PageView` — the completion writer is the offline `PROGRESS_SET` sync path (`reader-mutations.service.ts`), which never writes a `PageView`, while `PageView` is written best-effort by the frame endpoint with swallowed errors. A reader who completes offline (or whose view write failed) therefore has `completedAt` with zero views, making `completed > readers` reachable. The `completionRate` clamp masks it for the rate but not for the returned `completed` count, so the UI can render "5 of 3 completed". Intersect the two sets in memory (both fetches already select `userId`); keep the clamp as defense-in-depth.
+
+❌ `const completed = completedRows.length;` — counts completers independently of the reader set; an offline/sync-only completer inflates `completed` past `readers`.
+✅ `const readerIds = new Set(readerRows.map((row) => row.userId)); const completed = completedRows.filter((row) => readerIds.has(row.userId)).length;` and pin it with a test where `pageView.findMany → ['u1']` and `bookProgress.findMany → ['u1', 'ghost']` asserts `completed === 1`.
+
+### ADM-21 — Path-scope global body-parsing middleware; it intercepts unrelated routes
+`app.use(graphqlUploadExpress(...))` (or any body parser) mounted with no path runs on **every** route. `graphqlUploadExpress` activates whenever `request.is('multipart/form-data')` and rejects a multipart body that lacks GraphQL `operations`/`map` fields with a 400 — so the existing `POST /uploads` image endpoint (`FileInterceptor('file')`, used for group covers/post images) broke before its interceptor/guard ran. Mount middleware on the narrowest path that needs it, and prove an unrelated multipart route still reaches its handler.
+
+❌ `app.use(graphqlUploadExpress({ maxFileSize }))` — intercepts `POST /uploads`, returning 400 for its plain `file` field.
+✅ `app.use('/graphql', graphqlUploadExpress({ maxFileSize }))`, plus a test asserting `POST /uploads` is not intercepted (reaches auth → 401, not a `operations`-missing 400).
+
+### ADM-22 — A transport-routing allowlist must be tested from the real client
+An integration test that hand-sets the multipart request (including `apollo-require-preflight`) proves the server parses multipart, but not that the web client routes the right operation there. Removing the preflight header, dropping the upload operation from the split allowlist, or renaming the operation would still pass. Export the predicate/allowlist and the link options, and unit-test the routing decision against the real module. Keep the allowlist to operations that actually exist in the schema (no speculative entries).
+
+❌ Route only in `apollo-client.ts` and cover it with an API test that builds the multipart body by hand.
+✅ Export `isUploadOperation`/`UPLOAD_LINK_OPTIONS` and unit-test: `UploadPdf` → multipart, non-upload → JSON, and the preflight header is attached to the multipart link.
+
+### ADM-23 — Unused import fails the "0 new issues" quality gate (S1128)
+Review of `groups.resolver.ts` found `AdminGroup` imported but never referenced — only
+`AdminGroupPage` and `AdminGroupsFilter` were used. A single Low/Minor issue fails the
+New Code quality gate (0 new issues). Remove any import that is not referenced; rely on
+the linter/compiler rather than leaving unused symbols "for symmetry".
+
+❌ `import { AdminGroup, AdminGroupPage, AdminGroupsFilter } from './models/group.model.js';` while only the page/filter types appear in the resolver.
+✅ Import only what is used: `import { AdminGroupPage, AdminGroupsFilter } from './models/group.model.js';`
+
+### ADM-24 — An `@Optional()` audit dependency can silently drop audit records
+`BooksService` injected `AuditService` with `@Optional()` and called `this.audit?.record(...)`, while every other service injected it as required. The optional was there only because `BookDownloadBackfillModule` bootstraps `BooksService` as a separate application-context root without `AuditModule` (so `@Global()` does not cover it). For an audit feature, silently skipping every write in a context that forgets the module is the worst failure mode — it looks healthy and records nothing. Prefer required DI; if a context genuinely cannot provide the dependency, fix that context so it fails fast at bootstrap rather than degrading to no-op audit. When required DI is impractical, at minimum add a DI-level test proving the service is constructed *with* an `AuditService` in the real module graph.
+
+❌ `@Optional() private readonly audit?: AuditService` + `this.audit?.record(...)` — a context missing `AuditModule` boots fine and writes zero audit rows.
+✅ `private readonly audit: AuditService` (required) and import `AuditModule` into the standalone `BookDownloadBackfillModule`; bootstrap now fails loudly if the graph is wrong.
+
+### ADM-25 — An emitted audit action with no assertion can regress unnoticed
+`BOOK_UPLOADED` and `BOOK_DELETED` were emitted but no test asserted them; only `BOOK_UPDATED` was covered. An audit row that is emitted but unasserted can be renamed, dropped, or given the wrong target id without any test failing. Every emitted action with a real call site needs at least one positive assertion (action constant + `targetId`) plus, where the mutation can throw, a negative assertion that nothing was recorded.
+
+❌ Implement `audit.record({ action: BOOK_UPLOADED, ... })` and `{ action: BOOK_DELETED, ... }` but only test `BOOK_UPDATED`.
+✅ Add assertions that `uploadBookFile`/`deleteBook` record `BOOK_UPLOADED`/`BOOK_DELETED` with the correct `targetType`/`targetId`, and that a throwing mutation records nothing.
+
+### ADM-26 — A role-filtered helper is useless until it is wired into the renderer
+Task 14 added `getSidebarNavItems(role)` and a role-restricted `ADMIN_NAV_ITEM`, but `sidebar.tsx` still mapped the raw `SIDEBAR_NAV_ITEMS`, so every authenticated user — including `MEMBER` — saw the Admin link. A filter that no component consumes defeats the UX gate it implements; the unit-tested helper alone (constants.spec) never proved the rendered sidebar was filtered.
+
+❌ `import { SIDEBAR_NAV_ITEMS } from '../../lib/constants'; ... {SIDEBAR_NAV_ITEMS.map((item) => <NavItem ... />)}` — Admin leaks to all roles even though `getSidebarNavItems` exists and is tested.
+✅ Read the role from the same store the rest of the shell uses and render through the helper: `const role = useAuthStore((s) => s.user?.role); const navItems = getSidebarNavItems(role); ... {navItems.map((item) => <NavItem ... />)}` — plus a component test asserting Admin renders for `ADMIN`/`MODERATOR` and is absent for `MEMBER`/no-user.
+
+### ADM-27 — Prisma enum unions are not assignable to the shared TS enums; cast at the projection boundary
+
+`@prisma/client` generates each enum as a string-literal union (`$Enums.UserRole = 'ADMIN' | 'MODERATOR' | 'MEMBER'`), which is **not** assignable to the nominal TypeScript `enum` in `@transformlit/shared`. Writing a shared-enum value into a Prisma `data` input compiles, but projecting a Prisma row into a shared-enum DTO (e.g. `AdminUser.role: UserRole`) fails `tsc` with `Type '"ADMIN"' is not assignable to type 'UserRole'`. Reconcile the generated union with the shared enum explicitly at the persistence boundary instead of widening the DTO to Prisma's types.
+
+❌ `const items: AdminUser[] = rows.map((row) => ({ ...row, groupCount }))` where `row.role` is `$Enums.UserRole` and `AdminUser.role` is the shared `UserRole`.
+✅ Cast at the boundary — the runtime values are identical strings, so the cast only reconciles the two type systems: `{ ...row, role: row.role as UserRole, status: row.status as UserStatus, groupCount }`.
+
+### ADM-28 — Best-effort post-commit work must never gate the audit row for a committed change
+
+`AdminUsersService.setStatus` committed the status write, then ran two session-revocation `updateMany` calls, and wrote the `USER_STATUS_CHANGED` audit row **last**. A revocation failure rejected the mutation although the status was already persisted, left reading sessions live, and skipped the audit row for a change that committed. ADM-8 makes audit best-effort, but "best-effort" means "always attempted after commit", not "conditional on unrelated side effects succeeding". Record the audit row first, then run the post-commit side effects; revocation is security-critical, so log its failure at error level and rethrow (never silently swallow it).
+
+❌ `tx = commit(); await revokeAllSessionsForUser(...); await revokeAllForUser(...); await audit.record(...)` — a revocation throw loses the audit row and reports failure for a persisted suspension.
+✅ `tx = commit(); await audit.record(...); try { revoke... } catch (e) { logger.error(...); throw e; }` — the committed change is always audited; a revocation failure is surfaced, not hidden.
+
+### ADM-29 — Suspension residuals: refresh gating, soft-delete, live sockets
+
+Review of Task 6 (suspension enforcement across auth paths) accepted three residual gaps that are **not** closed by that task. They are recorded so they are not mistaken for covered.
+
+**(a) `refreshTokens` is not status-gated** (`apps/api/src/auth/auth.service.ts:139-189`). It trusts a live refresh row and fails only on `revokedAt`/expiry. Two residuals remain: a rotation transaction committing after the suspension's `updateMany` READ COMMITTED snapshot can leave a fresh family token unrevoked; and a revocation failure after the committed status change leaves a live family. Impact is bounded — minted access tokens are inert because `JwtStrategy` re-checks status per request and reader access is dead — but adding a `status` include to the refresh lookup would make the invariant independent of Task 5 timing.
+
+❌ Rely solely on Task 5's `revokeAllSessionsForUser` `updateMany` to stop refresh minting; a token committed from a pre-suspension snapshot (or a failed revocation) still rotates.
+✅ Include `user: { select: { status: true } }` on the refresh-token lookup and reject when the owner is not `ACTIVE`, so the gate does not depend on revocation timing.
+
+**(b) `deletedAt` is not checked on the user lookups added/adjoining this task** (`auth.service.ts:114-116` loginLocal, `auth.service.ts:268-270` OAuth email-link, `reader-session.service.ts:45-48` resolve). No soft-delete writer exists today, so the gap is latent; if user soft-delete is added, these paths would honor a deleted-but-`ACTIVE` user.
+
+❌ Gate only on `status === ACTIVE` and assume `deletedAt` is implied; a future soft-delete leaves deleted users able to log in and read.
+✅ Add `deletedAt: null` to each of these lookups (as `JwtStrategy` and `validateUser` already do) when a soft-delete path lands.
+
+**(c) Chat/notification subscriptions are guarded only at subscribe time** (`chat.resolver.ts:70`, `notifications.resolver.ts:71`); a socket opened pre-suspension keeps receiving pushes until reconnect. This is not one of ADM-5's enumerated paths; noted so it is not mistaken for covered (relevant to Task 13).
+
+❌ Assume ADM-5 suspension silences an already-open chat/notification subscription; the push stream continues until the client reconnects.
+✅ Treat live-socket delivery as a separate concern (Task 13): re-check status per push or close sockets on suspension, and state the accepted residual explicitly if left open.
+
+### ADM-30 — Admin resolver layering and pagination-echo consistency
+
+Review of Task 9 (`apps/api/src/admin/admin.resolver.ts`) accepted two findings (no code change required in that task; recorded so the follow-ups are not mistaken for covered).
+
+**(a) Resolver-level DB access breaks the resolver→service layering.** `AdminResolver` injects `PrismaService` directly (`admin.resolver.ts:7,50,129-132`) to batch-hydrate the audit `actor`; it is the codebase's **only** resolver→DB access — all 23 other `PrismaService` injections live in services. It is functionally justified here (ADM-14 requires page-level actor batching and `AuditService.list` returns raw rows with no actor relation), but the projection belongs in a service so the resolver stays a thin delegator. Do not treat "it works and the SDL is correct" as license to query the DB from a resolver.
+
+❌ `this.prisma.user.findMany({ where: { id: { in: actorIds } }, select: ACTOR_SELECT })` inside `AdminResolver.attachActors`.
+✅ Add a service-owned projection (e.g. `AdminUsersService.findActorsByIds(ids): Promise<User[]>`) and have the resolver call it, keeping every Prisma call behind the service boundary.
+
+**(b) Echoed pagination is not clamped, so the response can overstate its page.** `adminUsers`/`auditLogs` echo the requested `page`/`pageSize` (`admin.resolver.ts:65`, `:80-81`) while the services clamp (`admin-users.service.ts:87-88`, `audit.service.ts:75-76`: `page ≥ 1`, `pageSize ≤ 100`). A client sending `page: 0`/`pageSize: 500` receives `pageSize: 500` in the payload but at most 100 items — a response that lies about its own window.
+
+❌ `return { ...pageResult, page, pageSize };` — echoes the raw args, so `pageSize: 500` reports 500 while the service took 100.
+✅ Echo the effective window (clamp `page = Math.max(page, 1)`, `pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE)` before returning) or explicitly document that the echoed values are the *requested* window, not the applied one.
+
+### ADM-31 — Concurrency tests must assert the invariant, not the winning interleaving
+
+`AdminUsersService.setRole`/`setStatus` enforce the "last active admin" predicate inside a `Serializable` transaction with a single `P2034` retry. An integration test that drives two concurrent demote/suspend attempts **cannot** assert which call wins or which error the loser throws: depending on interleaving the loser either sees `ConflictException` (its predicate re-read happens after the winner committed) or a raw `P2034` serialization abort (both transactions abort and the bounded retry is exhausted). Pinning a specific winner/error type is timing-flaky and would fail spuriously in CI.
+
+❌ `await expect(attemptA).resolves.toBeDefined(); await expect(attemptB).rejects.toBeInstanceOf(ConflictException);` — one interleaving passes, the other rejects with `P2034`.
+
+✅ Drive both with `Promise.allSettled`, then assert the durable invariant only: at least one rejected, at most one fulfilled, and `prisma.user.count({ where: { role: ADMIN, status: ACTIVE, deletedAt: null } }) >= 1` — so the test fails precisely when the invariant is actually violated, never on scheduling. Covered by `apps/api/test/admin-authz.integration.spec.ts` (GraphQL-layer guard proof for ADM-15/ADM-17; still needs registration in the `.github/workflows/opencode-review.yml` hardcoded integration list — Task 12).
+
+### ADM-32 — `beforeEach` must isolate mutable side-effect rows, not just the entity under test
+
+Review of Task 13 found the suspension integration test's "all refresh tokens revoked" assertion was **vacuous**: an earlier test (`restricts adminSetUserStatus to ADMIN`) had already suspended the same member through the same service path, revoking every unrevoked `refreshToken` row. `beforeEach` reset the user's `role`/`status` but never cleared or re-minted `refreshToken` rows, and the suspension test itself minted none. So the assertion passed on rows a *previous* test revoked — a regression that dropped `authService.revokeAllSessionsForUser` (while keeping `readerSession.revokeAllForUser`) would still pass. Reset a mutable side-effect table in `beforeEach` **and** establish the asserted state inside the test with a non-vacuous precondition.
+
+❌ `beforeEach` resets the user but leaves `refreshToken` rows; test asserts `refreshTokens.every((t) => t.revokedAt !== null)` against tokens a prior test already revoked.
+✅ `beforeEach` runs `prisma.refreshToken.deleteMany({ where: { userId: { in: managedUserIds } } })`, then the test mints one token through the real login flow and asserts `expect(row.revokedAt).toBeNull()` *before* the action and `not.toBeNull()` *after* (and `toHaveLength(1)`), so only the code under test can satisfy it. Neutering `revokeAllSessionsForUser` now fails the test.
+
+### ADM-33 — `pnpm … test -- --runInBand` silently passes with "No tests found"
+
+Verification command gotcha found while running the Task 15 quality gate. Passing an extra `--` before `--runInBand` (`pnpm --filter @transformlit/api test -- --runInBand`) appends a literal `--` **and** `--runInBand` to the `jest` invocation. Jest treats `--runInBand` as a *testPathPattern* rather than a flag, matches zero files, and exits **code 0** with `No tests found, exiting with code 0` — a vacuous pass that can mask a real suite regression if the exit code is trusted. The same applies to `@transformlit/web`. Drop the `--` separator so pnpm forwards the flag to Jest.
+
+❌ `pnpm --filter @transformlit/api test -- --runInBand` → `jest -- --runInBand` → `No tests found, exiting with code 0` (zero suites executed, reported as success).
+
+✅ `pnpm --filter @transformlit/api test --runInBand` → `jest --runInBand` → real suites run (Task 15: API `55 passed / 905 tests`, web `143 passed / 1277 tests`). Always confirm the runner reports a non-zero suite count, not just exit code 0.
+
+### ADM-34 — A security fix is not done while the bypass it removes is still in the code (plan defect)
+
+Final whole-branch review of the admin console. Spec rev. 2 (`docs/superpowers/specs/2026-10-07-admin-console-design.md:39`, `:159`) is explicit that "the owner-based path in `assertCanManageBookPublic` is removed for these endpoints … This closes the live gap rather than half-closing it. **[ADM-1]**". The implementation, however, still ran `const isOwner = book.createdById === actorId` (`books.service.ts:339`), so `updateBook`/`uploadBookFile`/`deleteBook`/resolver `retryBookConversion` kept granting an owner manage rights behind the roles guard, and `books.service.spec.ts` pinned the owner-allowed behavior. Adding `@Roles` metadata is a plan step, not the plan: when a spec enumerates a bypass to *delete*, deleting it is the acceptance criterion. **This was a plan defect** — the task instruction failed to carry the "remove the owner path" line into the service work item — caught only by the end-of-branch review.
+
+❌ Keep `!isOwner && !isStaff` in the service after the plan says "remove the owner path"; unit tests assert an owner MEMBER may manage.
+✅ Make the gate staff-only (`actorRole === ADMIN || MODERATOR`) for the admin-managed endpoints, keep the `book` lookup for `NotFoundException`, and flip the owner-allowed specs to owner-denied `it.each` cases. Verified: every caller (`books.service.ts:102,137,317`, `books.resolver.ts:68`) is one of the admin-managed endpoints, and MEMBER denial is still proven at the GraphQL layer in `test/admin-authz.integration.spec.ts`.
+
+### ADM-35 — Near-identical integration harnesses blow the ≤3% new-code duplication budget
+
+Three new specs (`admin-authz`, `admin-user-status`, `books-upload`) each cloned ~50–60 lines of the same bootstrap: docker guard, `DROP TABLE`/`DROP TYPE` reset, migration loop, env setup, `AppModule` + `graphqlUploadExpress` app bootstrap, and the bounded `afterAll` close ceremony. A ~5,000-line epic leaves only ≈150 duplicated lines of budget, so a fourth copy risks failing the gate even though each copy is locally readable. Prefer a shared harness module over copy-paste-and-drift.
+
+❌ `isDockerAvailable()`, `runMigrations()`, env assignment, `Test.createTestingModule`, and the close ceremony re-declared in every integration spec.
+✅ Extract `test/helpers/integration-app.ts` (`startOwnedDatabase`, `applyMigrations`, `createTestApp`, `closeTestApp`, `setIntegrationTestEnv`) and have all three specs import it; reuse the existing `assertOwnedDisposableDatabaseUrl`/`startOwnedDisposableDatabase` so the owned-disposable-DB safety and fail-loud behavior survive. Also delete dead fallbacks (e.g. the unreachable `TEST_DATABASE_URL` branch when `Testcontainers` is null).
+
+### ADM-36 — Clamp a pagination echo to the window the service actually applied
+
+Closes **[ADM-30(b)]**. `adminUsers`/`auditLogs` echoed the raw requested `page`/`pageSize` while the services clamp (`page >= 1`, `pageSize <= 100`). A request of `pageSize: 500` returned a payload claiming `pageSize: 500` while at most 100 items came back — a response that lies about its own window.
+
+❌ `return { ...pageResult, page, pageSize };`
+✅ One source of truth (`common/pagination.ts` `clampPageWindow` + `MAX_PAGE_SIZE`), applied before the service call and echoed back: `const window = clampPageWindow(page, pageSize); … return { ...pageResult, ...window };` plus a focused resolver test asserting `(0, 500) → (1, 100)`.
+
+### ADM-37 — Status-gate `refreshTokens` instead of trusting the revocation `updateMany`
+
+Closes **[ADM-29(a)]**. The refresh lookup trusted a live token row and failed only on `revokedAt`/expiry, so a rotation committing from a pre-suspension READ COMMITTED snapshot — or after a failed revocation — could still mint a family. The invariant must not depend on revocation timing.
+
+❌ `prisma.refreshToken.findUnique({ where: { tokenHash } })` then rotate.
+✅ `include: { user: { select: { status: true } } }` and `if (stored.user.status !== UserStatus.ACTIVE) throw new UnauthorizedException('Account is suspended')` before the rotation transaction, plus a test asserting a live token owned by a SUSPENDED user is rejected and `$transaction` is never entered.
+
+### ADM-38 — Completion timestamps must be write-once, not recomputed on every sync
+
+`applyProgress` recomputed `completedAt = new Date()` on every write that reached the last page, so a later offline sync of the same completed book drifted the "completed at" time forward. `completedAtFor` must reuse the stored value once set.
+
+❌ `return currentPage >= effectivePageCount ? new Date() : null;` — every re-sync at the last page overwrites the first completion time.
+✅ Thread the existing row's value through and prefer it: `return currentPage >= effectivePageCount ? (previousCompletedAt ?? new Date()) : null;` (read `existing` before computing), with a focused test asserting the first `completedAt` is preserved on a later last-page sync and still cleared on regression.
+
+
