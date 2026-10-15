@@ -3,12 +3,13 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import type { UserRole } from '@transformlit/shared';
 import { MyProgressDocument, type MyProgressQuery } from '@transformlit/graphql';
-import { useUIStore } from '../../store';
+import { useUIStore, useAuthStore } from '../../store';
 import { useChatStore } from '../../store/chat-store';
 import { apolloClient } from '../../lib/apollo-client';
 import { NavItem } from '../ui/nav-item';
-import { SIDEBAR_NAV_ITEMS } from '../../lib/constants';
+import { getSidebarNavItems } from '../../lib/constants';
 import { ThemeToggle } from '../ui/theme-toggle';
 
 type ProgressData = MyProgressQuery['myProgress'];
@@ -239,6 +240,10 @@ export function Sidebar() {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
   const totalUnread = useChatStore((s) => s.totalUnread);
+  const role = useAuthStore((s) => s.user?.role);
+  // Role-restricted destinations (e.g. Admin) are filtered out for non-staff.
+  // `GraphQLUser.role` is a plain string; narrow it for the typed nav helper.
+  const navItems = getSidebarNavItems(role as UserRole | undefined);
 
   // Open sidebar on desktop, close on mobile — respond to resize across breakpoint
   useEffect(() => {
@@ -274,7 +279,7 @@ export function Sidebar() {
       >
         {/* Main nav */}
         <nav className="flex flex-col gap-1 p-4 flex-1">
-          {SIDEBAR_NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavItem
               key={item.href}
               {...item}

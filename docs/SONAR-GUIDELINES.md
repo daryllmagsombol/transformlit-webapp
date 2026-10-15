@@ -1391,3 +1391,9 @@ Calling a resolver method directly never runs `UseGuards`/`RolesGuard`, and CI r
 
 ❌ `if (filters.action !== undefined) where.action = filters.action;` — a cleared GraphQL filter sends `null`, producing `action IS NULL` or `gte: null`.
 ✅ `const action = filters.action ?? undefined;` then `if (action !== undefined) where.action = action;` for all six fields (`action`, `actorId`, `targetType`, `targetId`, `from`, `to`), and pin it with a test asserting the `where` omits null-valued keys.
+
+### ADM-26 — A role-filtered helper is useless until it is wired into the renderer
+Task 14 added `getSidebarNavItems(role)` and a role-restricted `ADMIN_NAV_ITEM`, but `sidebar.tsx` still mapped the raw `SIDEBAR_NAV_ITEMS`, so every authenticated user — including `MEMBER` — saw the Admin link. A filter that no component consumes defeats the UX gate it implements; the unit-tested helper alone (constants.spec) never proved the rendered sidebar was filtered.
+
+❌ `import { SIDEBAR_NAV_ITEMS } from '../../lib/constants'; ... {SIDEBAR_NAV_ITEMS.map((item) => <NavItem ... />)}` — Admin leaks to all roles even though `getSidebarNavItems` exists and is tested.
+✅ Read the role from the same store the rest of the shell uses and render through the helper: `const role = useAuthStore((s) => s.user?.role); const navItems = getSidebarNavItems(role); ... {navItems.map((item) => <NavItem ... />)}` — plus a component test asserting Admin renders for `ADMIN`/`MODERATOR` and is absent for `MEMBER`/no-user.
