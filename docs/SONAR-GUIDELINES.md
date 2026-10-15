@@ -1499,4 +1499,12 @@ Review of Task 13 found the suspension integration test's "all refresh tokens re
 ❌ `beforeEach` resets the user but leaves `refreshToken` rows; test asserts `refreshTokens.every((t) => t.revokedAt !== null)` against tokens a prior test already revoked.
 ✅ `beforeEach` runs `prisma.refreshToken.deleteMany({ where: { userId: { in: managedUserIds } } })`, then the test mints one token through the real login flow and asserts `expect(row.revokedAt).toBeNull()` *before* the action and `not.toBeNull()` *after* (and `toHaveLength(1)`), so only the code under test can satisfy it. Neutering `revokeAllSessionsForUser` now fails the test.
 
+### ADM-33 — `pnpm … test -- --runInBand` silently passes with "No tests found"
+
+Verification command gotcha found while running the Task 15 quality gate. Passing an extra `--` before `--runInBand` (`pnpm --filter @transformlit/api test -- --runInBand`) appends a literal `--` **and** `--runInBand` to the `jest` invocation. Jest treats `--runInBand` as a *testPathPattern* rather than a flag, matches zero files, and exits **code 0** with `No tests found, exiting with code 0` — a vacuous pass that can mask a real suite regression if the exit code is trusted. The same applies to `@transformlit/web`. Drop the `--` separator so pnpm forwards the flag to Jest.
+
+❌ `pnpm --filter @transformlit/api test -- --runInBand` → `jest -- --runInBand` → `No tests found, exiting with code 0` (zero suites executed, reported as success).
+
+✅ `pnpm --filter @transformlit/api test --runInBand` → `jest --runInBand` → real suites run (Task 15: API `55 passed / 905 tests`, web `143 passed / 1277 tests`). Always confirm the runner reports a non-zero suite count, not just exit code 0.
+
 
