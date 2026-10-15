@@ -1470,4 +1470,18 @@ Review of Task 6 (suspension enforcement across auth paths) accepted three resid
 ❌ Assume ADM-5 suspension silences an already-open chat/notification subscription; the push stream continues until the client reconnects.
 ✅ Treat live-socket delivery as a separate concern (Task 13): re-check status per push or close sockets on suspension, and state the accepted residual explicitly if left open.
 
+### ADM-30 — Admin resolver layering and pagination-echo consistency
+
+Review of Task 9 (`apps/api/src/admin/admin.resolver.ts`) accepted two findings (no code change required in that task; recorded so the follow-ups are not mistaken for covered).
+
+**(a) Resolver-level DB access breaks the resolver→service layering.** `AdminResolver` injects `PrismaService` directly (`admin.resolver.ts:7,50,129-132`) to batch-hydrate the audit `actor`; it is the codebase's **only** resolver→DB access — all 23 other `PrismaService` injections live in services. It is functionally justified here (ADM-14 requires page-level actor batching and `AuditService.list` returns raw rows with no actor relation), but the projection belongs in a service so the resolver stays a thin delegator. Do not treat "it works and the SDL is correct" as license to query the DB from a resolver.
+
+❌ `this.prisma.user.findMany({ where: { id: { in: actorIds } }, select: ACTOR_SELECT })` inside `AdminResolver.attachActors`.
+✅ Add a service-owned projection (e.g. `AdminUsersService.findActorsByIds(ids): Promise<User[]>`) and have the resolver call it, keeping every Prisma call behind the service boundary.
+
+**(b) Echoed pagination is not clamped, so the response can overstate its page.** `adminUsers`/`auditLogs` echo the requested `page`/`pageSize` (`admin.resolver.ts:65`, `:80-81`) while the services clamp (`admin-users.service.ts:87-88`, `audit.service.ts:75-76`: `page ≥ 1`, `pageSize ≤ 100`). A client sending `page: 0`/`pageSize: 500` receives `pageSize: 500` in the payload but at most 100 items — a response that lies about its own window.
+
+❌ `return { ...pageResult, page, pageSize };` — echoes the raw args, so `pageSize: 500` reports 500 while the service took 100.
+✅ Echo the effective window (clamp `page = Math.max(page, 1)`, `pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE)` before returning) or explicitly document that the echoed values are the *requested* window, not the applied one.
+
 
