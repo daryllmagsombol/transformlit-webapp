@@ -1,32 +1,22 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ConflictException } from '@nestjs/common';
-import {
-  PostgreSqlContainer,
-  StartedPostgreSqlContainer,
-} from '@testcontainers/postgresql';
+import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import request from 'supertest';
-import cookieParser from 'cookie-parser';
-import { graphqlUploadExpress } from 'graphql-upload-ts';
 import { createHash } from 'node:crypto';
-import { rm } from 'node:fs/promises';
 import { Pool } from 'pg';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import {
-  BookAccessLevel,
-  MAX_FILE_SIZE_BYTES,
-  UserRole,
-  UserStatus,
-} from '@transformlit/shared';
-import { execSync } from 'node:child_process';
-import { AppModule } from '../src/app.module';
+import { BookAccessLevel, UserRole, UserStatus } from '@transformlit/shared';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AuthService } from '../src/auth/auth.service';
 import { BooksService } from '../src/books/books.service';
 import { AdminUsersService } from '../src/admin/admin-users.service';
 import { ConversionRunner } from '../src/books/conversion/conversion.runner';
 import { buildTestPdf } from './fixtures/build-pdf';
-import { assertOwnedDisposableDatabaseUrl } from './helpers/pwa-disposable-db.js';
+import {
+  applyMigrations,
+  closeTestApp,
+  createTestApp,
+  setIntegrationTestEnv,
+  startOwnedDatabase,
+} from './helpers/integration-app.js';
 
 const STORAGE_DIR = `${process.cwd()}/.book-storage-admin-authz-test`;
 const MEMBER_PASSWORD = 'Password123!';
@@ -38,38 +28,6 @@ interface GraphQLResponse {
     data?: unknown;
     errors?: Array<{ message: string; extensions?: { code?: string } }>;
   };
-}
-
-function isDockerAvailable(): boolean {
-  try {
-    execSync('docker info', { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function runMigrations(pool: Pool): Promise<void> {
-  await pool.query(`
-    DO $$ DECLARE
-      r RECORD;
-    BEGIN
-      FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
-        EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE';
-      END LOOP;
-      FOR r IN (SELECT typname FROM pg_type WHERE typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')) LOOP
-        EXECUTE 'DROP TYPE IF EXISTS ' || quote_ident(r.typname) || ' CASCADE';
-      END LOOP;
-    END $$;
-  `);
-
-  const migrationsDir = path.resolve(__dirname, '../prisma/migrations');
-  for (const directory of fs.readdirSync(migrationsDir).sort((a, b) => a.localeCompare(b))) {
-    const sqlFile = path.join(migrationsDir, directory, 'migration.sql');
-    if (fs.existsSync(sqlFile)) {
-      await pool.query(fs.readFileSync(sqlFile, 'utf-8'));
-    }
-  }
 }
 
 /** Staff-only admin reads; each returns a non-null top-level field. */
@@ -117,43 +75,16 @@ describe('Admin authorization matrix (GraphQL layer)', () => {
   let memberEmail: string;
 
   beforeAll(async () => {
-    if (!isDockerAvailable()) {
-      // No shared-database fallback: these tests reset the schema, so pointing
-      // them at TEST_DATABASE_URL would be unsafe. Fail loudly.
-      throw new Error('Docker is required for Admin authorization integration tests (Testcontainers)');
-    }
-    container = await new PostgreSqlContainer('postgres:15-alpine')
-      .withDatabase('testdb')
-      .withUsername('test')
-      .withPassword('test')
-      .start();
-    const databaseUrl = container.getConnectionUri();
+    const database = await startOwnedDatabase('Admin authorization');
+    container = database.container;
+    pool = database.pool;
+    setIntegrationTestEnv(database.databaseUrl, { BOOK_STORAGE_DIR: STORAGE_DIR });
+    await applyMigrations(pool);
 
-    assertOwnedDisposableDatabaseUrl(databaseUrl, container);
-    process.env.DATABASE_URL = databaseUrl;
-    process.env.JWT_SECRET = 'test-jwt-secret';
-    process.env.GOOGLE_CLIENT_ID = 'test';
-    process.env.GOOGLE_CLIENT_SECRET = 'test';
-    process.env.GOOGLE_CALLBACK_URL = 'http://localhost:3005/auth/google/callback';
-    process.env.FRONTEND_URL = 'http://localhost:3000';
-    process.env.AZURE_STORAGE_CONNECTION_STRING = '';
-    process.env.AZURE_STORAGE_CONTAINER = 'test';
-    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = '';
-    process.env.AZURE_EMAIL_SENDER = 'test@example.com';
-    process.env.BOOK_STORAGE_DIR = STORAGE_DIR;
-
-    pool = new Pool({ connectionString: databaseUrl });
-    await runMigrations(pool);
-
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-    app = moduleFixture.createNestApplication();
     // Mirror main.ts so the multipart `uploadPdf` path and the reader-session
     // cookie both behave exactly as in production.
-    app.use(cookieParser());
-    app.use('/graphql', graphqlUploadExpress({ maxFileSize: MAX_FILE_SIZE_BYTES }));
-    await app.init();
+    const { app: testApp, moduleFixture } = await createTestApp({ graphqlUpload: true });
+    app = testApp;
 
     prisma = moduleFixture.get<PrismaService>(PrismaService);
     authService = moduleFixture.get<AuthService>(AuthService);
@@ -194,19 +125,7 @@ describe('Admin authorization matrix (GraphQL layer)', () => {
   }, 180000);
 
   afterAll(async () => {
-    const closeTimeout = new Promise<void>((_, reject) =>
-      setTimeout(() => reject(new Error('close timeout')), 15000),
-    );
-    try {
-      await Promise.race([app?.close(), closeTimeout]);
-    } catch {
-      // ignore close errors or timeout
-    }
-    await pool?.end();
-    if (container) {
-      await container.stop();
-    }
-    await rm(STORAGE_DIR, { recursive: true, force: true });
+    await closeTestApp(app, pool, container, [STORAGE_DIR]);
   }, 30000);
 
   beforeEach(async () => {

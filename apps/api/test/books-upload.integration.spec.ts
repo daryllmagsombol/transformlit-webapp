@@ -1,17 +1,19 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import request from 'supertest';
-import cookieParser from 'cookie-parser';
-import { graphqlUploadExpress } from 'graphql-upload-ts';
-import { rm } from 'node:fs/promises';
-import { MAX_FILE_SIZE_BYTES, UserRole } from '@transformlit/shared';
-import { AppModule } from '../src/app.module';
+import { Pool } from 'pg';
+import { UserRole } from '@transformlit/shared';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AuthService } from '../src/auth/auth.service';
 import { BooksService } from '../src/books/books.service';
 import { buildTestPdf } from './fixtures/build-pdf';
-import { assertOwnedDisposableDatabaseUrl } from './helpers/pwa-disposable-db.js';
+import {
+  applyMigrations,
+  closeTestApp,
+  createTestApp,
+  setIntegrationTestEnv,
+  startOwnedDatabase,
+} from './helpers/integration-app.js';
 
 const STORAGE_DIR = `${process.cwd()}/.book-storage-upload-test`;
 
@@ -59,72 +61,20 @@ describe('Books upload (GraphQL multipart)', () => {
   let adminId: string;
   let memberToken: string;
   let container: StartedPostgreSqlContainer | null = null;
+  let pool: Pool;
 
   beforeAll(async () => {
-    let databaseUrl: string;
-    try {
-      const { execSync } = await import('node:child_process');
-      execSync('docker info', { stdio: 'ignore' });
-      container = await new PostgreSqlContainer('postgres:15-alpine')
-        .withDatabase('testdb')
-        .withUsername('test')
-        .withPassword('test')
-        .start();
-      databaseUrl = container.getConnectionUri();
-    } catch {
-      databaseUrl =
-        process.env.TEST_DATABASE_URL || 'postgresql://localhost:5432/transformlit_test';
-    }
+    const database = await startOwnedDatabase('Books upload');
+    container = database.container;
+    pool = database.pool;
+    setIntegrationTestEnv(database.databaseUrl, { BOOK_STORAGE_DIR: STORAGE_DIR });
+    await applyMigrations(pool);
 
-    assertOwnedDisposableDatabaseUrl(databaseUrl, container);
-    process.env.DATABASE_URL = databaseUrl;
-    process.env.JWT_SECRET = 'test-jwt-secret';
-    process.env.GOOGLE_CLIENT_ID = 'test';
-    process.env.GOOGLE_CLIENT_SECRET = 'test';
-    process.env.GOOGLE_CALLBACK_URL = 'http://localhost:3005/auth/google/callback';
-    process.env.FRONTEND_URL = 'http://localhost:3000';
-    process.env.AZURE_STORAGE_CONNECTION_STRING = '';
-    process.env.AZURE_STORAGE_CONTAINER = 'test';
-    process.env.AZURE_COMMUNICATION_CONNECTION_STRING = '';
-    process.env.AZURE_EMAIL_SENDER = 'test@example.com';
-    process.env.BOOK_STORAGE_DIR = STORAGE_DIR;
-
-    const { Pool } = await import('pg');
-    const pool = new Pool({ connectionString: databaseUrl });
-    const { existsSync, readdirSync, readFileSync } = await import('node:fs');
-    const { join } = await import('node:path');
-
-    await pool.query(`
-      DO $$ DECLARE
-        r RECORD;
-      BEGIN
-        FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
-          EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE';
-        END LOOP;
-        FOR r IN (SELECT typname FROM pg_type WHERE typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')) LOOP
-          EXECUTE 'DROP TYPE IF EXISTS ' || quote_ident(r.typname) || ' CASCADE';
-        END LOOP;
-      END $$;
-    `);
-
-    const migrationsDir = join(__dirname, '../prisma/migrations');
-    for (const dir of readdirSync(migrationsDir).sort()) {
-      const file = join(migrationsDir, dir, 'migration.sql');
-      if (existsSync(file)) await pool.query(readFileSync(file, 'utf-8'));
-    }
-    await pool.end();
-
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-    app = moduleFixture.createNestApplication();
-    // Mirror main.ts: the multipart middleware must be registered before the
-    // Apollo route so `graphql-upload-ts` can rewrite the request body, and it
-    // must be path-scoped to `/graphql` so it does not intercept other
+    // Mirror main.ts: the multipart middleware is registered before the Apollo
+    // route and path-scoped to `/graphql` so it does not intercept other
     // multipart routes (e.g. `POST /uploads`).
-    app.use(cookieParser());
-    app.use('/graphql', graphqlUploadExpress({ maxFileSize: MAX_FILE_SIZE_BYTES }));
-    await app.init();
+    const { app: testApp, moduleFixture } = await createTestApp({ graphqlUpload: true });
+    app = testApp;
 
     prisma = moduleFixture.get<PrismaService>(PrismaService);
     authService = moduleFixture.get<AuthService>(AuthService);
@@ -132,16 +82,7 @@ describe('Books upload (GraphQL multipart)', () => {
   }, 180000);
 
   afterAll(async () => {
-    const closeTimeout = new Promise<void>((_, reject) =>
-      setTimeout(() => reject(new Error('close timeout')), 15000),
-    );
-    try {
-      await Promise.race([app?.close(), closeTimeout]);
-    } catch {
-      // ignore close errors or timeout
-    }
-    await container?.stop();
-    await rm(STORAGE_DIR, { recursive: true, force: true });
+    await closeTestApp(app, pool, container, [STORAGE_DIR]);
   }, 30000);
 
   beforeEach(async () => {
