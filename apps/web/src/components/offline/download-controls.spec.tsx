@@ -56,6 +56,37 @@ describe('DownloadControls', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/quota exceeded/i);
   });
 
+  it('shows the real interruption reason when persistence was declined, not the caveat', () => {
+    render(
+      <DownloadControls {...baseProps} state="INTERRUPTED" error="Network interrupted" persistenceGranted={false} />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Network interrupted');
+    expect(screen.queryByText(/may clear saved content/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps the friendly storage message ahead of the raw quota error', () => {
+    render(
+      <DownloadControls
+        {...baseProps}
+        state="FAILED"
+        error="INSUFFICIENT_SPACE: not enough browser storage for this book"
+        persistenceGranted={false}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(/not enough storage space/i);
+    expect(screen.queryByText(/may clear saved content/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the persistence caveat as a secondary note only once content is saved', () => {
+    render(<DownloadControls {...baseProps} state="READY" persistenceGranted={false} />);
+    expect(screen.getByRole('note')).toHaveTextContent(/installing the app/i);
+  });
+
+  it('does not show the persistence caveat on an idle card', () => {
+    render(<DownloadControls {...baseProps} state="IDLE" persistenceGranted={false} />);
+    expect(screen.queryByRole('note')).not.toBeInTheDocument();
+  });
+
   it('disables the control and explains denied rights', () => {
     render(
       <DownloadControls {...baseProps} state="IDLE" canDownload={false} deniedReason="Rights not documented" />,

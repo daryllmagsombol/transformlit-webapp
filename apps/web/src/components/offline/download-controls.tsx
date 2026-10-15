@@ -129,7 +129,7 @@ export function DownloadControls({
     }
     if (failed) {
       return (
-        <div className="flex gap-2">
+        <>
           <button
             type="button"
             onClick={onRetry}
@@ -144,15 +144,15 @@ export function DownloadControls({
           >
             Discard
           </button>
-        </div>
+        </>
       );
     }
     return (
-        <button
-          type="button"
-          onClick={onStart}
-          disabled={disabled}
-          aria-label={`${label}: save offline`}
+      <button
+        type="button"
+        onClick={onStart}
+        disabled={disabled}
+        aria-label={`${label}: save offline`}
         title={disabled ? deniedReason ?? undefined : undefined}
         className="flex items-center gap-2 rounded-lg border-2 border-primary px-3 py-1.5 font-display text-small font-bold text-primary transition-colors hover:bg-primary hover:text-on-primary active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -165,35 +165,28 @@ export function DownloadControls({
   function renderMessages() {
     if (!storageAvailable) {
       return (
-        <p className="font-micro text-micro text-error" role="note">
+        <p className="mt-2 font-micro text-micro text-error" role="note">
           Offline storage is unavailable in this browser.
         </p>
       );
     }
     if (disabled) {
       return (
-        <p className="font-micro text-micro text-on-surface-variant" role="note">
+        <p className="mt-2 font-micro text-micro text-on-surface-variant" role="note">
           {deniedReason ?? 'Offline download is not available for this content.'}
         </p>
       );
     }
     if (failed && error?.startsWith('INSUFFICIENT_SPACE:')) {
       return (
-        <p className="font-micro text-micro text-error" role="alert">
+        <p className="mt-2 font-micro text-micro text-error" role="alert">
           Not enough storage space. Remove other downloads or free browser storage, then retry.
-        </p>
-      );
-    }
-    if (persistenceGranted === false) {
-      return (
-        <p className="font-micro text-micro text-on-surface-variant" role="note">
-          Browser persistence was declined. Saved content may be cleared by the browser.
         </p>
       );
     }
     if (failed && error) {
       return (
-        <p className="font-micro text-micro text-error" role="alert">
+        <p className="mt-2 font-micro text-micro text-error" role="alert">
           {error}
         </p>
       );
@@ -201,19 +194,37 @@ export function DownloadControls({
     return null;
   }
 
+  /**
+   * A declined persistence grant is a caveat, not a failure cause: it must never
+   * be presented as the reason a download stopped. It only concerns content that
+   * is already saved, so it renders as a secondary note in `READY` and is
+   * suppressed while any real error is on screen.
+   */
+  function renderPersistenceNote() {
+    if (persistenceGranted !== false || state !== 'READY') return null;
+    return (
+      <p className="mt-2 font-micro text-micro text-on-surface-variant" role="note">
+        Your browser may clear saved content if it runs low on space. Installing the app usually helps keep it.
+      </p>
+    );
+  }
+
   return (
     <div className="rounded-lg border border-outline-variant bg-paper-warm p-3" data-testid="download-controls">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-on-surface">
-          {ready ? <CheckGlyph /> : <DownloadGlyph />}
-          <span className="font-display text-small font-bold">
-            {failed && error?.startsWith('INSUFFICIENT_SPACE:') ? 'Insufficient storage' : statusLabel(state)}
-          </span>
-        </div>
-        {renderActions()}
+      <div className="flex items-center gap-2 text-on-surface">
+        {ready ? <CheckGlyph /> : <DownloadGlyph />}
+        <span className="font-display text-small font-bold">
+          {failed && error?.startsWith('INSUFFICIENT_SPACE:') ? 'Insufficient storage' : statusLabel(state)}
+        </span>
       </div>
       {inProgress && <div className="mt-2">{renderProgress()}</div>}
-      {!inProgress && <div className="mt-2">{renderMessages()}</div>}
+      {!inProgress && (
+        <>
+          {renderMessages()}
+          {renderPersistenceNote()}
+        </>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2">{renderActions()}</div>
     </div>
   );
 }
