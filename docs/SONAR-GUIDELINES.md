@@ -1398,6 +1398,18 @@ Calling a resolver method directly never runs `UseGuards`/`RolesGuard`, and CI r
 ❌ `const completed = completedRows.length;` — counts completers independently of the reader set; an offline/sync-only completer inflates `completed` past `readers`.
 ✅ `const readerIds = new Set(readerRows.map((row) => row.userId)); const completed = completedRows.filter((row) => readerIds.has(row.userId)).length;` and pin it with a test where `pageView.findMany → ['u1']` and `bookProgress.findMany → ['u1', 'ghost']` asserts `completed === 1`.
 
+### ADM-21 — Path-scope global body-parsing middleware; it intercepts unrelated routes
+`app.use(graphqlUploadExpress(...))` (or any body parser) mounted with no path runs on **every** route. `graphqlUploadExpress` activates whenever `request.is('multipart/form-data')` and rejects a multipart body that lacks GraphQL `operations`/`map` fields with a 400 — so the existing `POST /uploads` image endpoint (`FileInterceptor('file')`, used for group covers/post images) broke before its interceptor/guard ran. Mount middleware on the narrowest path that needs it, and prove an unrelated multipart route still reaches its handler.
+
+❌ `app.use(graphqlUploadExpress({ maxFileSize }))` — intercepts `POST /uploads`, returning 400 for its plain `file` field.
+✅ `app.use('/graphql', graphqlUploadExpress({ maxFileSize }))`, plus a test asserting `POST /uploads` is not intercepted (reaches auth → 401, not a `operations`-missing 400).
+
+### ADM-22 — A transport-routing allowlist must be tested from the real client
+An integration test that hand-sets the multipart request (including `apollo-require-preflight`) proves the server parses multipart, but not that the web client routes the right operation there. Removing the preflight header, dropping the upload operation from the split allowlist, or renaming the operation would still pass. Export the predicate/allowlist and the link options, and unit-test the routing decision against the real module. Keep the allowlist to operations that actually exist in the schema (no speculative entries).
+
+❌ Route only in `apollo-client.ts` and cover it with an API test that builds the multipart body by hand.
+✅ Export `isUploadOperation`/`UPLOAD_LINK_OPTIONS` and unit-test: `UploadPdf` → multipart, non-upload → JSON, and the preflight header is attached to the multipart link.
+
 ### ADM-23 — Unused import fails the "0 new issues" quality gate (S1128)
 Review of `groups.resolver.ts` found `AdminGroup` imported but never referenced — only
 `AdminGroupPage` and `AdminGroupsFilter` were used. A single Low/Minor issue fails the
@@ -1418,3 +1430,4 @@ the linter/compiler rather than leaving unused symbols "for symmetry".
 
 ❌ Implement `audit.record({ action: BOOK_UPLOADED, ... })` and `{ action: BOOK_DELETED, ... }` but only test `BOOK_UPDATED`.
 ✅ Add assertions that `uploadBookFile`/`deleteBook` record `BOOK_UPLOADED`/`BOOK_DELETED` with the correct `targetType`/`targetId`, and that a throwing mutation records nothing.
+
