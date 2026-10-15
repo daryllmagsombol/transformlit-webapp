@@ -10,6 +10,7 @@ import depthLimit from 'graphql-depth-limit';
 
 import { PrismaModule } from './prisma/prisma.module.js';
 import { AuditModule } from './audit/audit.module.js';
+import { AdminModule } from './admin/admin.module.js';
 import { ContextThrottlerGuard } from './common/guards/context-throttler.guard.js';
 import { StorageModule } from './storage/storage.module.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -137,6 +138,7 @@ function createQueryCostValidationRules(): ((context: ValidationContext) => unkn
 
     PrismaModule,
     AuditModule,
+    AdminModule,
     StorageModule,
     AzureModule,
     UploadsModule,

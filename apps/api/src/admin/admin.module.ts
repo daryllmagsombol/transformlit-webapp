@@ -3,6 +3,7 @@ import { AuthModule } from '../auth/auth.module.js';
 import { ReaderSessionService } from '../books/reader-session.service.js';
 import { AdminAnalyticsService } from './admin-analytics.service.js';
 import { AdminUsersService } from './admin-users.service.js';
+import { AdminResolver } from './admin.resolver.js';
 
 /**
  * Admin console backend. `AuditModule` and `PrismaModule` are `@Global()`, so
@@ -12,7 +13,12 @@ import { AdminUsersService } from './admin-users.service.js';
  */
 @Module({
   imports: [AuthModule],
-  providers: [AdminUsersService, AdminAnalyticsService, ReaderSessionService],
+  providers: [
+    AdminUsersService,
+    AdminAnalyticsService,
+    ReaderSessionService,
+    AdminResolver,
+  ],
   exports: [AdminUsersService, AdminAnalyticsService],
 })
 export class AdminModule {}
