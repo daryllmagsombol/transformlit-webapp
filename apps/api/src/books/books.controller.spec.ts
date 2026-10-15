@@ -1,3 +1,4 @@
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { BooksController } from './books.controller';
 
 describe('BooksController', () => {
@@ -115,6 +116,24 @@ describe('BooksController', () => {
   it('rate-limits page frame and text requests to 90 per minute', () => {
     expect(Reflect.getMetadata('THROTTLER:LIMITdefault', BooksController.prototype.getFrame)).toBe(90);
     expect(Reflect.getMetadata('THROTTLER:LIMITdefault', BooksController.prototype.getText)).toBe(90);
+  });
+
+  it('relies on the global throttler only — no duplicate route-level ThrottlerGuard', () => {
+    // A route-level `ThrottlerGuard` here would run alongside the global
+    // `ContextThrottlerGuard` and increment the same bucket twice, halving every
+    // declared budget (30 → ~15). The global guard is the single authority.
+    const handlers = [
+      BooksController.prototype.getFrame,
+      BooksController.prototype.getText,
+      BooksController.prototype.getOfflineManifest,
+      BooksController.prototype.getOfflineAsset,
+      BooksController.prototype.getOfflineFrame,
+      BooksController.prototype.getOfflineText,
+    ];
+    for (const handler of handlers) {
+      const guards = (Reflect.getMetadata('__guards__', handler) as unknown[] | undefined) ?? [];
+      expect(guards).not.toContain(ThrottlerGuard);
+    }
   });
 
   describe('offline downloads', () => {
