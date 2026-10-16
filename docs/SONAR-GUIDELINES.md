@@ -1558,4 +1558,31 @@ Closes **[ADM-29(a)]**. The refresh lookup trusted a live token row and failed o
 ❌ `return currentPage >= effectivePageCount ? new Date() : null;` — every re-sync at the last page overwrites the first completion time.
 ✅ Thread the existing row's value through and prefer it: `return currentPage >= effectivePageCount ? (previousCompletedAt ?? new Date()) : null;` (read `existing` before computing), with a focused test asserting the first `completedAt` is preserved on a later last-page sync and still cleared on regression.
 
+## Offline download controls design review findings — AI review IDs (not Sonar rules)
+
+Findings from the review of `apps/web/src/components/offline/download-controls.tsx` (2026-10-15, branch `fix/offline-download-ux`).
+
+### ODL-1 — A generic caveat must never outrank a specific terminal error
+
+`renderMessages()` checked `persistenceGranted === false` before `failed && error`, so whenever browser persistence was declined (true for most non-installed browsers) the real, actionable interruption reason was never shown — the card blamed persistence for a failure it did not cause. A declined persistence grant only feeds a quota pre-check; it does not interrupt a download.
+
+Precedence for any status/message component: actionable failure first; an informational caveat only in a relevant steady state, and never as the cause.
+
+❌ `if (persistenceGranted === false) return <persistence note/>;` placed before `if (failed && error) return <error/>;`.
+✅ Show the real error (`role="alert"`) first, keep `INSUFFICIENT_SPACE:`'s friendly message ahead of it, and render the persistence caveat as a separate secondary `role="note"` — suppressed while any error is on screen.
+
+### ODL-2 — Don't render a per-origin caveat on every card
+
+`persistenceGranted` comes from `navigator.storage.persisted()` for the whole origin, so an `IDLE` caveat appeared on every book/chapter card whether or not anything was saved. Scope such notices to the state they describe (saved content), not the default state.
+
+❌ Render the persistence caveat in `IDLE`.
+✅ Render it only in `READY`, as calm guidance ("Your browser may clear saved content if it runs low on space. Installing the app usually helps keep it.").
+
+### ODL-3 — Terminal states need a label → message → action hierarchy, not one crowded row
+
+A `justify-between` row held the status label and the failed-state Retry/Discard pair, so at ~320–430px the status, error, and actions crowded/overflowed inside one bordered box. Stack status, then reason, then actions; let the action group `flex-wrap` and keep the primary action visually dominant (orange `Retry`). Verified in-browser at 320/390/430px with no overflow (`scrollWidth <= clientWidth` in every `download-controls` box).
+
+❌ `flex items-center justify-between` header + nested `flex gap-2` actions + message squeezed below.
+✅ Vertical order: status row → message → `flex flex-wrap items-center gap-2` actions.
+
 
