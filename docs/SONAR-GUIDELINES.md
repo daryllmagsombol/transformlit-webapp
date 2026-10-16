@@ -518,6 +518,22 @@ return { accessToken, refreshToken, user };
 ### IndexedDB upgrades must be forward-compatible
 **Fix:** Guard every `createObjectStore` with `objectStoreNames.contains(...)` (and branch on `oldVersion`). An unguarded `createSchema` throws `ConstraintError` on the first version bump and bricks the DB.
 
+### One authority per throttle bucket — never stack a route guard with the global guard
+**Finding (2026-10, `fix/offline-download-throttle`, opencode/AI review):** `BooksController` applied **both** the global `ContextThrottlerGuard` (`APP_GUARD` in `app.module.ts`) and a route-level `ThrottlerGuard` (`@UseGuards(ThrottlerGuard)`) to the same handlers. Both guards iterate the same resolved throttlers and increment the **same** storage key — `generateKey` is `class + handler + throttler name + tracker` — so a `@Throttle({ download: { limit: 30 } })` route was effectively ~15 requests/min. Whole-book downloads (2 asset GETs/page, concurrency 4) then thrashed into 429s.
+**Fix:** Keep exactly one throttler authority. Use the global `APP_GUARD` alone and remove any route-level `ThrottlerGuard`; keep the `@Throttle(...)` metadata (the global guard reads it) and any other guards such as `AuthGuard('jwt')`.
+
+```ts
+// ❌ Bad — global guard + route guard both increment the same bucket (limit halved)
+@Get(':id/offline-manifest')
+@UseGuards(AuthGuard('jwt'), ThrottlerGuard)
+@Throttle(DOWNLOAD_RATE_LIMIT)
+
+// ✅ Good — single global ContextThrottlerGuard authority; @Throttle still honored
+@Get(':id/offline-manifest')
+@UseGuards(AuthGuard('jwt'))
+@Throttle(DOWNLOAD_RATE_LIMIT)
+```
+
 ---
 
 ## Group features (reading plans + shared highlights) — review decisions

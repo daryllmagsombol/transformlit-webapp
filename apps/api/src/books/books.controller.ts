@@ -14,7 +14,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { BooksService } from './books.service.js';
 import { ReaderSessionService, READER_COOKIE_NAME, READER_SESSION_TTL_MS } from './reader-session.service.js';
@@ -74,7 +74,6 @@ export class BooksController {
   }
 
   @Get(':id/pages/:n/frame')
-  @UseGuards(ThrottlerGuard)
   @Throttle(PAGE_RATE_LIMIT)
   async getFrame(
     @Param('id') bookId: string,
@@ -106,7 +105,6 @@ export class BooksController {
   }
 
   @Get(':id/pages/:n/text')
-  @UseGuards(ThrottlerGuard)
   @Throttle(PAGE_RATE_LIMIT)
   async getText(
     @Param('id') bookId: string,
@@ -134,7 +132,7 @@ export class BooksController {
    * delivered so the browser only persists it on an explicit download action.
    */
   @Get(':id/offline-manifest')
-  @UseGuards(AuthGuard('jwt'), ThrottlerGuard)
+  @UseGuards(AuthGuard('jwt'))
   @Throttle(DOWNLOAD_RATE_LIMIT)
   async getOfflineManifest(
     @Param('id') bookId: string,
@@ -151,7 +149,7 @@ export class BooksController {
    * id from the manifest. Storage keys never appear in a URL or response.
    */
   @Get(':id/content/:version/assets/:assetId')
-  @UseGuards(AuthGuard('jwt'), ThrottlerGuard)
+  @UseGuards(AuthGuard('jwt'))
   @Throttle(DOWNLOAD_RATE_LIMIT)
   async getOfflineAsset(
     @Param('id') bookId: string,
@@ -166,7 +164,7 @@ export class BooksController {
 
   /** Convenience frame route pinned to a content version. */
   @Get(':id/offline/:version/pages/:n/frame')
-  @UseGuards(AuthGuard('jwt'), ThrottlerGuard)
+  @UseGuards(AuthGuard('jwt'))
   @Throttle(DOWNLOAD_RATE_LIMIT)
   async getOfflineFrame(
     @Param('id') bookId: string,
@@ -181,7 +179,7 @@ export class BooksController {
 
   /** Convenience text-layer route pinned to a content version. */
   @Get(':id/offline/:version/pages/:n/text')
-  @UseGuards(AuthGuard('jwt'), ThrottlerGuard)
+  @UseGuards(AuthGuard('jwt'))
   @Throttle(DOWNLOAD_RATE_LIMIT)
   async getOfflineText(
     @Param('id') bookId: string,
