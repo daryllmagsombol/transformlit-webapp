@@ -77,6 +77,29 @@ import { Request } from 'express';
 // ✅ Good — remove if unused
 ```
 
+On `main` (`3a28aa5`), the admin resolver imported `UserStatus` but did not use it.
+
+❌ `import { UserRole, UserStatus } from '@transformlit/shared';` when only `UserRole` is needed.
+✅ `import { UserRole } from '@transformlit/shared';`
+
+### S7765 — Prefer `includes` for membership checks
+**Fix:** Use `includes` for direct membership in a list of string-valued roles. Keep the surrounding authentication and authorization behavior unchanged.
+
+❌ `user ? roles.some((role) => role === user.role) : false`
+✅ `user ? roles.includes(user.role) : false`
+
+### S6564 — Remove redundant type aliases
+**Fix:** Use the existing domain type directly when the alias adds no shape, restriction, or public compatibility contract.
+
+❌ `type AuditRow = AuditLogRow;` when it adds no distinct meaning.
+✅ Use `AuditLogRow` directly in annotations and return types.
+
+### S4036 — Avoid shell commands that rely on `PATH`
+**Fix:** In the shared API integration setup, let Testcontainers start the disposable database directly. Report startup failures with their cause and verify database ownership before resetting the schema.
+
+❌ `execSync('docker info')` as a redundant startup check; the shell resolves `docker` through the inherited `PATH`.
+✅ `await startOwnedDisposableDatabase()` followed by `assertOwnedDisposableDatabaseUrl(databaseUrl, container)`. Do not fall back to a shared database.
+
 ### S1440 — Unused exports
 **Fix:** Remove unused exports.
 
@@ -1584,5 +1607,3 @@ A `justify-between` row held the status label and the failed-state Retry/Discard
 
 ❌ `flex items-center justify-between` header + nested `flex gap-2` actions + message squeezed below.
 ✅ Vertical order: status row → message → `flex flex-wrap items-center gap-2` actions.
-
-

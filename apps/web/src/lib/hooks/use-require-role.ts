@@ -39,7 +39,7 @@ export function useRequireRole(...roles: UserRole[]): RequireRoleResult {
   const user = useAuthStore((s) => s.user);
   const isHydrated = useAuthStore((s) => s.isHydrated);
 
-  const hasAllowedRole = user ? roles.some((role) => role === user.role) : false;
+  const hasAllowedRole = user ? roles.includes(user.role) : false;
 
   useEffect(() => {
     if (!isHydrated) {

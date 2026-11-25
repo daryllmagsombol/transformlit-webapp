@@ -7,22 +7,12 @@ import { Pool } from 'pg';
 import { rm } from 'node:fs/promises';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execSync } from 'node:child_process';
 import { MAX_FILE_SIZE_BYTES } from '@transformlit/shared';
 import { AppModule } from '../../src/app.module.js';
 import {
   assertOwnedDisposableDatabaseUrl,
   startOwnedDisposableDatabase,
 } from './pwa-disposable-db.js';
-
-function isDockerAvailable(): boolean {
-  try {
-    execSync('docker info', { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Fails loudly when Docker/Testcontainers is unavailable. These suites reset the
@@ -34,12 +24,11 @@ export async function startOwnedDatabase(label: string): Promise<{
   databaseUrl: string;
   pool: Pool;
 }> {
-  if (!isDockerAvailable()) {
-    throw new Error(
-      `Docker is required for ${label} integration tests (Testcontainers)`,
-    );
-  }
-  const container = await startOwnedDisposableDatabase();
+  const container = await startOwnedDisposableDatabase().catch((cause: unknown) => {
+    throw new Error(`Could not start the disposable database for ${label} integration tests`, {
+      cause,
+    });
+  });
   const databaseUrl = container.getConnectionUri();
   assertOwnedDisposableDatabaseUrl(databaseUrl, container);
   const pool = new Pool({ connectionString: databaseUrl });
