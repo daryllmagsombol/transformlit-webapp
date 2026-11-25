@@ -26,8 +26,6 @@ export interface AuditFilters {
 
 /** Raw `audit_logs` row. `userId` is exposed to GraphQL as `actorId` by the resolver. */
 export type AuditLogRow = AuditLog;
-/** Alias kept for the plan's `AuditLogEntryRow` name. */
-export type AuditLogEntryRow = AuditLogRow;
 
 /**
  * Post-commit, best-effort audit append + filtered read. Always uses the root

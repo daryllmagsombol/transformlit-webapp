@@ -1,6 +1,6 @@
 import { Resolver, Query, Mutation, Args, Int, ID } from '@nestjs/graphql';
 import { UseGuards } from '@nestjs/common';
-import { UserRole, UserStatus } from '@transformlit/shared';
+import { UserRole } from '@transformlit/shared';
 import { AdminUsersService } from './admin-users.service.js';
 import { AdminAnalyticsService } from './admin-analytics.service.js';
 import { AuditService, type AuditLogRow } from '../audit/audit.service.js';
